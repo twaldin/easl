@@ -148,8 +148,9 @@ def main():
             dx, dy = (x - rect['x']) * zoom, (y - rect['y']) * zoom
             if abs(dx) < 2 and abs(dy) < 2:
                 return view
-            input_event('input', 'scroll', 20, 220, -dx, -dy, '--mods', 'cmd')
+            input_event('input', 'drag', 20, 220, 20 - dx, 220 - dy, '--middle')
             time.sleep(0.15)
+            assert abs(viewport(instance)['zoom'] - zoom) < 0.0001, 'Board pan changed magnification'
         view = viewport(instance)
         assert abs(view['rect']['x'] - x) * view['zoom'] < 3 and abs(view['rect']['y'] - y) * view['zoom'] < 3, view
         return view
@@ -176,6 +177,7 @@ def main():
                          lambda: (home / 'app.log').read_text(errors='replace')[offset:],
                          lambda text: 'DevInput.delivery: scheduled 2 ' in text and 'realtime 1' in text)
         records.setdefault('completed_pinches', []).append(delivery)
+        time.sleep(2)
         view = viewport()
         assert 0.20 <= view['zoom'] < 0.27, view
         return view
@@ -208,9 +210,11 @@ def main():
         frame = {'x': rect['x'] + rect['w'] + 15000, 'y': rect['y'], 'w': 2400, 'h': 1200}
         html = '<!doctype html><style>html,body{margin:0}</style><img width="2400" height="1100" src="' + url + '/' + name + '">'
         obj = create('html', {'title': 'Cold image control', 'html': html, 'allowNetwork': ['127.0.0.1:' + str(server.server_port)]}, frame)
-        result = {'before_near': viewport()}
+        result = {'object': obj, 'before_near': viewport()}
         records['cases'][name] = result
         try:
+            distant = result['before_near']['rect']
+            assert obj['frame']['x'] > distant['x'] + distant['w'] + 10000, 'Cold tile was not actually distant'
             time.sleep(2)
             result['requests_while_distant'] = requests(name)
             assert result['requests_while_distant'] == 0, 'Distant cold content loaded before entering proximity'
