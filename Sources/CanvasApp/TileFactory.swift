@@ -9,12 +9,6 @@ enum TileFactory {
         ![.arrow, .shape, .group].contains(type)
     }
 
-    /// An object whose tile the board doesn't show: an archived question (`QuestionSpec.archived`).
-    static func hidden(_ object: CanvasObject) -> Bool {
-        object.type == .question && QuestionSpec(object.props).archived
-    }
-
-
     static func make(_ object: CanvasObject, board: Board, remote: RemoteSource? = nil) -> any TileContent {
         if let remote {
             switch object.type {

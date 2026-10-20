@@ -45,7 +45,7 @@ func (b *Board) viewport() *model.Frame {
 // agent's own create) stacks an agent's answers beside its latest one.
 func (b *Board) Place(w, h float64, caller string, minimum *Size, stacking bool) model.Frame {
 	anchor, ok := b.objects[caller]
-	if caller == "" || !ok {
+	if caller == "" || !ok || anchor.Hidden() {
 		view := model.Frame{}
 		if v := b.viewport(); v != nil {
 			view = *v
@@ -77,7 +77,7 @@ func (b *Board) latestAnswer(caller string) (model.Object, bool) {
 	var best model.Object
 	found := false
 	for _, o := range b.objects {
-		if o.CreatedBy.Kind != "agent" || o.CreatedBy.Tile != caller || o.CreatedAt.Before(since) || !o.Type.IsTile() {
+		if o.Hidden() || o.CreatedBy.Kind != "agent" || o.CreatedBy.Tile != caller || o.CreatedAt.Before(since) || !o.Type.IsTile() {
 			continue
 		}
 		if _, follow := o.Props["followOf"]; follow {
@@ -187,12 +187,12 @@ func (c slotCost) less(o slotCost) bool {
 }
 
 // freeSlot is Board.freeSlot: beside anchor (nearest by gap, then side in order) or replacing it
-// (nearest by origin), clear of every object but shapes and arrows by PlacementGap.
+// (nearest by origin), clear of visible tiles and nonempty groups by PlacementGap.
 func (b *Board) freeSlot(w, h float64, anchor model.Frame, beside bool, minimum *Size, order []side, ignoring map[string]bool, within *float64) (model.Frame, bool) {
 	gap := PlacementGap
 	var blocked []model.Frame
 	for _, o := range b.objects {
-		if o.Type == model.Arrow || o.Type == model.Shape || ignoring[o.ID] {
+		if o.Hidden() || o.Type == model.Arrow || o.Type == model.Shape || ignoring[o.ID] || (o.Type == model.Group && (o.Frame.W <= 0 || o.Frame.H <= 0)) {
 			continue
 		}
 		blocked = append(blocked, model.Frame{X: o.Frame.X - gap, Y: o.Frame.Y - gap, W: o.Frame.W + 2*gap, H: o.Frame.H + 2*gap})
