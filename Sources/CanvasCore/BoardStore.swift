@@ -319,7 +319,7 @@ private final class Files: @unchecked Sendable {
         var stored = try BoardFile.read(url(for: id))
         makeDirectory()
         if !loaded.contains(id), let commonDir,
-           mergeIntoRepositoryBoard(commonDir: commonDir, stored: stored != nil) {
+           try mergeIntoRepositoryBoard(commonDir: commonDir, stored: stored != nil) {
             stored = try BoardFile.read(url(for: id))
         }
         loaded.insert(id)
@@ -345,12 +345,13 @@ private final class Files: @unchecked Sendable {
     /// when the repository board isn't stored yet, legacy boards the launch migration couldn't
     /// place. Boards loaded this session are left for the next launch. Starts no git process:
     /// a path-keyed board costs the walk up its directory for `.git` (`GitWorktree.containing`).
-    private func mergeIntoRepositoryBoard(commonDir: String, stored: Bool) -> Bool {
+    private func mergeIntoRepositoryBoard(commonDir: String, stored: Bool) throws -> Bool {
         if unresolvedLegacy == nil { unresolvedLegacy = RepoBoardMigration.pending(in: directory).unresolved }
-        let adopting = storedPathBoards().contains { id, root in
+        let adopting = storedPathBoards().filter { id, root in
             !loaded.contains(id) && BoardStore.isDirectory(root) && GitWorktree.containing(URL(fileURLWithPath: root).standardizedFileURL.path)?.commonDir == commonDir
         }
-        guard adopting || (!stored && unresolvedLegacy?.isEmpty == false) else { return false }
+        guard !adopting.isEmpty || (!stored && unresolvedLegacy?.isEmpty == false) else { return false }
+        for id in adopting.keys { _ = try BoardFile.read(url(for: id)) }
         let report = RepoBoardMigration.run(directory: directory, only: commonDir, skipping: loaded)
         unresolvedLegacy = report.unresolved.map(\.board)
         for legacy in report.repos.flatMap(\.legacy) where legacy.status != "conflict" { pathBoards?[legacy.board] = nil }
@@ -360,12 +361,20 @@ private final class Files: @unchecked Sendable {
     /// `pathBoards`, read from the store's files the first time.
     private func storedPathBoards() -> [BoardID: String] {
         if let pathBoards { return pathBoards }
+        struct Header: Decodable {
+            var id: BoardID
+            var root: String
+            var repo: RepoRecord?
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         var found: [BoardID: String] = [:]
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
-            guard let snapshot = try? BoardFile.read(file),
-                  snapshot.repo == nil, snapshot.id == BoardStore.pathID(URL(fileURLWithPath: snapshot.root)) else { continue }
-            found[snapshot.id] = snapshot.root
+            guard let data = try? Data(contentsOf: file),
+                  let header = try? decoder.decode(Header.self, from: data),
+                  header.repo == nil, header.id == BoardStore.pathID(URL(fileURLWithPath: header.root)) else { continue }
+            found[header.id] = header.root
         }
         pathBoards = found
         return found
