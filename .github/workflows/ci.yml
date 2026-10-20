@@ -29,6 +29,8 @@ jobs:
           python3 Tests/ComposerInput/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native composer delivery regression
         run: python3 Tests/ComposerDelivery/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native initial arrow routing regression
+        run: python3 Tests/InitialRouting/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests

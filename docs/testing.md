@@ -443,6 +443,19 @@ python3 Tests/TileProximity/run.py --checkout "$PWD" --app "$G/fix.app" \
 
 The five cases check a saved browser card after far/near, cold HTML demand only when near, cancelled cold demand restarting on reentry, and a loaded browser's first Zoom to Fit on 500- and 1000-object fixtures. They inspect native body pixels and gated loopback HTTP requests, not `view.snapshot` or `view.render` refreshes. Large cases verify eight outputting terminal sessions. `--cases` selects named cases listed by `--help`. Both harnesses refuse app launch on a physical Mac; the helper's activation mode also checks the guest model. Each scale run uses a fresh capture-session label and ends its session before the next run.
 
+#### Native initial routing regression
+
+Inside a claimed GUI guest, link the native routing smoke against the real testing-enabled app:
+
+```sh
+	swift build --build-system native -j 2 --product Easl
+	python3 Tests/InitialRouting/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The smoke checks attached and hit-testable opening previews, initial API bounds, and exact background versus main-thread paths and labels.
+It also checks moved endpoints, edits during opening, new arrows, export bounds, appearance-only updates, and changed outlines.
+It creates disposable boards without terminal workers. Pair it with a displayed 1,000-object opening trace to verify that immediate `board.get` polling does not run obstacle routing on the main thread.
+
 ### Remote boards
 
 To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.

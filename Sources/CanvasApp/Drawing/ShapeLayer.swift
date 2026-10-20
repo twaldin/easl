@@ -84,9 +84,11 @@ final class ShapeLayer: NSView {
     /// placed with the rest); it runs once per burst of changes, off the main thread (see
     /// `scheduleRouting`).
     private var routingStale = false
-    /// Arrows created or changed since the board last routed. They hold a provisional route that
-    /// is never drawn or reported: the board routes on the main thread first (`settleProvisional`).
-    private var provisional: Set<ObjectID> = []
+    /// Snapshot arrows may draw and report attached previews while opening; edits settle first.
+    private enum ProvisionalRoute: Equatable, Sendable {
+        case snapshot, edit
+    }
+    private var provisional: [ObjectID: ProvisionalRoute] = [:]
     /// Bumped by every change the board's routing depends on, so a routing that finishes after
     /// more changes knows its inputs are older.
     private var routingGeneration = 0
@@ -109,11 +111,13 @@ final class ShapeLayer: NSView {
         var frame: Frame
         var blocks: Bool
         var flow: String?
+        var outline: String?
 
         init(_ object: CanvasObject) {
             frame = object.frame
             blocks = BoardGeometry.blocksRoutes(object)
             flow = object.type == .group ? object.props["flow"]?.string : nil
+            outline = object.type == .shape ? object.props["kind"]?.string : nil
         }
     }
 
@@ -164,9 +168,14 @@ final class ShapeLayer: NSView {
         self.canvas = canvas
         super.init(frame: canvas.document.bounds)
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        for object in board.snapshot.objects {
+        let objects = board.snapshot.objects
+        for object in objects where object.type != .arrow {
             refresh(object)
-            if object.type != .arrow { routedAs[object.id] = RoutingKey(object) }
+            routedAs[object.id] = RoutingKey(object)
+        }
+        for object in objects where object.type == .arrow {
+            refresh(object)
+            if provisional[object.id] != nil { provisional[object.id] = .snapshot }
         }
         // Tiles move live while dragged but commit their frame only on drop; follow them live.
         NotificationCenter.default.addObserver(self, selector: #selector(viewFrameChanged(_:)), name: NSView.frameDidChangeNotification, object: nil)
@@ -244,10 +253,11 @@ final class ShapeLayer: NSView {
         switch event {
         case .objectCreated(let object), .objectUpdated(let object):
             refresh(object)
-            if object.type != .arrow, routedAs[object.id] != RoutingKey(object) {
-                routedAs[object.id] = RoutingKey(object)
-                scheduleRouting(trigger: object.id)
-            }
+            guard object.type != .arrow else { return }
+            let key = RoutingKey(object)
+            guard routedAs[object.id] != key else { return }
+            routedAs[object.id] = key
+            scheduleRouting(trigger: object.id)
             reroute(boundTo: object.id)
         case .objectDeleted(let id):
             if let item = items.removeValue(forKey: id) {
@@ -256,7 +266,7 @@ final class ShapeLayer: NSView {
                 if let spec = item.arrow?.spec { unbind(arrow: id, spec) }
             }
             routedAs.removeValue(forKey: id)
-            provisional.remove(id)
+            provisional.removeValue(forKey: id)
             scheduleRouting(trigger: id)
             // Arrows bound to a deleted object keep their last route; undo re-binds them.
         default:
@@ -275,8 +285,8 @@ final class ShapeLayer: NSView {
             guard let spec = ArrowSpec(object.props) else { return }
             if let oldSpec = old?.arrow?.spec { unbind(arrow: object.id, oldSpec) }
             for id in [spec.from.objectID, spec.to.objectID].compactMap({ $0 }) { arrowsBound[id, default: []].insert(object.id) }
-            // The board's routing places it with the rest before anything draws; until then an
-            // `avoid` arrow keeps its last route (a new one a provisional one), others route alone.
+            // `avoid` edits keep their last route until settled; new arrows start with an
+            // attached orthogonal preview while the board routes them together.
             if spec.route == .avoid, let previous = old?.arrow {
                 items[object.id] = DrawnItem.arrow(object, spec, path: previous.path, label: old?.labelRect.map { ConnectorRouter.Label(rect: $0, leader: old?.labelLeader) })
             } else {
@@ -284,7 +294,7 @@ final class ShapeLayer: NSView {
             }
             // Only a new arrow or a changed spec moves routes (a restack doesn't).
             if old?.arrow?.spec != spec {
-                provisional.insert(object.id)
+                provisional[object.id] = .edit
                 scheduleRouting(trigger: object.id)
             }
         default:
@@ -348,12 +358,12 @@ final class ShapeLayer: NSView {
         for arrowID in shown.sorted() { reroute(arrow: arrowID) }
     }
 
-    /// Routes one arrow alone, following a change to what it is bound to (a drag, a scroll, an
-    /// agent's write), so it stays attached until the board's routing places it with the rest. A
-    /// provisional arrow waits for that routing instead.
+    /// Follows a changed end until the board's routing places the arrow with the rest.
+    /// Snapshot previews stay attached while opening; edits still wait for their settle.
     private func reroute(arrow id: ObjectID) {
-        guard !provisional.contains(id), let old = items[id], let spec = old.arrow?.spec else { return }
-        let item = routed(old.object, spec, previous: old)
+        guard provisional[id] != .edit, let old = items[id], let spec = old.arrow?.spec else { return }
+        let style: ArrowRouteStyle? = provisional[id] == .snapshot && spec.route == .avoid ? .orthogonal : nil
+        let item = routed(old.object, spec, previous: old, style: style)
         Metrics.shared.record("route.arrow")
         guard item.arrow?.path != old.arrow?.path || item.labelRect != old.labelRect || item.labelLeader != old.labelLeader else { return }
         invalidate(old)
@@ -365,9 +375,9 @@ final class ShapeLayer: NSView {
     /// runs once per burst of changes, after it, off the main thread: a change the API made waits
     /// until the API is quiet (`ApiActivity`: an agent writing tile after tile routes the board
     /// once, when it stops), any other on the next main-queue turn. Meanwhile arrows bound to a
-    /// changed object follow it alone (`reroute`). A new or changed arrow is never drawn or
-    /// reported with its provisional route: drawing and the API route the board first, on the
-    /// main thread (`settleProvisional`).
+    /// changed object follow it alone (`reroute`). Snapshot arrows draw and report provisional
+    /// routes while opening. New or changed arrows settle before drawing or reporting
+    /// (`settleProvisional`).
     private func scheduleRouting(trigger: ObjectID?) {
         routingGeneration += 1
         if let trigger { routingTrigger = trigger }
@@ -395,19 +405,18 @@ final class ShapeLayer: NSView {
         }
     }
 
-    /// Before the API reports arrows (`Board.settleArrows`): new or changed arrows get their
-    /// place in the board's routing now. Others report the route they are drawn on, which
-    /// follows their ends; the board's routing catches up when the burst of changes ends.
-    func settleArrows() {
+    /// Edits settle before the API reports them. Snapshot arrows report their attached previews
+    /// until the background route lands; an explicit export can require those to settle too.
+    func settleArrows(includingSnapshot: Bool = false) {
         followNow()
-        settleProvisional()
+        if includingSnapshot || provisional.values.contains(.edit) { settleProvisional() }
     }
 
     /// Routes the board on the main thread when an arrow is still provisional.
     private func settleProvisional() {
         guard !provisional.isEmpty else { return }
         guard let inputs = routingInputs() else {
-            provisional = []
+            provisional = [:]
             return
         }
         let started = Metrics.now()
@@ -426,7 +435,7 @@ final class ShapeLayer: NSView {
         /// Each routed arrow's spec and ends (document coordinates) as given.
         var given: [ObjectID: (spec: ArrowSpec, from: DrawingGeometry.ArrowEnd, to: DrawingGeometry.ArrowEnd)]
         /// The arrows that were provisional when the inputs were taken.
-        var provisional: Set<ObjectID>
+        var provisional: [ObjectID: ProvisionalRoute]
         var generation: Int
         /// Routings in the order their inputs were taken: an older one never replaces a newer one.
         var sequence: Int
@@ -481,7 +490,7 @@ final class ShapeLayer: NSView {
         guard routingStale, !routingInFlight, !routingPaused else { return }
         routingStale = false
         guard let inputs = Metrics.shared.span("route", "route.inputs", { routingInputs() }) else {
-            provisional = []
+            provisional = [:]
             return
         }
         routingInFlight = true
@@ -548,13 +557,15 @@ final class ShapeLayer: NSView {
             }
             // Arrows provisional when the routing started are settled now (routed, or left on
             // their last route when an end is gone), unless they changed again since.
-            provisional.subtract(inputs.provisional.subtracting(changedSince))
+            for (id, origin) in inputs.provisional where !changedSince.contains(id) && provisional[id] == origin {
+                provisional.removeValue(forKey: id)
+            }
         }
     }
 
     override func viewWillDraw() {
         followInView()
-        settleProvisional()
+        if provisional.values.contains(.edit) { settleProvisional() }
         super.viewWillDraw()
     }
 
