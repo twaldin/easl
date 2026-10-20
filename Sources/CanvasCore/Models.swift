@@ -131,6 +131,10 @@ public struct CanvasObject: Codable, Equatable, Sendable {
     public var expires: ObjectExpiry? = nil
     public var props: JSONValue
 
+    public var isHidden: Bool {
+        type == .question && props["archived"]?.bool == true
+    }
+
     public init(id: ObjectID, type: ObjectType, frame: Frame, z: Double, rev: Int = 1, parent: ObjectID? = nil, createdBy: Actor, createdAt: Date, props: JSONValue) {
         self.id = id
         self.type = type

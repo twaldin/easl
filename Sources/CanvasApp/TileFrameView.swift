@@ -8,10 +8,6 @@ import CanvasCore
 final class TileFrameView: NSView {
     static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
 
-    enum Presentation {
-        case live, card, dormant
-    }
-
     private(set) var objectID: ObjectID
     let content: any TileContent
     /// Holds the content at the tile's `zoom`: its frame is the body, its bounds the body divided
@@ -31,8 +27,7 @@ final class TileFrameView: NSView {
     private let card = CardImageView()
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
-    private var presentation: Presentation = .live
-    var isLive: Bool { presentation == .live }
+    private(set) var isLive = true
     private var hostBoardClosed = false
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
@@ -299,6 +294,20 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
+    func updateProximity(to viewport: NSRect, admitColdCards: Bool) {
+        let near = frame.intersects(viewport)
+        let wasNear = isNearViewport
+        isNearViewport = near
+        canStartColdCard = near && admitColdCards
+        if near {
+            if canStartColdCard, window != nil, !isLive, cardWanted, cardTask == nil { requestCard() }
+        } else {
+            if wasNear, !isLive, !contentLive, cardTask != nil {
+                invalidateCard()
+            }
+        }
+    }
+
     /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
     /// secondary text, red only for a failure; `detail` is its tooltip.
     func setStatus(_ status: String?, failed: Bool, detail: String?) {
@@ -501,21 +510,19 @@ final class TileFrameView: NSView {
     /// (a full 2× capture would be ~11× the memory, held for every card on the board).
     static let cardPixelsPerPoint: CGFloat = 0.6
 
-    /// Keep live content visible until its replacement card has arrived.
-    func setPresentation(_ presentation: Presentation) {
-        guard presentation != self.presentation else { return }
-        self.presentation = presentation
+    /// Zoomed-out or offscreen: freeze to a card and let the content release its resources. The
+    /// live content stays up until its card has arrived, so a swap never shows a blank or
+    /// title-only tile; going live, the card stays until the content is ready (`revealWhenReady`).
+    func setLive(_ live: Bool) {
+        guard live != isLive else { return }
+        isLive = live
         invalidateCard()
-        switch presentation {
-        case .live:
+        if live {
+            cardWanted = false
             showContent(true)
             revealWhenReady()
-        case .card:
+        } else {
             requestCard()
-        case .dormant:
-            showContent(false)
-            card.isHidden = card.image == nil
-            cardTitle.isHidden = card.image != nil
         }
         updateTint()
     }
@@ -588,17 +595,19 @@ final class TileFrameView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealLimit) { reveal() }
     }
 
-    func startAsCard(_ presentation: Presentation) {
+    func startAsCard() {
         guard isLive else { return }
-        self.presentation = presentation
+        isLive = false
         invalidateCard()
         cardTitle.isHidden = false
         showContent(false)
-        startCardDue = presentation == .card
+        cardWanted = true
         updateTint()
     }
 
-    private var startCardDue = false
+    private var cardWanted = false
+    private var isNearViewport = false
+    private var canStartColdCard = false
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -616,14 +625,13 @@ final class TileFrameView: NSView {
             return
         }
         if window.occlusionState.contains(.visible) { syncTitle() }
-        guard startCardDue else { return }
-        startCardDue = false
-        if presentation == .card { requestCard() }
+        if cardWanted, !isLive { requestCard() }
     }
 
     private func requestCard() {
-        guard presentation != .dormant else { return }
         invalidateCard()
+        cardWanted = true
+        guard contentLive || canStartColdCard else { return }
         syncTitle()
         if hostBoardClosed {
             if contentLive {
@@ -635,6 +643,7 @@ final class TileFrameView: NSView {
                 card.isHidden = card.image == nil
                 cardTitle.isHidden = card.image != nil
             }
+            cardWanted = false
             showContent(false)
             return
         }
@@ -648,6 +657,7 @@ final class TileFrameView: NSView {
                     let image = await content.cardSnapshot()
                     guard !Task.isCancelled, let self, !self.isLive, self.cardRequest == request else { return }
                     self.cardTask = nil
+                    self.cardWanted = false
                     DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
                     Metrics.shared.record("card.latency.\(kind)", ms: (Metrics.now() - started) * 1000)
                     DevPerf.time("card.install.\(type(of: self.content))") {
@@ -681,6 +691,7 @@ final class TileFrameView: NSView {
             let image = await content.cardSnapshot()
             guard !Task.isCancelled, let self, self.cardRequest == request else { return }
             self.cardTask = nil
+            self.cardWanted = false
             guard !self.hostBoardClosed, !self.isLive, let image else { return }
             self.card.image = self.cardImage(image)
             self.card.isHidden = false
@@ -691,6 +702,9 @@ final class TileFrameView: NSView {
             await task.value
         } onCancel: {
             task.cancel()
+        }
+        if cardRequest == request, task.isCancelled, cardTask != nil {
+            cardTask = nil
         }
     }
 

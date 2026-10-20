@@ -2816,7 +2816,9 @@ public final class ApiRouter {
     }
 
     func graph(of object: CanvasObject, on board: Board) -> JSONValue {
-        let others = board.objects.values.filter { $0.id != object.id && $0.type != .arrow }
+        let others = board.objects.values.filter { !object.isHidden && !$0.isHidden && $0.id != object.id && $0.type != .arrow
+            && (object.type != .group || (object.frame.w > 0 && object.frame.h > 0))
+            && ($0.type != .group || ($0.frame.w > 0 && $0.frame.h > 0)) }
         let encloses = board.enclosed(by: object).map(\.id)
         let enclosedBy = others.filter { $0.frame.contains(object.frame) }.map(\.id).sorted()
         let overlaps = others.filter { $0.frame.intersects(object.frame) && !encloses.contains($0.id) && !enclosedBy.contains($0.id) }.map(\.id).sorted()

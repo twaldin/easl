@@ -607,31 +607,31 @@ func graph(o model.Object, b *board.Board) map[string]any {
 	}
 	sort.Strings(ids)
 	var encloses, enclosedBy, overlaps []any
-	inside := map[string]bool{}
+	inside, containers := map[string]bool{}, map[string]bool{}
+	visible := !o.Hidden() && (o.Type != model.Group || (o.Frame.W > 0 && o.Frame.H > 0))
 	for _, id := range ids {
 		x := objects[id]
-		if x.ID != o.ID && x.Type != model.Arrow && o.Frame.Contains(x.Frame) {
+		if !visible || x.Hidden() || x.ID == o.ID || x.Type == model.Arrow || (x.Type == model.Group && (x.Frame.W <= 0 || x.Frame.H <= 0)) {
+			continue
+		}
+		if o.Frame.Contains(x.Frame) {
 			encloses = append(encloses, id)
 			inside[id] = true
 		}
-	}
-	containers := map[string]bool{}
-	for _, id := range ids {
-		x := objects[id]
-		if x.ID != o.ID && x.Type != model.Arrow && x.Frame.Contains(o.Frame) {
+		if x.Frame.Contains(o.Frame) {
 			enclosedBy = append(enclosedBy, id)
 			containers[id] = true
 		}
-	}
-	for _, id := range ids {
-		x := objects[id]
-		if x.ID != o.ID && x.Type != model.Arrow && x.Frame.Intersects(o.Frame) && !inside[id] && !containers[id] {
+		if x.Frame.Intersects(o.Frame) && !inside[id] && !containers[id] {
 			overlaps = append(overlaps, id)
 		}
 	}
 	var out, in, drawn []any
 	region := route.RectOf(o.Frame)
 	within := func(bnd route.Binding) bool {
+		if !visible {
+			return false
+		}
 		if bnd.IsPoint() {
 			return region.Contains(bnd.Point)
 		}

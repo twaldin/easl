@@ -353,10 +353,11 @@ final class CanvasView: NSScrollView {
 
     /// Where an object is on screen right now, in document coordinates, including an in-flight drag.
     func docFrame(_ id: ObjectID) -> NSRect? {
+        guard let object = board.objects[id], !object.isHidden else { return nil }
+        if object.type == .arrow, let spec = ArrowSpec(object.props), spec.hasHiddenEndpoint(in: board.objects) { return nil }
         if let tile = tiles[id] { return tile.frame }
         if let group = groups[id] { return group.isHidden ? nil : group.region }
         if let start = move?.drawn[id], let delta = move?.delta { return start.offsetBy(dx: delta.width, dy: delta.height) }
-        guard let object = board.objects[id] else { return nil }
         return shapeOutline?(id) ?? Self.docRect(object.frame)
     }
 
@@ -386,7 +387,7 @@ final class CanvasView: NSScrollView {
         case .objectUpdated(let object):
             if object.type == .group {
                 groups[object.id]?.update(object)
-            } else if TileFactory.hidden(object) {
+            } else if object.isHidden {
                 // Archived: the tile goes, the object stays (unarchiving brings it back).
                 if tiles[object.id] != nil { removeTile(object.id) }
             } else if let tile = tiles[object.id], object.type == .browser, let remote, (tile.content is BrowserTile) != remote.drawsPage(object) {
@@ -496,7 +497,7 @@ final class CanvasView: NSScrollView {
 
     private func add(_ object: CanvasObject, reusing preserved: TileFrameView? = nil) {
         if object.type == .group { return addGroup(object) }
-        guard tiles[object.id] == nil, TileFactory.hasTile(object.type), !TileFactory.hidden(object) else { return }
+        guard tiles[object.id] == nil, TileFactory.hasTile(object.type), !object.isHidden else { return }
         let id = object.id
         let content = preserved?.content ?? TileFactory.make(object, board: board, remote: remote)
         if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
@@ -605,10 +606,8 @@ final class CanvasView: NSScrollView {
         // a code, note, or HTML tile starts as its card rather than building its live view for
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
         // or a page an agent may be driving.
-        if !(content is TerminalTile), !(content is BrowserTile), !magnifying {
-            let presentation = presentation(of: tile, scale: magnification)
-            if presentation != .live { tile.startAsCard(presentation) }
-        }
+        if !(content is TerminalTile), !(content is BrowserTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        tile.updateProximity(to: documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin), admitColdCards: !magnifying)
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
@@ -682,10 +681,10 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Selects `ids`, less any archived question (`TileFactory.hidden`): it isn't on the canvas, so
+    /// Selects `ids`, less any archived question: it isn't on the canvas, so
     /// no gesture or command (a ring, a move, Delete, ⌘W) acts on it there; the API still does.
     func setSelection(_ ids: Set<ObjectID>) {
-        let ids = ids.filter { board.objects[$0].map(TileFactory.hidden) != true }
+        let ids = ids.filter { board.objects[$0]?.isHidden != true }
         guard ids != selection else { return }
         let added = ids.subtracting(selection)
         let removed = selection.subtracting(ids)
@@ -784,12 +783,11 @@ final class CanvasView: NSScrollView {
     }
 
     /// What ⌘A, the marquee and lasso, and Zoom to Fit consider: every object on the canvas, not
-    /// groups (they have their own regions) or archived questions (no view, `TileFactory.hidden`).
+    /// groups (they have their own regions) or archived questions (no view).
     private func selectableRects() -> [(id: ObjectID, rect: NSRect)] {
         board.objects.values.compactMap { object in
-            guard object.type != .group, !TileFactory.hidden(object) else { return nil }
-            // Drawn objects: rendered bounds (an arrow reroutes with its tiles without a frame write).
-            return (object.id, tiles[object.id]?.frame ?? shapeOutline?(object.id) ?? Self.docRect(object.frame))
+            guard object.type != .group, let rect = docFrame(object.id) else { return nil }
+            return (object.id, rect)
         }
     }
 
@@ -990,8 +988,10 @@ final class CanvasView: NSScrollView {
     private func refreshGroups() {
         for group in groups.values {
             let rects = group.members.compactMap { id -> NSRect? in
-                guard board.objects[id]?.type != .arrow else { return nil }
-                if groups[id] != nil { return board.objects[id].map { Self.docRect($0.frame) } }
+                guard let object = board.objects[id], !object.isHidden, object.type != .arrow else { return nil }
+                if object.type == .group {
+                    return object.frame.w > 0 && object.frame.h > 0 ? Self.docRect(object.frame) : nil
+                }
                 return docFrame(id)
             }
             if let region = group.spec.frame(around: rects) {
@@ -2525,7 +2525,7 @@ final class CanvasView: NSScrollView {
             let scale = magnification
             for tile in tiles.values {
                 if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile || tile.content is ChangesTile) { continue }
-                tile.setPresentation(presentation(of: tile, scale: scale))
+                tile.setLive(shouldBeLive(tile, scale: scale))
                 tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }
             // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
@@ -2534,6 +2534,8 @@ final class CanvasView: NSScrollView {
                 for tile in tiles.values { (tile.content as? BrowserTile)?.zoomChanged() }
             }
         }
+        let nearViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
+        for tile in tiles.values { tile.updateProximity(to: nearViewport, admitColdCards: !magnifying) }
         layoutPills()
         updateSeen()
         updateContentInView()
@@ -2546,13 +2548,6 @@ final class CanvasView: NSScrollView {
         let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
         let readable = scale * tile.zoom >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
         return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))
-    }
-
-    private func presentation(of tile: TileFrameView, scale: CGFloat) -> TileFrameView.Presentation {
-        if remote != nil, tile.content is ImageTile, !tile.frame.intersects(documentVisibleRect) {
-            return .dormant
-        }
-        return shouldBeLive(tile, scale: scale) ? .live : .card
     }
 
     // MARK: Hit testing for mentions

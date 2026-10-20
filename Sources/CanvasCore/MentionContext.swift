@@ -327,7 +327,7 @@ public enum MentionContext {
     static func host(of object: CanvasObject, on board: Board) -> (host: CanvasObject, region: CGRect, partly: Bool)? {
         guard object.type == .shape else { return nil }
         let region = object.frame.rect
-        let under = board.objects.values.filter { $0.type != .arrow && $0.type != .group && $0.id != object.id && $0.z < object.z }
+        let under = board.objects.values.filter { !$0.isHidden && $0.type != .arrow && $0.type != .group && $0.id != object.id && $0.z < object.z }
         if let host = under.filter({ $0.frame.rect.contains(region) }).max(by: { $0.z < $1.z }) { return (host, region, false) }
         let area = region.width * region.height
         guard area > 0 else { return nil }

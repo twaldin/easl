@@ -401,6 +401,54 @@ python3 scripts/perf-loop.py --app base=/tmp/a.app --app fix=/tmp/b.app [--board
 - Every row also has the app's `instructions_G` and `cycles_G` over the scenario (`proc_pid_rusage`'s `ri_instructions`/`ri_cycles`, billions) and, where the scenario knows how many events the app handled (a burst's writes: html and shape updates plus one create; agent-titles: the title changes DevPerf counted in the span, `title_changes`, never the producers' nominal cadence, which load lowers), `instructions_per_event_k`; rows from bundles with DevPerf's `main cpu` also carry `main_cpu_ms` and `longest_cpu_ms`, the stretches by CPU time. Instructions retired are the figure that survives other load on the Mac: a fixed loop retired the same count to 0.05 % with six spinning processes beside it while its CPU time moved 5 %, and CPU time, cycles and every wall-clock stretch (longest, RPC latency) move with contention, frequency and the core the scheduler picks. Each row records the Mac's load at the scenario's start and end (`machine`: CPU idle, free memory, processes above 10 %) and is `loaded` when CPU idle was under 30 % at either sample (`LOAD_BAND`): the table counts such rows, and a decision should repeat them rather than trust them.
 - A real board's geometry without its content: `scripts/perf-sanitize.py <board.json> <out.json>` keeps types, frames, z, numbers, and enum values in their own fields (checked against each field's closed list), renumbers ids found in identity and reference positions (ids, parents, actors, arrow ends, group members), and replaces every other string with filler of the same length, decided by where a value sits, never by how it looks. It fails, naming only lengths and JSON paths, if any input string over 5 characters or word of 6+ letters survives outside the sanitizer's own vocabulary. Run it on the board's machine and copy only its output; `perf-board.py --replica <out.json>` re-roots it into a home. Its tests: `python3 -m unittest discover -s scripts`.
 
+#### Board scale fixtures
+
+`perf-board.py --objects N` generates exactly N objects with seed 7 by default. Use 50, 200, 500, and 1000 for the scale matrix. Every board contains notes, code, images, HTML, cached diagrams, shapes, arrows, groups, and eight terminals. Each terminal prints a 256-byte sequence line every 125 ms. Create `<root>/.perf-board-quiet` to pause output without ending sessions, and remove it to resume.
+
+HTML pages vary by their own ordinal, independently of the object-type cycle: both static and scripted pages, both initial open states, and four content-size targets. Keep a fixture's bytes fixed across compared bundles; measurements from an older generator are a separate family.
+
+Build both bundles from the same base revision in separate scratch source trees. For the before bundle, copy only `Sources/CanvasApp/DevPerf.swift` and `Sources/CanvasApp/DevInput.swift` from the candidate into the base tree. This adds the same frame log and real-time replay protocol without the product changes. Use the candidate's scripts and replay client for both bundles. Freeze each with `EASL_BUNDLE_APP=<unique-path> scripts/bundle.sh release`; the script builds with `-j 2`. Record the source revisions, per-file hashes, compiler version, build flags, and executable and helper hashes. An uninstrumented main bundle cannot supply this harness's frame or delivery records.
+
+Run `perf-scale.py` only inside a claimed GUI guest. Compile the window lookup helper once, keep both frozen release bundles for the session, and use the same `--fixtures` directory for both artifacts:
+
+```sh
+	swiftc -O scripts/perf-window.swift -o "$G/perf-window"
+	python3 scripts/perf-scale.py --app base="$G/base.app" --app fix="$G/fix.app" \
+	  --fixtures "$G/fixtures" --window-helper "$G/perf-window" --runs 5 \
+	  --modes local,remote --easld "$G/easld" --ssh "$G/ssh" --out "$G/scale"
+```
+
+The remote mode requires the guest-loopback `easl-guest` SSH wrapper from the guest recipe. It starts only the specified scratch easld. Each run launches an empty viewer, requests a 1000 × 500 point window, pins the development idle policy active, then times opening the fixture board. Local calls use `board.open`; remote calls use the native remote-board opener and wait for the host's delegated `view.get`. The separate `harness_launch_ms` includes development-bundle preparation and is not intrinsic app-launch latency.
+
+Before the first native capture, the runner polls `agent.read` until all eight terminals have produced a complete `worker=N sequence=<20 decimal digits> status=running` marker in the actual `text` output, not in command metadata. The protocol's `unavailable` state keeps the requested output pending; other RPC errors fail the run. All reads share one 90-second readiness deadline, with each RPC limited to the remaining time. `streams.json` retains the latest replies, including partial readiness and unavailable errors on failure. This wait is inside the clock started before opening the target board, so it makes the startup capture bound more conservative. Native capture still performs its original exact PID/window ownership checks; an ownership failure is not retried. Do not combine this readiness family with older runs that verified streams only after capture.
+
+Rows record API readiness, a native startup capture and its elapsed-time upper bound, quiet CPU, app RSS, process footprints, ten-second pan and zoom gestures, and a whole-board `view.render` RPC targeting every object at scale `0.15`, with inline PNG output and a 60-second request limit. `perf-window --drawn IMAGE` uses native Vision text recognition to require the fixture's visible `sequence=… status=running` stream before accepting a startup capture. Every attempt and its receipt remains in the output. The accepted capture's completion time is recorded before OCR. Inspect its pixels too: this establishes a conservative bound for the initial viewport, not an exact first presentation or completion of offscreen tiles.
+
+Idle CPU is a ten-second CPU-time delta before the gestures, with all eight streams paused. Rows distinguish the app, the app plus its observed helpers, and the scratch daemon. The helper aggregate is unavailable if the observed PID set changes during the window; the raw per-PID samples remain. Daemon CPU excludes backend workers. Memory snapshots cover the quiet phase and the end of the whole-board render.
+
+These are post-open quiet observations, not proof that every card on the board has settled. Gestures also use fixed two-second setup waits. Record remaining card activity in profiles, and retain slower or failed observations. Use at least five interleaved observations before attributing a timing difference; a single observation at another board size is diagnostic.
+
+`command()` subprocess calls have a 120-second limit, and native activation/OCR JSON helpers a 30-second limit. A timed-out JSON helper retains its partial stdout and stderr before the failed row enters cleanup. Ownership-inspection `lsof` calls also have a 30-second limit; an inspection failure marks cleanup failed and preserves the scratch directory, stopping the matrix before another run.
+
+The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must traverse more than one viewport width. The pinch uses 0.01 steps and reverses every 120 steps. Both use `--repeat 601 --interval 16.666667 --realtime`: missed timer ticks coalesce into the corresponding trajectory displacement instead of stretching 601 deliveries beyond ten seconds. `DevInput.delivery` confirms real-time mode and records delivered/coalesced counts. `DevInput.motion` records the observed pan and magnification range; a gesture without sufficient movement fails the runner.
+
+`DevPerfFrames` reports callback-gap p50, p95, and p99, missed display timestamps, and `stalls50` for each phase. `stalls50` counts main run-loop busy wakes of at least 50 ms, not callback gaps or individual blocking handlers: one busy wake can include several delivered updates. Quantiles are 0.01 ms histogram upper bounds below 100 ms. `overflow100` counts larger gaps, whose quantiles use the phase maximum. Zero samples means no valid frame distribution. These callbacks are not GPU presentation timestamps. The original `DevPerf` and `DevPerfWake` lines retain their formats.
+
+Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
+
+Cold-preview proximity leaves tile bodies and title controls in their original canvas hierarchy. Distant cold tiles defer card snapshots until near, and new cold admissions wait until a pinch ends. Within a scene pass, live departure snapshots enter before cold admissions; work queued by earlier passes is not preempted. Completed cards survive far/near without being redrawn. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
+
+#### Native preview lifecycle regression
+
+Inside a claimed VirtualMac GUI guest with CuaDriver available, use the same compiled window helper and a frozen app:
+
+```sh
+python3 Tests/TileProximity/run.py --checkout "$PWD" --app "$G/fix.app" \
+  --window-helper "$G/perf-window" --out "$G/proximity"
+```
+
+The five cases check a saved browser card after far/near, cold HTML demand only when near, cancelled cold demand restarting on reentry, and a loaded browser's first Zoom to Fit on 500- and 1000-object fixtures. They inspect native body pixels and gated loopback HTTP requests, not `view.snapshot` or `view.render` refreshes. Large cases verify eight outputting terminal sessions. `--cases` selects named cases listed by `--help`. Both harnesses refuse app launch on a physical Mac; the helper's activation mode also checks the guest model. Each scale run uses a fresh capture-session label and ends its session before the next run.
+
 ### Remote boards
 
 To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.

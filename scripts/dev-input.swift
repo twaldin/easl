@@ -30,6 +30,8 @@
 //                                                    host found over ssh; host home: its support directory)
 //   click, text, key, shortcut: --window <id>          target that instance's exact window; stale IDs drop input
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
+//   scroll/magnify --oscillate N                     reverse direction every N repeated steps
+//   scroll/magnify --realtime                        coalesce missed ticks; keep the scheduled burst duration
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed
 import Foundation
@@ -51,6 +53,9 @@ guard !hasWindow || window.flatMap(Int.init) != nil else {
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
+let oscillate = option("--oscillate")
+let realtime = args.contains("--realtime")
+args.removeAll { $0 == "--realtime" }
 let hold = args.contains("--hold")
 args.removeAll { $0 == "--hold" }
 let gesture = args.contains("--gesture")
@@ -120,6 +125,8 @@ if hold { info["hold"] = "1" }
 if middle { info["middle"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }
 if let interval { info["interval"] = interval }
+if let oscillate { info["oscillate"] = oscillate }
+if realtime { info["realtime"] = "1" }
 if gesture { info["gesture"] = "1" }
 if lines { info["lines"] = "1" }
 DistributedNotificationCenter.default().postNotificationName(Notification.Name("canvas.dev.input"), object: nil, userInfo: info, deliverImmediately: true)
