@@ -24,7 +24,6 @@ def native_state():
                             capture_output=True, text=True, check=True)
     windows = json.loads(result.stdout)['windows']
     return next(item for item in windows if item['window'] == window)
-server = RPC(root / 'host/easl.sock')
 def cua(method, fields):
     result = subprocess.run(['/Applications/CuaDriver.app/Contents/MacOS/cua-driver', 'call', method,
                              json.dumps(dict(pid=pid, window_id=window, session='echo-native-proof-' + str(pid), **fields))],
@@ -34,7 +33,7 @@ def cua(method, fields):
     assert result.returncode == 0, (value, result.stderr)
     return value
 if args.action == 'delete':
-    print(json.dumps(server.call('object.delete', {'id': config['tile']})), flush=True)
+    print(json.dumps(RPC(root / 'host/easl.sock').call('object.delete', {'id': config['tile']})), flush=True)
 elif args.action == 'prepare':
     value = cua('bring_to_front', {})
     assert value.get('exact_window_effect', {}).get('verified') is True
@@ -74,19 +73,34 @@ elif args.action == 'type':
     print(result, flush=True)
 elif args.action == 'wait':
     print(json.dumps(module['wait'](target / 'native/complete.json', max(30, config['count'] * config['interval'] / 1000 + 20))), flush=True)
+    print(json.dumps(module['wait'](target / 'native/surface-complete.json', 15)), flush=True)
 elif args.action == 'capture':
     value = cua('get_window_state', {'include_accessibility_tree': False, 'max_image_dimension': 0, 'screenshot_out_file': str(target / 'cua.png')})
     assert value.get('screenshot_frame_valid') is True and value['pid'] == pid and value['window_id'] == window
     print(json.dumps(value), flush=True)
 elif args.action == 'finish':
-    send(root, pid, window, kind='terminal-echo', action='stop')
-    (target / 'stop-fixture').touch()
-    time.sleep(.6)
-    print(json.dumps(server.call('object.delete', {'id': config['tile']})), flush=True)
-    deadline = time.monotonic() + 15
-    while True:
-        text = (target / 'host.jsonl').read_text()
-        if text.endswith('\n') and json.loads(text.splitlines()[-1]).get('stage') == 'host_trace_summary':
-            break
-        assert time.monotonic() < deadline, 'host syscall trace did not flush after session shutdown'
-        time.sleep(.01)
+    try:
+        send(root, pid, window, kind='terminal-echo', action='stop')
+        stopped = module['wait'](target / 'native/stopped.json', 15)
+        assert stopped['success'], stopped
+    finally:
+        (target / 'stop-fixture').touch()
+        server = RPC(root / 'host/easl.sock')
+        print(json.dumps(server.call('object.delete', {'id': config['tile']})), flush=True)
+        deadline = time.monotonic() + 15
+        while True:
+            text = (target / 'host.jsonl').read_text()
+            if text.endswith('\n') and json.loads(text.splitlines()[-1]).get('stage') == 'host_trace_summary':
+                break
+            assert time.monotonic() < deadline, 'host syscall trace did not flush after session shutdown'
+            time.sleep(.01)
+        while True:
+            text = (target / 'ssh.jsonl').read_text()
+            if text.endswith('\n'):
+                rows = [json.loads(line) for line in text.splitlines()]
+                inputs = {row['pid'] for row in rows if row.get('stage') == 'ssh.input'}
+                transports = {row['pid'] for row in rows if row.get('stage') == 'ssh.transport'}
+                if len(inputs) != 1 or inputs <= transports:
+                    break
+            assert time.monotonic() < deadline, 'the measured SSH observer did not publish its transport receipt'
+            time.sleep(.01)

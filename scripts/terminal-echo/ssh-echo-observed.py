@@ -39,6 +39,7 @@ import errno
 import fcntl
 import json
 import os
+from pathlib import Path
 import re
 import select
 import signal
@@ -69,11 +70,14 @@ class MachClock:
 
 
 class Trace:
-    def __init__(self, path, clock, payload):
+    def __init__(self, path, clock, payload, options, debug):
         self.fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         self.clock = clock
         self.payload = payload
         self.pid = None
+        self.options = options
+        self.debug = debug
+        self.transport_recorded = False
 
     def append(self, row):
         data = (json.dumps(row, separators=(",", ":")) + "\n").encode("ascii")
@@ -99,6 +103,13 @@ class Trace:
         if self.payload:
             result["hex"] = data.hex()
         return result
+
+    def transport(self):
+        if self.transport_recorded:
+            return
+        negotiated = dict(re.findall(r"kex:\s+(server->client|client->server).*?compression:\s+(\S+)", self.debug.read_text()))
+        self.emit("ssh.transport", options=self.options, negotiated_compression=negotiated, debug_file=str(self.debug))
+        self.transport_recorded = True
 
 
 class Markers:
@@ -256,6 +267,7 @@ def relay(argv, trace):
                 data = os.read(child.stdout.fileno(), 4096)
                 received = trace.clock.now()
                 if data:
+                    trace.transport()
                     trace.emit("viewer.received", ts_ms=received, read_begin_ms=begin,
                                read_end_ms=received, **trace.byte_fields(data, output_offset))
                     markers.receive(data, output_offset, received, trace)
@@ -339,11 +351,18 @@ def main():
         if compression not in ("yes", "no"):
             raise ValueError("ECHO_COMPRESSION must be yes or no")
         argv += ["-o", "Compression=" + compression]
+    effective = subprocess.check_output([argv[0], "-G"] + argv[1:] + args, text=True)
+    options = [line for line in effective.splitlines() if line.split() and line.split()[0] in
+               ("compression", "controlmaster", "controlpath", "ipqos", "obscurekeystroketiming", "requesttty")]
+    debug = Path(os.environ["ECHO_TRACE_FILE"]).parent / ("ssh-transport-%d.log" % os.getpid())
+    fd = os.open(debug, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    os.close(fd)
     trace = Trace(os.environ["ECHO_TRACE_FILE"], MachClock(),
-                  os.environ.get("ECHO_TRACE_PAYLOAD") == "1")
+                  os.environ.get("ECHO_TRACE_PAYLOAD") == "1", options, debug)
     try:
-        return relay(argv + args, trace)
+        return relay(argv + ["-v", "-E", str(debug)] + args, trace)
     finally:
+        trace.transport()
         os.close(trace.fd)
 
 

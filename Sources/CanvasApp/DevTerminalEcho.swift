@@ -16,16 +16,23 @@ enum DevTerminalEcho {
     private static var updated = 0
     private static var expected = 100
     private static var sampler: DispatchSourceTimer?
+    private static var startup: Task<Void, Never>?
 
     static func control(_ fields: [String: String]) {
         guard DevInput.enabled, #available(macOS 14.4, *) else { return }
         if fields["action"] == "stop" {
             let old = capture
+            let starting = startup
+            startup = nil
+            starting?.cancel()
             capture = nil
             terminal = nil
             sampler?.cancel()
             sampler = nil
-            Task { try? await old?.stop() }
+            Task {
+                await starting?.value
+                await old?.stop()
+            }
             return
         }
         guard capture == nil, fields["action"] == "start",
@@ -59,14 +66,16 @@ enum DevTerminalEcho {
             timer.resume()
             output.record("probe.start", fields: ["window": number, "contentHeight": content.bounds.height,
                           "cell": [rect.minX, rect.minY, rect.width, rect.height], "columns": size.columns, "rows": size.rows, "surface_sample_ms": 2])
-            Task {
+            startup = Task {
                 do {
                     let own = try await SCShareableContent.currentProcess
+                    guard !Task.isCancelled else { return }
                     guard let selected = own.windows.first(where: { $0.windowID == CGWindowID(number) && $0.owningApplication?.processID == getpid() }) else {
                         throw CocoaError(.fileNoSuchFile)
                     }
                     try await output.start(selected)
                 } catch { output.record("probe.error", fields: ["error": String(describing: error)]) }
+                if capture === output { startup = nil }
             }
         } catch { NSLog("easl: terminal echo probe: %@", String(describing: error)) }
     }
@@ -93,6 +102,7 @@ enum DevTerminalEcho {
             } while updated < min(keys, expected) && updated / 10 == row
         }
         if updated == expected {
+            capture.publish(["stage": "surface.complete", "observed": updated], name: "surface-complete.json")
             sampler?.cancel()
             sampler = nil
         }
@@ -147,6 +157,16 @@ private final class EchoCapture: NSObject, SCStreamOutput, SCStreamDelegate, @un
         queue.async { [self] in try? log.write(contentsOf: data) }
     }
 
+    func publish(_ fields: [String: Any], name: String) {
+        do {
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            queue.async { [self] in
+                do { try writeProbeArtifact(data, to: directory.appendingPathComponent(name)) }
+                catch { record("probe.error", fields: ["error": String(describing: error)]) }
+            }
+        } catch { record("probe.error", fields: ["error": String(describing: error)]) }
+    }
+
     @MainActor func start(_ selected: SCWindow) async throws {
         let config = SCStreamConfiguration()
         config.width = width
@@ -159,16 +179,40 @@ private final class EchoCapture: NSObject, SCStreamOutput, SCStreamDelegate, @un
         config.ignoreShadowsSingleWindow = true
         config.queueDepth = 3
         let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: selected), configuration: config, delegate: self)
-        queue.sync { self.stream = stream }
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try await stream.startCapture()
+        queue.sync { self.stream = stream }
+        do {
+            try await stream.startCapture()
+        } catch {
+            do { try stream.removeStreamOutput(self, type: .screen) }
+            catch { record("probe.error", fields: ["error": String(describing: error)]) }
+            queue.sync { self.stream = nil }
+            throw error
+        }
     }
 
-    @MainActor func stop() async throws {
-        let current = queue.sync { stream }
-        try await current?.stopCapture()
-        try current?.removeStreamOutput(self, type: .screen)
-        record("probe.stopped", fields: ["observed": queue.sync { seen.count }])
+    @MainActor func stop() async {
+        let current = queue.sync {
+            let current = stream
+            stream = nil
+            return current
+        }
+        var success = true
+        if let current {
+            do { try await current.stopCapture() }
+            catch {
+                success = false
+                record("probe.error", fields: ["error": String(describing: error)])
+            }
+            do { try current.removeStreamOutput(self, type: .screen) }
+            catch {
+                success = false
+                record("probe.error", fields: ["error": String(describing: error)])
+            }
+        }
+        let fields: [String: Any] = ["stage": "probe.stopped", "observed": queue.sync { seen.count }, "success": success]
+        record("probe.stopped", fields: fields)
+        publish(fields, name: "stopped.json")
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -226,7 +270,7 @@ private final class EchoCapture: NSObject, SCStreamOutput, SCStreamDelegate, @un
                 try save(base, stride: stride, name: name)
                 let fields: [String: Any] = ["stage": ready ? "screen.complete" : "screen.ready", "ts_ms": Self.ms(display),
                                              "receipt_ms": Self.ms(receipt), "seen": seen.count, "window": window, "png": name]
-                try writeProbeArtifact(JSONSerialization.data(withJSONObject: fields), to: directory.appendingPathComponent(ready ? "complete.json" : "ready.json"))
+                publish(fields, name: ready ? "complete.json" : "ready.json")
                 ready = true
             } catch { record("probe.error", fields: ["error": String(describing: error)]) }
         }

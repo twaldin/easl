@@ -30,16 +30,29 @@ def analyze(directory):
     errors = []
     if count <= 0:
         errors.append({'error': 'expected a positive keystroke count', 'expected': count})
+    input_pids = {row['pid'] for row in rows if row.get('stage') == 'ssh.input' and row['bytes'] > 0}
+    marker_pids = {row['pid'] for row in rows if row.get('stage') == 'viewer.received.marker'}
+    observer = next(iter(input_pids)) if len(input_pids) == 1 and marker_pids == input_pids else None
+    if observer is None:
+        errors.append({'error': 'expected one matching SSH input and marker producer',
+                       'input_pids': sorted(input_pids), 'marker_pids': sorted(marker_pids)})
     stage_map = {'viewer.key': 'key', 'host_pty_write': 'pty', 'host_output_read': 'host_output',
                  'viewer.received.marker': 'received', 'surface.updated': 'surface', 'screen.glyph': 'glyph',
                  'fixture.received': 'fixture', 'fixture.output': 'fixture_output'}
     for row in rows:
         stage = row.get('stage')
         if stage == 'ssh.input':
-            assert row.get('hex') == '61' * row['bytes'], ('unexpected terminal input', row)
+            if row['pid'] != observer:
+                continue
+            if row.get('hex') != '61' * row['bytes']:
+                errors.append({'error': 'unexpected terminal input', 'row': row})
             for offset in range(row['offset_start'], row['offset_end']):
                 if offset + 1 in by_seq:
+                    if 'ssh' in by_seq[offset + 1]:
+                        errors.append({'seq': offset + 1, 'error': 'duplicate SSH byte offset'})
                     by_seq[offset + 1]['ssh'] = dict(row, ts_ms=row['write_end_ms'])
+        if stage == 'viewer.received.marker' and row['pid'] != observer:
+            continue
         if stage in stage_map and row.get('seq') in by_seq:
             seq = row['seq']
             key = stage_map[stage]
@@ -52,11 +65,11 @@ def analyze(directory):
     if len(summaries) != 1 or summaries[0]['dropped'] or summaries[0]['input_keys'] != count or summaries[0]['output_markers'] != count:
         errors.append({'error': 'incomplete host syscall trace', 'summaries': summaries})
     host_reads = [row for row in rows if row.get('stage') == 'host_output_read_call' and row['bytes'] > 0]
-    viewer_reads = [row for row in rows if row.get('stage') == 'viewer.received']
+    viewer_reads = [row for row in rows if row.get('stage') == 'viewer.received' and row['pid'] == observer]
     for seq, stages in by_seq.items():
         if 'host_output' in stages:
             end = stages['host_output']['marker_start_offset'] - 4
-            call = next((row for row in host_reads if row['offset'] < end <= row['offset'] + row['bytes']), None)
+            call = next((row for row in host_reads if row['pid'] == stages['host_output']['pid'] and row['offset'] < end <= row['offset'] + row['bytes']), None)
             if call:
                 stages['host_output'] = call
             else:
@@ -88,8 +101,32 @@ def analyze(directory):
                   'observer': stages['glyph']['observer_ms']}
         samples.append(sample)
     deltas = {name: stats([row[name] for row in samples]) for name in samples[0] if name != 'seq'} if samples else {}
+    bulk_valid = None
+    if config.get('burst'):
+        chunks = []
+        for row in viewer_reads:
+            try:
+                chunks.append(bytes.fromhex(row['hex']))
+            except (KeyError, TypeError, ValueError):
+                errors.append({'error': 'missing or invalid bulk payload', 'row': row})
+        expected = b''.join(str(value).encode() + b'\r\n' for value in range(1, 20001))
+        bulk_valid = expected in b''.join(chunks)
+        if not bulk_valid:
+            errors.append({'error': 'the exact seq 1 20000 body was not received'})
+    transports = [row for row in rows if row.get('stage') == 'ssh.transport' and row['pid'] == observer]
+    if transports:
+        expected_compression = 'zlib@openssh.com' if config.get('compression', 'yes') == 'yes' else 'none'
+        expected_transport = {'server->client': expected_compression, 'client->server': expected_compression}
+        if len(transports) != 1 or transports[0]['negotiated_compression'] != expected_transport:
+            errors.append({'error': 'the measured SSH connection did not negotiate the requested compression arm',
+                           'transports': transports})
     result = {'directory': str(directory), 'config': config, 'expected': count, 'complete': len(samples),
               'valid': len(samples) == count and not errors, 'errors': errors, 'stages': deltas, 'samples': samples}
+    result['ssh_observer_pid'] = observer
+    if bulk_valid is not None:
+        result['burst_bytes_valid'] = bulk_valid
+    if transports:
+        result['ssh_transport'] = transports[0]
     (directory / 'analysis.json').write_text(json.dumps(result, indent=2) + '\n')
     return result, rows
 
