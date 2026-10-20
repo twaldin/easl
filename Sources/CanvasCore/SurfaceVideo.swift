@@ -132,35 +132,34 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
     }
 }
 
+/// Callers decode every returned frame in order with one SurfaceVideoDecoder and discard the encoder after dropping one.
+/// The cached session is then the decoder's cached configuration: whichever was active before the current one.
 public final class SurfaceVideoEncoder: @unchecked Sendable {
     private enum Profile {
         case motion, sharp
     }
 
-    private struct MotionSession {
+    private struct Session {
         let session: VTCompressionSession
         let pool: CVPixelBufferPool
+        let profile: Profile
         let width: Int
         let height: Int
         let requestedWidth: Int
         let requestedHeight: Int
         let epoch: TimeInterval
-        let minimumQP: Int
+        var sequence: Int64 = 0
+        var minimumQP = 35
+
+        func serves(_ profile: Profile, width: Int, height: Int) -> Bool {
+            self.profile == profile && requestedWidth == width && requestedHeight == height
+        }
     }
 
     private let maximumMotionBytes = 48 * 1024
     private let lock = NSLock()
-    private var session: VTCompressionSession?
-    private var pool: CVPixelBufferPool?
-    private var profile: Profile = .motion
-    private var motionSession: MotionSession?
-    private var width = 0
-    private var height = 0
-    private var requestedWidth = 0
-    private var requestedHeight = 0
-    private var sequence: Int64 = 0
-    private var epoch: TimeInterval = 0
-    private var minimumMotionQP = 35
+    private var active: Session?
+    private var cached: Session?
 
     public init() {}
     deinit { clear() }
@@ -172,53 +171,29 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         return (max(16, Int(w * scale) / 2 * 2), max(16, Int(h * scale) / 2 * 2))
     }
 
-    private func clearActive() {
-        if let session { RetiredVideoCompressionSession(session: session).invalidate() }
-        session = nil
-        pool = nil
-        sequence = 0
-        profile = .motion
-        minimumMotionQP = 35
-    }
-
     private func clear() {
-        clearActive()
-        if let motionSession { RetiredVideoCompressionSession(session: motionSession.session).invalidate() }
-        motionSession = nil
+        if let active { RetiredVideoCompressionSession(session: active.session).invalidate() }
+        if let cached { RetiredVideoCompressionSession(session: cached.session).invalidate() }
+        active = nil
+        cached = nil
     }
 
-    private func cacheMotion() {
-        guard let session, let pool else { return }
-        if let motionSession { RetiredVideoCompressionSession(session: motionSession.session).invalidate() }
-        motionSession = MotionSession(session: session, pool: pool, width: width, height: height,
-                                      requestedWidth: requestedWidth, requestedHeight: requestedHeight, epoch: epoch,
-                                      minimumQP: minimumMotionQP)
-        self.session = nil
-        self.pool = nil
-        sequence = 0
-    }
-
-    private func restoreMotion(width: Int, height: Int) throws {
-        guard let motionSession, motionSession.requestedWidth == width,
-              motionSession.requestedHeight == height else { return }
-        clearActive()
-        session = motionSession.session
-        pool = motionSession.pool
-        self.width = motionSession.width
-        self.height = motionSession.height
-        requestedWidth = width
-        requestedHeight = height
-        epoch = motionSession.epoch
-        self.motionSession = nil
-        minimumMotionQP = motionSession.minimumQP
-        if minimumMotionQP != 42 {
-            try videoCheck(VTSessionSetProperty(motionSession.session, key: kVTCompressionPropertyKey_MinAllowedFrameQP,
+    /// A restored motion session restarts with a fast IDR; a restored sharp session predicts from its last frame.
+    private func restore(_ profile: Profile, width: Int, height: Int) throws {
+        guard active?.serves(profile, width: width, height: height) != true,
+              let restored = cached, restored.serves(profile, width: width, height: height) else { return }
+        cached = active
+        active = restored
+        guard profile == .motion else { return }
+        active?.sequence = 0
+        if restored.minimumQP != 42 {
+            try videoCheck(VTSessionSetProperty(restored.session, key: kVTCompressionPropertyKey_MinAllowedFrameQP,
                                                 value: NSNumber(value: 42)))
-            minimumMotionQP = 42
+            active?.minimumQP = 42
         }
     }
 
-    /// Refresh starts a native-pixel reference chain. Unpublished references reset the stream.
+    /// Refresh requests a native-pixel refinement, predicted from a sharp session that is still the decoder's.
     public func encode(_ image: CGImage, width: Int, height: Int, refresh: Bool = false, motion: Bool = false,
                        isCancelled: () -> Bool = { false }) throws -> SurfaceVideoFrame? {
         guard !isCancelled() else { return nil }
@@ -230,45 +205,49 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             if refresh, image.width != width || image.height != height {
                 throw SurfaceVideoError.invalidDimensions
             }
-            var nextProfile: Profile = refresh ? .sharp : motion ? .motion : profile
-            if nextProfile == .motion, profile == .sharp { try restoreMotion(width: width, height: height) }
-            if nextProfile == .sharp, profile == .motion { cacheMotion() }
-            var target = nextProfile == .sharp ?
+            var profile: Profile = refresh ? .sharp : motion ? .motion : active?.profile ?? .motion
+            try restore(profile, width: width, height: height)
+            var target = profile == .sharp ?
                 (width: max(16, (width + 1) / 2 * 2), height: max(16, (height + 1) / 2 * 2)) :
                 Self.fittedVideoPixels(width: width, height: height)
             guard target.width <= 4_000_000 / target.height else { clear(); return nil }
-            if nextProfile == .motion, session != nil, requestedWidth == width, requestedHeight == height {
-                target = (self.width, self.height)
+            if profile == .motion, let active, active.requestedWidth == width, active.requestedHeight == height {
+                target = (active.width, active.height)
             }
             for attempt in 0..<6 {
-                if session == nil || self.width != target.width || self.height != target.height || profile != nextProfile {
-                    clearActive()
-                    try start(width: target.width, height: target.height, profile: nextProfile)
-                    requestedWidth = width
-                    requestedHeight = height
+                if active.map({ $0.width != target.width || $0.height != target.height || $0.profile != profile }) ?? true {
+                    try start(width: target.width, height: target.height, requestedWidth: width,
+                              requestedHeight: height, profile: profile)
                 }
+                guard let current = active else { throw SurfaceVideoError.missingOutput }
                 guard !isCancelled() else { clear(); return nil }
-                let independent = refresh || sequence == 0
-                guard let sample = try encodeSample(image, forceKeyframe: independent, isCancelled: isCancelled) else {
+                let independent = current.sequence == 0
+                guard let sample = try encodeSample(image, on: current, isCancelled: isCancelled) else {
                     clear()
                     return nil
                 }
                 guard !isCancelled() else { clear(); return nil }
                 let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
                 let keyframe = !(attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
-                let reference = nextProfile == .sharp && keyframe
-                let maximumBytes = reference ? SurfaceImageEncoder.refinementBytes : maximumMotionBytes
+                let refinement = refresh || (profile == .sharp && keyframe)
+                let maximumBytes = refinement ? SurfaceImageEncoder.refinementBytes : maximumMotionBytes
                 if let packet = try packetFromSample(sample, maximumBytes: maximumBytes, keyframe: keyframe) {
                     guard !independent || keyframe else { throw SurfaceVideoError.missingKeyframe }
                     guard !isCancelled() else { clear(); return nil }
-                    sequence += 1
-                    return SurfaceVideoFrame(data: packet, width: self.width, height: self.height, refresh: reference)
+                    active?.sequence += 1
+                    return SurfaceVideoFrame(data: packet, width: current.width, height: current.height, refresh: refinement)
                 }
-                // Neither an oversized refresh nor its predicted successors can be published.
-                clear()
-                if refresh || reference { return nil }
-                if nextProfile == .sharp {
-                    nextProfile = .motion
+                // Neither an oversized refinement nor its predicted successors can be published.
+                if refinement || current.sequence > 0 {
+                    clear()
+                } else {
+                    // The decoder never saw this first frame, so its active configuration is still the cached session.
+                    RetiredVideoCompressionSession(session: current.session).invalidate()
+                    active = nil
+                }
+                if refinement { return nil }
+                if profile == .sharp {
+                    profile = .motion
                     target = Self.fittedVideoPixels(width: width, height: height)
                     continue
                 }
@@ -288,15 +267,15 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         }
     }
 
-    private func encodeSample(_ image: CGImage, forceKeyframe: Bool, isCancelled: () -> Bool) throws -> CMSampleBuffer? {
-        guard let session, let pool else { throw SurfaceVideoError.missingOutput }
-        if profile == .motion, sequence > 0, minimumMotionQP != 35 {
+    private func encodeSample(_ image: CGImage, on current: Session, isCancelled: () -> Bool) throws -> CMSampleBuffer? {
+        let session = current.session, width = current.width, height = current.height
+        if current.profile == .motion, current.sequence > 0, current.minimumQP != 35 {
             try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MinAllowedFrameQP,
                                                 value: NSNumber(value: 35)))
-            minimumMotionQP = 35
+            active?.minimumQP = 35
         }
         var buffer: CVPixelBuffer?
-        try videoCheck(CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer))
+        try videoCheck(CVPixelBufferPoolCreatePixelBuffer(nil, current.pool, &buffer))
         guard let buffer else { throw SurfaceVideoError.missingOutput }
         try videoCheck(CVPixelBufferLockBaseAddress(buffer, []))
         do {
@@ -305,7 +284,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                 bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: videoColorSpace,
                 bitmapInfo: videoBitmapInfo) else { throw SurfaceVideoError.missingOutput }
             context.setBlendMode(.copy)
-            if profile == .sharp {
+            if current.profile == .sharp {
                 context.setFillColor(CGColor(gray: 1, alpha: 1))
                 context.fill(CGRect(x: 0, y: 0, width: width, height: height))
                 context.interpolationQuality = .none
@@ -318,9 +297,9 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         guard !isCancelled() else { return nil }
         let output = VideoOutput<CMSampleBuffer>()
         try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
-            presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - epoch, preferredTimescale: 1_000_000),
+            presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - current.epoch, preferredTimescale: 1_000_000),
             duration: .invalid,
-            frameProperties: forceKeyframe ?
+            frameProperties: current.sequence == 0 ?
                 [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
             infoFlagsOut: nil, outputHandler: { status, flags, sample in
                 output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
@@ -328,20 +307,33 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         return try output.wait()
     }
 
-    private func start(width: Int, height: Int, profile: Profile) throws {
+    /// The active session, which sent the decoder's active configuration, becomes cached as the new IDR replaces it.
+    private func start(width: Int, height: Int, requestedWidth: Int, requestedHeight: Int, profile: Profile) throws {
         let attributes: [CFString: Any] = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
             kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true,
             kCVPixelBufferIOSurfacePropertiesKey: [:]]
+        var pool: CVPixelBufferPool?
+        try videoCheck(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary,
+                                             attributes as CFDictionary, &pool))
+        guard let pool else { throw SurfaceVideoError.missingOutput }
         var specification: [CFString: Any] = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_EnableLowLatencyRateControl: profile == .motion]
         if profile == .sharp { specification[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] = true }
+        var created: VTCompressionSession?
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
-            outputCallback: nil, refcon: nil, compressionSessionOut: &session))
-        guard let session else { throw SurfaceVideoError.missingOutput }
+            outputCallback: nil, refcon: nil, compressionSessionOut: &created))
+        guard let session = created else { throw SurfaceVideoError.missingOutput }
+        if let active {
+            if let cached { RetiredVideoCompressionSession(session: cached.session).invalidate() }
+            cached = active
+        }
+        active = Session(session: session, pool: pool, profile: profile, width: width, height: height,
+                         requestedWidth: requestedWidth, requestedHeight: requestedHeight,
+                         epoch: ProcessInfo.processInfo.systemUptime)
         let settings: [(CFString, CFTypeRef)] = profile == .sharp ? [
             (kVTCompressionPropertyKey_ProfileLevel, "H264_High444Predictive_AutoLevel" as CFString),
             (kVTCompressionPropertyKey_RealTime, kCFBooleanFalse),
@@ -364,12 +356,6 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
                                             value: NSNumber(value: 0)))
         try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session))
-        try videoCheck(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary,
-                                             attributes as CFDictionary, &pool))
-        self.width = width
-        self.height = height
-        self.profile = profile
-        epoch = ProcessInfo.processInfo.systemUptime
     }
 
     private func packetFromSample(_ sample: CMSampleBuffer, maximumBytes: Int, keyframe: Bool) throws -> Data? {
@@ -444,12 +430,12 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
         do {
             try videoDimensions(width, height)
             let packet = try VideoPacket(data)
-            let changed = configuration?.matches(packet) != true
-            guard packet.keyframe || !changed else { throw SurfaceVideoError.missingKeyframe }
-            if changed {
+            if configuration?.matches(packet) != true {
+                // Only the exact cached configuration still holds a predicted packet's references.
                 if cached?.matches(packet) == true {
                     swap(&configuration, &cached)
                 } else {
+                    guard packet.keyframe else { throw SurfaceVideoError.missingKeyframe }
                     let nextFormat = try packet.format(width: width, height: height)
                     var nextSession: VTDecompressionSession?
                     try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,

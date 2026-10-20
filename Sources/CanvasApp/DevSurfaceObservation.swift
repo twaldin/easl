@@ -97,9 +97,11 @@ enum DevSurfaceObservation {
     }
 
     private static func report(_ fields: [String: String], _ message: String) {
-        let value: [String: Any] = ["stage": "screen.error", "session": fields["session"] ?? "",
-                                    "pid": getpid(), "window": Int(fields["window"] ?? "") ?? -1,
-                                    "error": message, "ts_ms": Date().timeIntervalSince1970 * 1000]
+        let value = ProbeClock().timestampFields.merging([
+            "stage": "screen.error", "session": fields["session"] ?? "",
+            "pid": getpid(), "window": Int(fields["window"] ?? "") ?? -1,
+            "error": message
+        ]) { _, new in new }
         if let directory = fields["directory"], directory.hasPrefix("/"),
            let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
             try? writeProbeArtifact(data, to: URL(fileURLWithPath: directory).appendingPathComponent("error.json"))
@@ -130,7 +132,6 @@ private struct ProbeClock {
         return (value.numer, value.denom)
     }()
     let a: UInt64
-    let epoch: Double
     let b: UInt64
     let numer: UInt32
     let denom: UInt32
@@ -139,7 +140,6 @@ private struct ProbeClock {
         numer = Self.timebase.0
         denom = Self.timebase.1
         a = mach_absolute_time()
-        epoch = Date().timeIntervalSince1970 * 1000
         b = mach_absolute_time()
     }
 
@@ -147,15 +147,13 @@ private struct ProbeClock {
     func delta(_ lhs: UInt64, _ rhs: UInt64) -> Double {
         lhs >= rhs ? Double(lhs - rhs) * factor : -Double(rhs - lhs) * factor
     }
-    func bounds(_ ticks: UInt64) -> (Double, Double) {
-        (epoch + delta(ticks, b), epoch + delta(ticks, a))
-    }
-    func agrees(with old: ProbeClock) -> Bool {
-        let elapsed = epoch - old.epoch
-        return elapsed >= delta(a, old.b) - 2 && elapsed <= delta(b, old.a) + 2
+    func milliseconds(_ ticks: UInt64) -> Double { Double(ticks) * factor }
+    var timestampFields: [String: Any] {
+        ["clock_domain": "mach_absolute_time", "ts_ticks": String(b), "ts_ms": milliseconds(b),
+         "timebase_numer": numer, "timebase_denom": denom]
     }
     var fields: [String: Any] {
-        ["a_ticks": String(a), "epoch_ms": epoch, "b_ticks": String(b),
+        ["clock_domain": "mach_absolute_time", "a_ticks": String(a), "b_ticks": String(b),
          "timebase_numer": numer, "timebase_denom": denom]
     }
 }
@@ -170,7 +168,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
     private let backingScale: CGFloat
     private let queue = DispatchQueue(label: "canvas.dev.own-window-observation")
     private let origin: ProbeClock
-    private var previous: ProbeClock
+    private var previous: ProbeClock?
     private var stream: SCStream?
     private var active = true
     private var ready = false
@@ -194,7 +192,6 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
         self.backingScale = backingScale
         let clock = ProbeClock()
         origin = clock
-        previous = clock
         super.init()
         guard fraction.x >= 0, fraction.x < 1, fraction.y >= 0, fraction.y < 1 else {
             throw ProbeError("content point outside full NSWindow")
@@ -203,7 +200,8 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ProbeError("artifact directory must already exist")
         }
-        try emit("screen.starting", file: "starting.json", fields: ["origin_bridge": origin.fields])
+        try check(clock)
+        try emit("screen.starting", file: "starting.json", fields: ["origin_clock": origin.fields])
     }
 
     @MainActor func matchesGeometry(_ current: NSWindow) -> Bool {
@@ -260,7 +258,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 usedLabels.insert(label)
                 armed = Arm(label: label, target: [r, g, b], ticks: clock.b)
                 try emit("screen.armed", file: "\(label)-armed.json", fields: ["sample": label, "target": [r, g, b],
-                    "before_pixel": pixel, "before_display_ticks": String(lastDisplay), "arm_ticks": String(clock.b), "bridge": clock.fields])
+                    "before_pixel": pixel, "before_display_ticks": String(lastDisplay), "arm_ticks": String(clock.b), "clock": clock.fields])
             } catch { fail(error) }
         }
     }
@@ -284,7 +282,7 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 }
                 let clock = ProbeClock()
                 try check(clock)
-                try emit("screen.stopped", file: "stopped.json", fields: ["bridge": clock.fields])
+                try emit("screen.stopped", file: "stopped.json", fields: ["clock": clock.fields])
             }
         } catch {
             if let current { try? current.removeStreamOutput(self, type: .screen) }
@@ -344,7 +342,6 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
             lastDisplay = display
             let matches = armed.map { arm in display > arm.ticks && zip(pixel, arm.target).allSatisfy { abs($0 - $1) <= 16 } } ?? false
             guard !ready || matches else { return }
-            let bounds = clock.bounds(display)
             var fields: [String: Any] = ["pixel": pixel, "width": width, "height": height, "bytes_per_row": stride,
                 "marker_pixel": [x, y], "content_point": [contentPoint.x, contentPoint.y],
                 "window_fraction": [fraction.x, fraction.y], "window_size": [size.width, size.height],
@@ -353,8 +350,8 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
                 "content_scale": contentScale, "scale_factor": scaleFactor, "backing_scale": backingScale,
                 "color_space": "sRGB",
                 "frame_status": status.intValue, "display_ticks": String(display), "receipt_ticks": String(receipt),
-                "bridge": clock.fields, "origin_bridge": origin.fields, "clock_valid": true,
-                "display_epoch_lower_ms": bounds.0, "display_epoch_upper_ms": bounds.1]
+                "clock": clock.fields, "origin_clock": origin.fields, "clock_valid": true,
+                "display_ms": clock.milliseconds(display)]
             fields["frame_metadata"] = Dictionary(uniqueKeysWithValues: info.map {
                 (String(describing: $0.key), ["value": String(describing: $0.value), "type": String(describing: Swift.type(of: $0.value))])
             })
@@ -385,11 +382,12 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     private func check(_ clock: ProbeClock) throws {
-        guard clock.denom > 0, clock.a <= clock.b, clock.agrees(with: origin), clock.agrees(with: previous),
+        guard clock.numer > 0, clock.denom > 0, clock.a <= clock.b, clock.a >= (previous?.b ?? 0),
+              clock.numer == origin.numer, clock.denom == origin.denom,
               clock.delta(clock.b, clock.a) <= 2 else {
-            let error = ProbeError("wall-clock/mach bridge drift, step or excessive uncertainty")
+            let error = ProbeError("invalid mach timebase, tick order or excessive sampling interval")
             try? emit("screen.error", file: "error.json", fields: ["error": error.description,
-                "bridge": clock.fields, "previous_bridge": previous.fields, "origin_bridge": origin.fields])
+                "clock": clock.fields, "previous_clock": previous?.fields ?? [:], "origin_clock": origin.fields])
             throw error
         }
         previous = clock
@@ -401,8 +399,8 @@ private final class OwnWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate
     }
 
     private func emit(_ stage: String, file: String, fields: [String: Any]) throws {
-        let value = fields.merging(["stage": stage, "session": session, "pid": getpid(), "window": window,
-                                    "ts_ms": Date().timeIntervalSince1970 * 1000]) { _, new in new }
+        let value = fields.merging(ProbeClock().timestampFields) { _, new in new }
+            .merging(["stage": stage, "session": session, "pid": getpid(), "window": window]) { _, new in new }
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         try writeProbeArtifact(data, to: directory.appendingPathComponent(file))
         print("DevInput.surface \(String(decoding: data, as: UTF8.self))")

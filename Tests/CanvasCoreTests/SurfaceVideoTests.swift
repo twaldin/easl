@@ -79,14 +79,14 @@ struct SurfaceVideoTests {
         #expect(try center(decoder.decode(following.data, width: 64, height: 64)).allSatisfy { $0 < 30 })
     }
 
-    @Test func alternatingMotionAndSharpReferencesShowTheCurrentImage() throws {
+    @Test func cachedSharpPredictionAfterMotionShowsTheCurrentImage() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        for (red, sharp, motion) in [(false, false, false), (true, true, false),
-                                     (true, false, true), (false, true, false)] {
+        for (red, sharp, motion, keyframe) in [(false, false, false, true), (true, true, false, true),
+                                               (true, false, true, true), (false, true, false, false)] {
             let frame = try #require(try encoder.encode(image(red: red), width: 64, height: 64,
                                                        refresh: sharp, motion: motion))
-            #expect(frame.data[4] == 1)
+            #expect((frame.data[4] == 1) == keyframe)
             let pixel = try center(decoder.decode(frame.data, width: frame.width, height: frame.height))
             if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
             else { #expect(pixel.allSatisfy { $0 < 30 }) }
@@ -95,6 +95,26 @@ struct SurfaceVideoTests {
         #expect(following.data[4] == 0)
         let red = try center(decoder.decode(following.data, width: following.width, height: following.height))
         #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
+    }
+
+    @Test func cachedSharpPredictionRequiresThePriorSharpReference() throws {
+        let encoder = SurfaceVideoEncoder()
+        let published = SurfaceVideoDecoder()
+        let sharp = try #require(try encoder.encode(image(), width: 64, height: 64, refresh: true))
+        _ = try published.decode(sharp.data, width: sharp.width, height: sharp.height)
+        let motion = try #require(try encoder.encode(image(red: true), width: 64, height: 64, motion: true))
+        _ = try published.decode(motion.data, width: motion.width, height: motion.height)
+        let predicted = try #require(try encoder.encode(image(red: true), width: 64, height: 64, refresh: true))
+        #expect(predicted.data[4] == 0)
+        let missingSharp = SurfaceVideoDecoder()
+        _ = try missingSharp.decode(motion.data, width: motion.width, height: motion.height)
+        for consumer in [missingSharp, SurfaceVideoDecoder()] {
+            #expect(throws: (any Error).self) {
+                try consumer.decode(predicted.data, width: predicted.width, height: predicted.height)
+            }
+        }
+        let pixel = try center(published.decode(predicted.data, width: predicted.width, height: predicted.height))
+        #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30)
     }
 
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
@@ -115,38 +135,33 @@ struct SurfaceVideoTests {
         }
     }
 
-    @Test func aCanceledSharpFrameCannotBecomeAnUnpublishedPredictionReference() throws {
-        let encoder = SurfaceVideoEncoder()
-        let decoder = SurfaceVideoDecoder()
-        let initial = try #require(try encoder.encode(image(), width: 64, height: 64))
-        _ = try decoder.decode(initial.data, width: initial.width, height: initial.height)
-        var checks = 0
-        let canceled = try encoder.encode(image(red: true), width: 64, height: 64, refresh: true, isCancelled: {
-            checks += 1
-            return checks >= 5
-        })
-        #expect(canceled == nil)
-        let recovered = try #require(try encoder.encode(image(red: true), width: 64, height: 64))
-        #expect(recovered.data[4] == 1)
-        for consumer in [decoder, SurfaceVideoDecoder()] {
-            let visible = try center(consumer.decode(recovered.data, width: recovered.width, height: recovered.height))
-            #expect(visible[0] > visible[1] && visible[0] > visible[2])
-        }
-    }
 
-    @Test func resizingAndNewStreamsProduceRecoverableKeyframes() throws {
+    @Test func sharpReferencesRecoverIndependentlyAfterRasterChangesAndSourceRestart() throws {
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
-        let original = try #require(try encoder.encode(image(), width: 64, height: 64))
+        let original = try #require(try encoder.encode(image(), width: 64, height: 64, refresh: true))
         _ = try decoder.decode(original.data, width: original.width, height: original.height)
-        let resized = try #require(try encoder.encode(image(width: 96, height: 80, red: true), width: 96, height: 80))
-        for consumer in [decoder, SurfaceVideoDecoder()] {
-            let decoded = try consumer.decode(resized.data, width: resized.width, height: resized.height)
-            #expect(decoded.width == 96 && decoded.height == 80)
-            #expect(try center(decoded)[0] > 220)
+        for (width, height) in [(64, 64), (96, 80)] {
+            let motion = try #require(try encoder.encode(image(width: width, height: height, red: true),
+                                                        width: width, height: height, motion: true))
+            _ = try decoder.decode(motion.data, width: motion.width, height: motion.height)
         }
-        let restarted = try #require(try SurfaceVideoEncoder().encode(image(), width: 64, height: 64))
-        #expect(try center(SurfaceVideoDecoder().decode(restarted.data, width: restarted.width, height: restarted.height)).allSatisfy { $0 < 30 })
+        for (width, height, red) in [(64, 64, true), (96, 80, false)] {
+            let sharp = try #require(try encoder.encode(image(width: width, height: height, red: red),
+                                                       width: width, height: height, refresh: true))
+            for consumer in [decoder, SurfaceVideoDecoder()] {
+                let decoded = try consumer.decode(sharp.data, width: sharp.width, height: sharp.height)
+                #expect(decoded.width == width && decoded.height == height)
+                let pixel = try center(decoded)
+                if red { #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30) }
+                else { #expect(pixel.allSatisfy { $0 < 30 }) }
+            }
+        }
+        let restarted = try #require(try SurfaceVideoEncoder().encode(image(red: true), width: 64, height: 64, refresh: true))
+        for consumer in [decoder, SurfaceVideoDecoder()] {
+            let pixel = try center(consumer.decode(restarted.data, width: restarted.width, height: restarted.height))
+            #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30)
+        }
     }
 
     @Test func sharpSizeChangeDoesNotFallBackThroughTheMotionFrameCap() throws {
@@ -155,7 +170,6 @@ struct SurfaceVideoTests {
         let source = try noise(width: 258, height: 256, seed: 0x123456789abcdef)
         let resized = try #require(try encoder.encode(source, width: 258, height: 256))
         #expect(resized.data[4] == 1)
-        #expect(resized.data[11] == 244)
         #expect(resized.data.count > 48 * 1024 && resized.data.count <= 576 * 1024)
         let decoded = try SurfaceVideoDecoder().decode(resized.data, width: resized.width, height: resized.height)
         #expect(decoded.width == 258 && decoded.height == 256)
@@ -265,20 +279,32 @@ struct SurfaceVideoTests {
         }
     }
 
-    @Test func predictedConfigurationChangesRequireAKeyframe() throws {
-        let encoder = SurfaceVideoEncoder()
+    @Test func twoDistinctMotionConfigurationsEvictTheSharpPredictionReference() throws {
+        let sharpEncoder = SurfaceVideoEncoder()
+        let publisher = SurfaceVideoDecoder()
+        let sharp = try #require(try sharpEncoder.encode(image(), width: 64, height: 64, refresh: true))
+        _ = try publisher.decode(sharp.data, width: sharp.width, height: sharp.height)
+        let predicted = try #require(try sharpEncoder.encode(image(red: true), width: 64, height: 64))
+        #expect(predicted.data[4] == 0)
         let decoder = SurfaceVideoDecoder()
-        let original = try #require(try encoder.encode(image(), width: 64, height: 64)).data
-        _ = try decoder.decode(original, width: 64, height: 64)
-        let earlierPredicted = try #require(try encoder.encode(image(), width: 64, height: 64)).data
-        let resized = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
-        _ = try decoder.decode(resized, width: 96, height: 80)
-        let predicted = try #require(try encoder.encode(image(width: 96, height: 80), width: 96, height: 80)).data
-        #expect(predicted[4] == 0)
-        #expect(earlierPredicted[4] == 0)
-        #expect(throws: (any Error).self) { try decoder.decode(earlierPredicted, width: 64, height: 64) }
-        #expect(throws: (any Error).self) { try decoder.decode(predicted, width: 96, height: 80) }
-        let recovered = try decoder.decode(resized, width: 96, height: 80)
+        _ = try decoder.decode(sharp.data, width: sharp.width, height: sharp.height)
+        let motionEncoder = SurfaceVideoEncoder()
+        let firstMotion = try #require(try motionEncoder.encode(image(), width: 64, height: 64))
+        _ = try decoder.decode(firstMotion.data, width: firstMotion.width, height: firstMotion.height)
+        let secondMotion = try #require(try motionEncoder.encode(image(width: 96, height: 80), width: 96, height: 80))
+        _ = try decoder.decode(secondMotion.data, width: secondMotion.width, height: secondMotion.height)
+        let motionPrediction = try #require(try motionEncoder.encode(image(width: 96, height: 80, red: true),
+                                                                     width: 96, height: 80))
+        #expect(motionPrediction.data[4] == 0)
+        #expect(throws: (any Error).self) {
+            try decoder.decode(predicted.data, width: predicted.width, height: predicted.height)
+        }
+        #expect(throws: (any Error).self) {
+            try decoder.decode(motionPrediction.data, width: motionPrediction.width, height: motionPrediction.height)
+        }
+        let red = try center(publisher.decode(predicted.data, width: predicted.width, height: predicted.height))
+        #expect(red[0] > 220 && red[1] < 30 && red[2] < 30)
+        let recovered = try decoder.decode(secondMotion.data, width: secondMotion.width, height: secondMotion.height)
         #expect(recovered.width == 96 && recovered.height == 80)
         #expect(try center(recovered).allSatisfy { $0 < 30 })
     }

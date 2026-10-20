@@ -50,6 +50,8 @@ private enum BrowserQuality {
         let constraintFlags: Int
         let levelIDC: Int
         let score: Score
+
+        var qualityCheckpoint: Bool { checkpoint != "initial" && checkpoint != "motion-return" }
     }
 
     struct Result: Codable {
@@ -62,9 +64,9 @@ private enum BrowserQuality {
         var frames: [Frame] = []
         var exceptions: [String] = []
         var passed: Bool {
-            let checkpoints = frames.filter { $0.checkpoint != "initial" }
-            return exceptions.isEmpty && frames.count == caretTransitions + 2
-                && (!qualityGated || checkpoints.count == caretTransitions + 1 && checkpoints.allSatisfy { $0.score.passes })
+            let checkpoints = frames.filter(\.qualityCheckpoint)
+            return exceptions.isEmpty && frames.count == caretTransitions + 4
+                && (!qualityGated || checkpoints.count == caretTransitions + 2 && checkpoints.allSatisfy { $0.score.passes })
         }
     }
 
@@ -139,7 +141,19 @@ private enum BrowserQuality {
             encodedWidth: encoded.width, encodedHeight: encoded.height,
             refresh: encoded.refresh, packetMagic: "ESV1", keyframe: packet[4] == 1,
             profileIDC: Int(packet[11]), constraintFlags: Int(packet[12]), levelIDC: Int(packet[13]),
-            score: try score(decoded, expected, width: width, height: height, initial: checkpoint == "initial"))
+            score: try score(decoded, expected, width: width, height: height,
+                             initial: checkpoint == "initial" || checkpoint == "motion-return"))
+    }
+
+    static func scrolled(_ image: CGImage) throws -> CGImage {
+        let context = try require(CGContext(data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue),
+            "Scrolled fixture context")
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.draw(image, in: CGRect(x: 0, y: -min(32, image.height / 4), width: image.width, height: image.height))
+        return try require(context.makeImage(), "Scrolled fixture")
     }
 
     static func run(id: String, page: Page?, off: CGImage, on: CGImage, gated: Bool, caretTransitions: Int) -> Result {
@@ -154,42 +168,62 @@ private enum BrowserQuality {
             try check(changedPixels > 0 && changedPixels < off.width * off.height / 100,
                       "Caret pair must differ by less than the cumulative 1% rearm threshold")
             let encoder = SurfaceImageEncoder(), decoder = SurfaceVideoDecoder(), revision = SurfaceInputRevision()
-            func capture(_ image: CGImage, at time: Double) throws -> SurfaceImageEncoding? {
+            func capture(_ image: CGImage, at time: Double, inputActive: Bool = false,
+                         lastInput: Double = 0) throws -> SurfaceImageEncoding? {
                 let fitted = SurfaceEvent.Frame.fittedPixels(width: image.width, height: image.height, ratio: 1, format: .h264)
                 return try encoder.capture(image, width: fitted.width, height: fitted.height, mode: .video,
-                    inputActive: false, lastInput: 0, forceState: false, revision: revision, at: time)
+                    inputActive: inputActive, lastInput: lastInput, forceState: false, revision: revision, at: time)
+            }
+            func settled(_ image: CGImage, at time: Double, lastInput: Double = 0) throws -> SurfaceImageEncoding {
+                let deadline = ProcessInfo.processInfo.systemUptime + 15
+                while ProcessInfo.processInfo.systemUptime < deadline {
+                    if let encoded = try capture(image, at: time, lastInput: lastInput) {
+                        try check(encoded.refresh, "Unexpected motion while waiting for settle")
+                        try check(encoded.data.count <= SurfaceImageEncoder.refinementBytes,
+                                  "Refresh exceeds transport byte bound")
+                        return encoded
+                    }
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+                throw Failure.invalid("Missing settled H264 refresh within 15 seconds")
             }
             let first = try require(capture(off, at: 0), "Missing initial video frame")
             result.frames.append(try frame(first, checkpoint: "initial", decoder: decoder,
                                            expected: offPixels, width: off.width, height: off.height))
-            var sharp: SurfaceImageEncoding?
-            let deadline = ProcessInfo.processInfo.systemUptime + 15
-            while sharp == nil && ProcessInfo.processInfo.systemUptime < deadline {
-                if let encoded = try capture(off, at: 1.1) {
-                    try check(encoded.refresh, "Unexpected motion while waiting for settle")
-                    sharp = encoded
-                } else {
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-            }
-            let refresh = try require(sharp, "Missing settled H264 refresh within 15 seconds")
-            try check(refresh.data.count <= SurfaceImageEncoder.refinementBytes, "Refresh exceeds transport byte bound")
+            encoder.acknowledgeFrame()
+            let refresh = try settled(off, at: 1.1)
             result.frames.append(try frame(refresh, checkpoint: "settled", decoder: decoder,
                                            expected: offPixels, width: off.width, height: off.height))
-            encoder.acknowledgeRefinement()
+            encoder.acknowledgeFrame()
             for index in 1...caretTransitions {
                 let image = index.isMultiple(of: 2) ? off : on
-                // Browser blink pixels change without input, so the input revision and settle epoch stay fixed.
-                let motion = try require(capture(image, at: 1.1 + Double(index) * 0.5), "Missing caret frame \(index)")
-                let row = try frame(motion, checkpoint: "caret-\(index)", decoder: decoder,
+                let encoded = try require(capture(image, at: 1.1 + Double(index) * 0.5), "Missing caret frame \(index)")
+                let row = try frame(encoded, checkpoint: "caret-\(index)", decoder: decoder,
                     expected: index.isMultiple(of: 2) ? offPixels : onPixels, width: off.width, height: off.height)
                 result.frames.append(row)
-                if motion.refresh {
-                    try check(motion.data.count <= SurfaceImageEncoder.refinementBytes, "Sharp IDR exceeds refresh transport bound")
-                    encoder.acknowledgeRefinement()
+                encoder.acknowledgeFrame()
+                if encoded.refresh {
+                    try check(encoded.data.count <= SurfaceImageEncoder.refinementBytes, "Sharp frame exceeds refresh transport bound")
                 }
             }
             try check(try capture(off, at: 2.1 + Double(caretTransitions) * 0.5) == nil, "Quiet caret sequence rearmed another refresh")
+            let moving = try scrolled(off), movingPixels = try raster(moving)
+            let motionAt = 3.1 + Double(caretTransitions) * 0.5
+            revision.advance()
+            let motion = try require(capture(moving, at: motionAt, inputActive: true, lastInput: motionAt),
+                                     "Missing motion return after acknowledged caret frames")
+            try check(!motion.refresh && motion.data[4] == 1, "Input must return to independent motion")
+            try check(motion.data.count <= 48 * 1024, "Motion return exceeds transport byte bound")
+            result.frames.append(try frame(motion, checkpoint: "motion-return", decoder: decoder,
+                                           expected: movingPixels, width: moving.width, height: moving.height))
+            encoder.acknowledgeFrame()
+            let returned = try settled(moving, at: motionAt + 1.1, lastInput: motionAt)
+            try check(returned.data[4] == 0, "Acknowledged native reference was not reused after motion")
+            result.frames.append(try frame(returned, checkpoint: "settled-return", decoder: decoder,
+                                           expected: movingPixels, width: moving.width, height: moving.height))
+            encoder.acknowledgeFrame()
+            try check(try capture(moving, at: motionAt + 2.1, lastInput: motionAt) == nil,
+                      "Unchanged pixels emitted another frame after motion return")
         } catch {
             result.exceptions.append(String(describing: error))
         }
@@ -254,15 +288,15 @@ private enum BrowserQuality {
 #if !SURFACE_QUALITY_PROBE
 @Suite(.serialized)
 struct SurfaceVideoQualityTests {
-    @Test func realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions() throws {
+    @Test func realBrowserPagesRetainSharpQualityThroughCaretTransitionsAndMotionReturn() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/browser-quality")
         let results = try BrowserQuality.reports(root: root)
         print(String(decoding: try BrowserQuality.json(results), as: UTF8.self))
         for result in results where result.qualityGated {
             #expect(result.exceptions.isEmpty, "\(result.id): \(result.exceptions)")
-            #expect(result.frames.count == result.caretTransitions + 2,
-                    "\(result.id) must decode initial, settled, and \(result.caretTransitions) caret frames")
-            for frame in result.frames where frame.checkpoint != "initial" {
+            #expect(result.frames.count == result.caretTransitions + 4,
+                    "\(result.id) must decode initial, settled, \(result.caretTransitions) caret frames, motion return, and resettled pixels")
+            for frame in result.frames where frame.qualityCheckpoint {
                 #expect(frame.score.maximum <= 8, "\(result.id) \(frame.checkpoint) full-image RGB maximum")
                 #expect(frame.score.mean <= 1, "\(result.id) \(frame.checkpoint) full-image RGB mean")
             }

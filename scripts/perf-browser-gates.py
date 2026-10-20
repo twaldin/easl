@@ -30,20 +30,26 @@ Gate A requires an own-NSWindow SCStream RGB transition and exactly one independ
 checked DOM increment. Cua screenshots and count crops are supplemental audit only.
 
 The supplied timed-input executable accepts one JSON string of string-valued pid,
-kind,x,y, prints viewer-local epoch milliseconds taken immediately before posting
-canvas.dev.input, and exits. Its hash, method and stdout are retained. Launch the
-viewer with EASL_DEV_INPUT=1 EASL_DEV_SURFACE_TRACE=1. Gate B is the first matching
-same-stream refresh assignment at the click's last queued sequence, not native
-presentation or a quality score. JPEG and PNG have no idle refresh: B is not
-applicable. No next input is sent before B completes, is inapplicable or fails
-its deadline. Native frame PNGs and original timing receipts have unique immutable paths.
-Summary percentiles describe only the completed subset; failed/missing/censored rows
-remain in the denominator. SCStream displayTime uses mach ticks, correlated to viewer
-epoch by bracketed clock reads. Gate A uses the conservative display epoch upper bound,
-not PNG completion. Direct and relay require macOS 14.4+, with no screenshot fallback.
+kind,x,y, prints same-viewer mach_absolute_time milliseconds taken immediately
+before posting canvas.dev.input, and exits. Its hash, method, stdout and harness
+mach launch/read bracket are retained. Launch the viewer with
+EASL_DEV_INPUT=1 EASL_DEV_SURFACE_TRACE=1. Gate B is the first matching same-stream
+refresh assignment at the click's last queued sequence, not native presentation
+or a quality score. JPEG and PNG have no idle refresh: B is not applicable. No next
+input is sent before B completes, is inapplicable or fails its deadline. Native
+frame PNGs and original timing receipts have unique immutable paths.
+Summary percentiles describe only the completed subset; failed/missing/censored
+rows remain in the denominator. Gate A uses SCStream displayTime mach ticks
+converted by mach_timebase_info, not receipt or PNG completion time. Input, native
+display, viewer trace and deadlines share one guest's mach monotonic clock. The
+Python harness binds libSystem's mach clock directly, including on Python 3.9.
+Epoch timestamps and other guests' clocks are not accepted. Direct and relay
+require macOS 14.4+, with no screenshot fallback.
 """
 
 import argparse
+import ctypes
+import functools
 import hashlib
 import json
 import math
@@ -59,8 +65,63 @@ import time
 import uuid
 
 
-def epoch_ms():
-    return time.time_ns() / 1e6
+CLOCK_DOMAIN = "mach_absolute_time"
+
+
+@functools.lru_cache(maxsize=1)
+def mach_clock():
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    library.mach_absolute_time.argtypes = []
+    library.mach_absolute_time.restype = ctypes.c_uint64
+    library.mach_timebase_info.argtypes = [ctypes.POINTER(Timebase)]
+    library.mach_timebase_info.restype = ctypes.c_int
+    value = Timebase()
+    if library.mach_timebase_info(ctypes.byref(value)) != 0 or not value.numer or not value.denom:
+        raise RuntimeError("Cannot read the same-guest mach timebase")
+    return library.mach_absolute_time, value.numer, value.denom
+
+
+def monotonic_ms():
+    ticks, numer, denom = mach_clock()
+    return ticks() * numer / denom / 1e6
+
+
+def input_timestamp(stamp, launched_ms, received_ms):
+    started = float(stamp.strip())
+    if not all(math.isfinite(value) for value in (started, launched_ms, received_ms)) or not (
+            0 < launched_ms <= started <= received_ms):
+        raise ValueError("Input timestamp is outside the same-guest mach launch/read bracket")
+    return started
+
+
+def mach_timebase(value):
+    numer, denom = int(value["timebase_numer"]), int(value["timebase_denom"])
+    if value["clock_domain"] != CLOCK_DOMAIN or numer <= 0 or denom <= 0:
+        raise ValueError("Invalid mach clock domain or timebase")
+    return numer, denom
+
+
+def trace_timestamp(event):
+    numer, denom = mach_timebase(event)
+    ticks, stamp = int(event["ts_ticks"]), event["ts_ms"]
+    if ticks <= 0 or not math.isfinite(stamp) or abs(stamp - ticks * numer / denom / 1e6) > .001:
+        raise ValueError("Invalid mach trace timestamp")
+    return stamp
+
+
+def stream_events(events, stream):
+    timebase = None
+    for event in events:
+        if event.get("stream") == stream:
+            trace_timestamp(event)
+            current = mach_timebase(event)
+            if timebase is not None and current != timebase:
+                raise ValueError("Surface stream changed its mach timebase")
+            timebase = current
+            yield event
 
 
 def save(path, value):
@@ -92,9 +153,9 @@ class Source:
         self.seq += 1
         self.writer.write((json.dumps({"id": self.seq, "method": method, "params": params}) + "\n").encode())
         self.writer.flush()
-        deadline = time.monotonic() + self.timeout
+        deadline = monotonic_ms() + self.timeout * 1000
         while True:
-            if self.child and not select.select([self.reader], [], [], max(0, deadline - time.monotonic()))[0]:
+            if self.child and not select.select([self.reader], [], [], max(0, (deadline - monotonic_ms()) / 1000))[0]:
                 raise TimeoutError("Source RPC deadline")
             line = self.reader.readline()
             if not line:
@@ -104,7 +165,7 @@ class Source:
                 if "error" in reply:
                     raise RuntimeError(f"Source RPC error: {reply['error']}")
                 return reply["result"]
-            if time.monotonic() >= deadline:
+            if monotonic_ms() >= deadline:
                 raise TimeoutError("Source RPC deadline")
 
     def close(self):
@@ -137,6 +198,7 @@ class Trace:
                 event = json.loads(text.split(prefix, 1)[1])
             except ValueError as error:
                 raise RuntimeError(f"Malformed surface trace: {text}") from error
+            trace_timestamp(event)
             events.append({**event, "raw": text})
         return events
 
@@ -191,8 +253,8 @@ class Observer:
         result.check_returncode()
 
     def _wait(self, name):
-        deadline = time.monotonic() + self.config.get("rpc_timeout_s", 30)
-        while time.monotonic() < deadline:
+        deadline = monotonic_ms() + self.config.get("rpc_timeout_s", 30) * 1000
+        while monotonic_ms() < deadline:
             self.check()
             receipt = self._receipt(name)
             if receipt:
@@ -265,10 +327,10 @@ class Observer:
         request = {"pid": self.config["pid"], "window_id": self.config["window"],
                    "include_accessibility_tree": False, "max_image_dimension": 0,
                    "screenshot_out_file": str(base.with_suffix(".png")), "session": self.session}
-        started = epoch_ms()
+        started = monotonic_ms()
         response = subprocess.run([self.driver, "call", "get_window_state", json.dumps(request)],
                                   capture_output=True, text=True, timeout=self.config.get("rpc_timeout_s", 30))
-        ended = epoch_ms()
+        ended = monotonic_ms()
         base.with_suffix(".stdout").write_text(response.stdout)
         base.with_suffix(".stderr").write_text(response.stderr)
         response.check_returncode()
@@ -289,7 +351,7 @@ class Observer:
                 raise ValueError("count_region falls outside exact-window screenshot")
             crop = base.with_name(base.name + "-count.png")
             image.crop((left, top, right, bottom)).save(crop)
-        observation = {"started_ms": started, "ended_ms": ended, "png": str(base.with_suffix(".png")),
+        observation = {"clock_domain": CLOCK_DOMAIN, "started_ms": started, "ended_ms": ended, "png": str(base.with_suffix(".png")),
                        "receipt": str(base.with_suffix(".json")), "pixel": pixel, "count_crop": str(crop),
                        "capture_id": receipt.get("capture_id"), "snapshot_id": receipt.get("snapshot_id")}
         save(base.with_name(base.name + "-observation.json"), observation)
@@ -304,6 +366,7 @@ class Observer:
 
 
 def endpoints(events, stream, started, deadline_ms):
+    events = list(stream_events(events, stream))
     queued = [e for e in events if e["stage"] == "input.queued" and e["stream"] == stream and started <= e["ts_ms"] <= deadline_ms]
     watermark = max((e["seq"] for e in queued), default=None)
     last_input = max((e["ts_ms"] for e in queued if e["seq"] == watermark), default=None)
@@ -316,6 +379,7 @@ def endpoints(events, stream, started, deadline_ms):
 
 
 def last_assigned_format(events, stream, watermark, started, deadline_ms):
+    events = stream_events(events, stream)
     assigned = [e for e in events if e["stage"] == "image.assigned" and e["stream"] == stream
                 and watermark is not None and e.get("input") == watermark
                 and started <= e["ts_ms"] <= deadline_ms and e.get("format")]
@@ -324,58 +388,65 @@ def last_assigned_format(events, stream, watermark, started, deadline_ms):
 
 
 def sharp_gate(covering, refresh, last_input, started, watermark, image_format=None):
+    if covering is not None:
+        trace_timestamp(covering)
+    if refresh is not None:
+        trace_timestamp(refresh)
     if image_format is None and watermark is not None and (covering or {}).get("input") == watermark:
         image_format = covering.get("format")
     if image_format in ("jpeg", "png"):
         return {"status": "not_applicable", "reason": "no_idle_refresh", "format": image_format}
     if refresh is None:
         return {"status": "deadline_failure"}
-    return {"status": "complete", "latency_ms": refresh["ts_ms"] - last_input,
+    return {"status": "complete", "clock_domain": CLOCK_DOMAIN, "latency_ms": refresh["ts_ms"] - last_input,
             "native_start_latency_ms": refresh["ts_ms"] - started,
             "last_input_ms": last_input, "assigned_ms": refresh["ts_ms"]}
 
 
 def native_timing(marker):
-    def bridge(value):
+    def snapshot(value):
+        numer, denom = mach_timebase(value)
         a, b = int(value["a_ticks"]), int(value["b_ticks"])
-        numer, denom = int(value["timebase_numer"]), int(value["timebase_denom"])
-        epoch = value["epoch_ms"]
-        if a < 0 or b < a or numer <= 0 or denom <= 0 or not math.isfinite(epoch):
-            raise ValueError("Invalid mach/epoch bridge")
-        factor = numer / denom / 1e6
-        if (b - a) * factor > 2:
-            raise ValueError("Excessive bridge uncertainty")
-        return a, b, epoch, factor
+        if a <= 0 or b < a or (b - a) * numer / denom / 1e6 > 2:
+            raise ValueError("Invalid mach tick order or excessive sampling interval")
+        return a, b, numer, denom
 
-    a, b, epoch, factor = bridge(marker["bridge"])
-    oa, ob, oe, old_factor = bridge(marker["origin_bridge"])
+    a, b, numer, denom = snapshot(marker["clock"])
+    _, ob, origin_numer, origin_denom = snapshot(marker["origin_clock"])
+    trace_timestamp(marker)
     display, receipt = int(marker["display_ticks"]), int(marker["receipt_ticks"])
-    lower, upper = epoch + (display - b) * factor, epoch + (display - a) * factor
+    displayed_ms = display * numer / denom / 1e6
     if (marker.get("clock_valid") is not True or marker.get("frame_status") != 0
-            or display <= 0 or display > receipt or receipt > a or factor != old_factor
-            or not (oe + (a - ob) * factor - 2 <= epoch <= oe + (b - oa) * factor + 2)
-            or not all(math.isfinite(marker[key]) for key in ("display_epoch_lower_ms", "display_epoch_upper_ms"))
-            or abs(marker["display_epoch_lower_ms"] - lower) > .001
-            or abs(marker["display_epoch_upper_ms"] - upper) > .001):
-        raise ValueError("Invalid native display time or clock correlation")
-    return lower, upper
+            or display <= 0 or display > receipt or receipt > a or ob > a or ob > receipt
+            or (numer, denom) != (origin_numer, origin_denom)
+            or (numer, denom) != mach_timebase(marker) or int(marker["ts_ticks"]) < b
+            or not math.isfinite(marker["display_ms"]) or abs(marker["display_ms"] - displayed_ms) > .001):
+        raise ValueError("Invalid native display time or mach clock order")
+    if marker.get("stage") == "screen.observed" and not (0 < int(marker["arm_ticks"]) < display):
+        raise ValueError("Native display does not follow its arm timestamp")
+    return displayed_ms
 
 
 def visible_gate(marker, started, mode, covering=None, refresh=None, deadline_ms=math.inf):
     if marker is None:
         return {"status": "deadline_failure", "reason": "no_native_marker16_observation"}
     try:
-        lower, upper = native_timing(marker)
-        if not marker.get("png") or not marker.get("receipt") or not math.isfinite(started):
+        observed = native_timing(marker)
+        if (not marker.get("png") or not marker.get("receipt") or not math.isfinite(started)
+                or started <= 0 or math.isnan(deadline_ms)):
             raise ValueError("Missing immutable native evidence or invalid input timestamp")
+        for assignment in (covering, refresh):
+            if assignment is not None:
+                trace_timestamp(assignment)
+                if mach_timebase(assignment) != mach_timebase(marker):
+                    raise ValueError("Native display and viewer assignment timebases differ")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         return {"status": "invalid_observation", "reason": str(error)}
-    result = {"status": "complete", "latency_ms": upper - started,
-              "observed_lower_ms": lower, "observed_upper_ms": upper,
-              "observation": marker["png"], "receipt": marker["receipt"]}
-    if lower < started:
-        result.update(status="invalid_observation", phase="overlaps_or_precedes_input")
-    elif upper > deadline_ms:
+    result = {"status": "complete", "clock_domain": CLOCK_DOMAIN, "latency_ms": observed - started,
+              "observed_ms": observed, "observation": marker["png"], "receipt": marker["receipt"]}
+    if observed < started:
+        result.update(status="invalid_observation", phase="precedes_input")
+    elif observed > deadline_ms:
         result.update(status="deadline_failure", phase="after_deadline")
     elif mode == "direct":
         result["phase"] = "native_direct"
@@ -383,11 +454,10 @@ def visible_gate(marker, started, mode, covering=None, refresh=None, deadline_ms
         result.update(status="missing_assignment", phase="unknown")
     elif covering.get("refresh") is True:
         result.update(status="first_covering_sharp", phase="first_covering_sharp")
-    elif lower < covering["ts_ms"]:
-        result.update(status="ambiguous_marker", phase="before_or_overlaps_covering_assignment")
-    elif refresh and upper >= refresh["ts_ms"]:
-        result["phase"] = "after_sharp_assignment" if lower >= refresh["ts_ms"] else "overlaps_sharp_assignment"
-        result["status"] = "late_marker"
+    elif observed < covering["ts_ms"]:
+        result.update(status="ambiguous_marker", phase="before_covering_assignment")
+    elif refresh and observed >= refresh["ts_ms"]:
+        result.update(status="late_marker", phase="after_sharp_assignment")
     else:
         result["phase"] = covering.get("format", "unknown")
     if result["status"] != "complete":
@@ -396,7 +466,7 @@ def visible_gate(marker, started, mode, covering=None, refresh=None, deadline_ms
 
 
 def input_batch_shape(events, stream, started, deadline_ms):
-    relevant = [e for e in events if e.get("stream") == stream and started <= e["ts_ms"] <= deadline_ms]
+    relevant = [e for e in stream_events(events, stream) if started <= e["ts_ms"] <= deadline_ms]
     queued = [e for e in relevant if e["stage"] == "input.queued"]
     sequences = sorted({e["seq"] for e in queued})
     batches = [e for e in relevant if e["stage"] == "input.sent" and "first_seq" in e
@@ -464,12 +534,15 @@ def run(config, args):
     directory = Path(config["scratch"]).expanduser().resolve() / ("gates-" + uuid.uuid4().hex)
     directory.mkdir(parents=True)
     save(directory / "config.json", config)
+    _, clock_numer, clock_denom = mach_clock()
     metadata = {"label": args.label, "block": args.block, "action": args.action, "mode": config["mode"],
                 "requested": count, "input_helper": config["input_helper"], "input_helper_sha256": digest(config["input_helper"]),
                 "observer_sha256": digest(__file__),
-                "input_method": "supplied helper epoch timestamp immediately before canvas.dev.input notification",
-                "clock": "own-window mach display ticks bracketed to viewer epoch; conservative upper bound",
-                "clock_drift_tolerance_ms": 2, "marker_tolerance": 16, "started_ms": epoch_ms()}
+                "input_method": "supplied helper mach milliseconds immediately before canvas.dev.input notification",
+                "clock_domain": CLOCK_DOMAIN, "timebase_numer": clock_numer, "timebase_denom": clock_denom,
+                "clock": "same-viewer mach ticks * timebase_numer / timebase_denom / 1e6 via libSystem ctypes",
+                "input_clock_validation": "helper timestamp within harness mach launch/read bracket",
+                "clock_sample_limit_ms": 2, "marker_tolerance": 16, "started_ms": monotonic_ms()}
     save(directory / "metadata.json", metadata)
     source = observer = trace = None
     rows = []
@@ -481,7 +554,7 @@ def run(config, args):
     try:
         for sample in range(1, count + 1):
             row = {"sample": sample, "label": args.label, "block": args.block, "action": args.action,
-                   "mode": config["mode"], "board": config["board"], "tile": config["tile"],
+                   "mode": config["mode"], "clock_domain": CLOCK_DOMAIN, "board": config["board"], "tile": config["tile"],
                    "gate_a": {"status": "deadline_failure"},
                    "gate_b": {"status": "deadline_failure" if config["mode"] == "relay" else "not_applicable"}, "observations": [], "trace": []}
             rows.append(row)
@@ -496,9 +569,9 @@ def run(config, args):
                     if page("Boolean(document.querySelector('#click') && document.querySelector('#rcMark'))") is not True:
                         raise RuntimeError("Existing #click/#rcMark fixture is required")
                 if config.get("pause_s", 0):
-                    row["pause_started_ms"] = epoch_ms()
+                    row["pause_started_ms"] = monotonic_ms()
                     time.sleep(config["pause_s"])
-                    row["pause_ended_ms"] = epoch_ms()
+                    row["pause_ended_ms"] = monotonic_ms()
                 before = observer.capture(f"{sample:03d}-before")
                 row["before"] = before
                 candidates = [(50, 50, 75), (210, 180, 195)]
@@ -518,21 +591,21 @@ def run(config, args):
                     row["pre_input_trace"] = trace.poll()
                 x, y = observer.point(*config.get("click", [29, 195]), native=False)
                 fields = {"pid": str(config["pid"]), "kind": "click", "x": str(x), "y": str(y)}
+                launched_ms = monotonic_ms()
                 child = subprocess.Popen([config["input_helper"], json.dumps(fields)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 if not select.select([child.stdout], [], [], config.get("rpc_timeout_s", 30))[0]:
                     raise RuntimeError("Timed input helper did not print its timestamp")
                 stamp = child.stdout.readline()
-                row["input_receipt"] = {"fields": fields, "stdout": stamp}
-                started = float(stamp.strip())
-                if not math.isfinite(started):
-                    raise RuntimeError("Timed input helper printed a non-finite timestamp")
+                received_ms = monotonic_ms()
+                row["input_receipt"] = {"fields": fields, "stdout": stamp, "clock_domain": CLOCK_DOMAIN,
+                                        "launched_ms": launched_ms, "received_ms": received_ms}
+                started = input_timestamp(stamp, launched_ms, received_ms)
                 row["started_ms"] = started
                 deadline_ms = started + config.get("deadline_s", 15) * 1000
                 row["deadline_ms"] = deadline_ms
-                deadline = time.monotonic() + max(0, (deadline_ms - epoch_ms()) / 1000)
                 first_marker = None
                 covering = refresh = None
-                while time.monotonic() < deadline:
+                while monotonic_ms() < deadline_ms:
                     if first_marker is None:
                         observation = observer.poll()
                         if observation is not None:
@@ -565,14 +638,14 @@ def run(config, args):
                 row["source_increment_once"] = row["source_after"] == row["source_before"] + 1
                 if not row["source_increment_once"]:
                     row["gate_a"] = {"status": "source_count_failure"}
-                row["ended_ms"] = epoch_ms()
+                row["ended_ms"] = monotonic_ms()
                 row["deadline_s"] = config.get("deadline_s", 15)
             except Exception as error:
                 row["error"] = f"{type(error).__name__}: {error}"
                 row["gate_a"] = {"status": "error"}
                 if trace and row["gate_b"]["status"] != "complete":
                     row["gate_b"] = {"status": "error"}
-                row["ended_ms"] = epoch_ms()
+                row["ended_ms"] = monotonic_ms()
             if child is not None:
                 try:
                     stdout, stderr = child.communicate(timeout=2)

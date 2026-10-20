@@ -1,6 +1,7 @@
 import AppKit
 import CanvasCore
 import CryptoKit
+import Darwin
 
 /// Development input replay (`EASL_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
 /// Agents test the UI while the window sits on a Space nobody is viewing, where real HID input
@@ -19,11 +20,19 @@ enum DevInput {
 
     static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
     static let surfaceTrace = enabled && ProcessInfo.processInfo.environment["EASL_DEV_SURFACE_TRACE"] == "1"
+    private static let surfaceTimebase: mach_timebase_info_data_t = {
+        var value = mach_timebase_info_data_t()
+        mach_timebase_info(&value)
+        return value
+    }()
 
     static func traceSurface(stage: String, stream: String, seq: Int, input: Int? = nil, refresh: Bool? = nil, firstSeq: Int? = nil, format: String? = nil, offset: Int? = nil) {
         guard surfaceTrace else { return }
+        let ticks = mach_absolute_time()
         var fields: [String: Any] = [
-            "stage": stage, "ts_ms": Date().timeIntervalSince1970 * 1000,
+            "stage": stage, "ts_ms": Double(ticks) * Double(surfaceTimebase.numer) / Double(surfaceTimebase.denom) / 1_000_000,
+            "ts_ticks": String(ticks), "clock_domain": "mach_absolute_time",
+            "timebase_numer": surfaceTimebase.numer, "timebase_denom": surfaceTimebase.denom,
             "stream": stream, "seq": seq,
         ]
         if let input { fields["input"] = input }
