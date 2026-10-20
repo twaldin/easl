@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
 
 REPO = Path(__file__).resolve().parent.parent
 native_spec = importlib.util.spec_from_file_location('perf_native', REPO / 'Tests/RemoteClosedBoard/native.py')
@@ -107,6 +108,8 @@ def frames(text):
 class Run:
     def __init__(self, args, app, count, mode, output):
         require_guest()
+        native.SESSION = 'PerfScale' + uuid.uuid4().hex
+        native.used = False
         self.args, self.app, self.count, self.mode, self.output = args, app, count, mode, output
         self.scratch = Path(tempfile.mkdtemp(prefix='eps-', dir='/tmp')).resolve()
         self.home = self.scratch / 'v'
