@@ -114,6 +114,16 @@ class PerfBoardTests(unittest.TestCase):
         _, second, _ = self.generate(200, hash_seed="99")
         self.assertEqual(first, second)
 
+    @unittest.skipUnless(sys.platform == "darwin", "Foundation path aliases are macOS-specific")
+    def test_private_path_alias_opens_the_same_board(self):
+        alias_scratch = tempfile.TemporaryDirectory(dir="/tmp")
+        self.addCleanup(alias_scratch.cleanup)
+        self.root = Path(alias_scratch.name) / "root"
+        board, _, _ = self.generate(50)
+        self.root = Path("/private") / self.root.relative_to("/")
+        aliased, _, _ = self.generate(50)
+        self.assertEqual(board["id"], aliased["id"])
+
     def test_label_trim_preserves_exact_count(self):
         board, _, _ = self.generate(50, "--labels", "0")
         self.assertEqual(len(board["objects"]), 50)

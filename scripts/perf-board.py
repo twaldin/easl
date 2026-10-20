@@ -35,6 +35,7 @@ import json
 import os
 import random
 import struct
+import subprocess
 import sys
 import zlib
 
@@ -46,8 +47,14 @@ WORDS = ("status review deploy queue build ticket owner metric latency retry bud
 
 
 def board_id(root):
-    """`BoardStore.pathID`: brd_ + 20 hex digits of SHA-256 of the root's path."""
-    return "brd_" + hashlib.sha256(os.path.normpath(root).encode()).hexdigest()[:20]
+    """Match `BoardStore.pathID`, including Foundation's macOS path normalization."""
+    path = os.path.normpath(root)
+    if sys.platform == "darwin":
+        path = subprocess.check_output(
+            ["swift", "-e", "import Foundation; print(URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path)", path],
+            text=True,
+        ).strip()
+    return "brd_" + hashlib.sha256(path.encode()).hexdigest()[:20]
 
 
 class Gen:

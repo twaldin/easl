@@ -125,7 +125,10 @@ class Run:
         if self.mode == 'remote':
             started = time.monotonic()
             self.dev('input', 'remote', 'easl-guest', self.bid, self.host)
-        board = wait_for(lambda: self.try_board())
+        try:
+            board = wait_for(lambda: self.try_board())
+        except TimeoutError as error:
+            raise TimeoutError(str(error) + ': ' + getattr(self, 'readiness_error', 'no reply')) from error
         self.api_ready_ms = (time.monotonic() - started) * 1000
         assert len(board['objects']) == self.count, 'Fixture object count changed'
         wait_for(lambda: self.call('view.get')['visible'])
@@ -144,7 +147,8 @@ class Run:
     def try_board(self):
         try:
             return self.call('board.get')
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError) as error:
+            self.readiness_error = str(error)
             return None
 
     def gesture(self, kind):
@@ -166,7 +170,7 @@ class Run:
         moved = x1 - x0 > 10 if kind == 'pan' else z1 - z0 > 0.01
         self.output.joinpath(kind + '.log').write_text(text)
         return {'before': before, 'after': after, 'moved': moved, 'frame_rows': frames(text),
-                'stalls50': [line for line in text.splitlines() if 'DevPerfWake:' in line and ' gesture ' in line]}
+                'stalls50': [line for line in text.splitlines() if 'DevPerfWake:' in line]}
 
     def measure(self):
         board = self.start()
