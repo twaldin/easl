@@ -125,7 +125,7 @@ public struct HostFiles: Sendable {
     private let channelRoute: HostRoute
     private let channelMaster: HostMaster?
     private let fileReads: HostFileReads?
-    private let imagePreviews: HostImagePreviews?
+    private var imagePreviews: HostImagePreviews?
     private var readPriority: HostReadPriority?
 
     @MainActor
@@ -155,6 +155,12 @@ public struct HostFiles: Sendable {
     /// This host without its master, for cleanup while easl quits: nothing it runs waits for
     /// the master, a file-session slot or the main actor.
     var cleanup: HostFiles { HostFiles(hostName: hostName, route: channelRoute, temps: temps) }
+
+    public var withoutImagePreviews: HostFiles {
+        var files = self
+        files.imagePreviews = nil
+        return files
+    }
 
     public func prioritized(_ priority: HostReadPriority) -> HostFiles {
         var files = self

@@ -27,17 +27,19 @@ func TestImagePreviewConformance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	scenarios, err = conformance.Select(scenarios, []string{"image-preview", "image-preview-raster"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := serve(t, filepath.Join(dir, "host"), false)
 	defer srv.Close()
-	for _, scenario := range scenarios {
-		if scenario.Name != "image-preview" {
-			continue
-		}
-		_, err := conformance.RunScenario(scenario, conformance.Options{Socket: srv.Path(), WorkDir: dir, Schema: suite.Schema, Settle: 40 * time.Millisecond})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
+	report, err := suite.ReplayAll(scenarios, conformance.Options{Socket: srv.Path(), WorkDir: dir, Settle: 40 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("missing image-preview conformance scenario")
+	if !report.Passed() {
+		for _, result := range report.Scenarios {
+			t.Errorf("%s: error=%s steps=%+v", result.Scenario, result.Error, result.Steps)
+		}
+	}
 }

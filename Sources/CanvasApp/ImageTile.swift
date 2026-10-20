@@ -68,6 +68,7 @@ final class ImageTile: NSView, TileContent {
     private var events: FileEvents?
     private var hostWatch: HostFileWatch?
     private var pendingReload: DispatchWorkItem?
+    private var pendingResolutionUpgrade: DispatchWorkItem?
     /// Reload after a period without a watcher, including a detached window.
     private var stale = false
 
@@ -124,6 +125,8 @@ final class ImageTile: NSView, TileContent {
         hostWatch = nil
         pendingReload?.cancel()
         pendingReload = nil
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
         loadGeneration += 1
         stale = false
         let generation = loadGeneration
@@ -154,8 +157,26 @@ final class ImageTile: NSView, TileContent {
                     do {
                         let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
                         let raster = ext == "png" || ext == "jpg" || ext == "jpeg"
-                        if case .preview(let pixels) = requested, raster,
-                           let preview = try await files.imagePreview(object: id, maxPixels: pixels, priority: priority) {
+                        var preview: HostImagePreview?
+                        if case .preview(let pixels) = requested, raster {
+                            do {
+                                preview = try await files.imagePreview(object: id, maxPixels: pixels, priority: priority)
+                            } catch is CancellationError {
+                                return
+                            } catch {
+                                try Task.checkCancellation()
+                                let metadata = HostFileRequest(source: .directory(root), policy: .boardImage(path), bytes: false)
+                                do {
+                                    baseline = .version(try await files.read(metadata, priority: priority).version)
+                                } catch is CancellationError {
+                                    return
+                                } catch {
+                                    baseline = .failure(error as? HostFileError ?? .unavailable(String(describing: error)))
+                                }
+                                throw error
+                            }
+                        }
+                        if let preview, case .preview(let pixels) = requested {
                             read = (preview.data, CGSize(width: CGFloat(preview.naturalWidth), height: CGFloat(preview.naturalHeight)))
                             previewImage = preview.image
                             readResolution = .preview(pixels)
@@ -174,7 +195,7 @@ final class ImageTile: NSView, TileContent {
                     } catch {
                         let error = error as? HostFileError ?? .unavailable(String(describing: error))
                         readFailure = error
-                        baseline = .failure(error)
+                        baseline = baseline ?? .failure(error)
                         failure = Self.hostFailure(error, path: path)
                     }
                 }
@@ -333,6 +354,8 @@ final class ImageTile: NSView, TileContent {
         hostWatch = nil
         pendingReload?.cancel()
         pendingReload = nil
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
     }
 
     private func suspend() {
@@ -418,10 +441,22 @@ final class ImageTile: NSView, TileContent {
 
     // MARK: TileContent
     func alignToPixels() {
+        pendingResolutionUpgrade?.cancel()
+        pendingResolutionUpgrade = nil
         guard live, window != nil, loaded, !stale, picture?.path == path else { return }
         let requested = requestedResolution()
         guard resolution?.covers(requested) != true, loadingResolution?.covers(requested) != true else { return }
-        reload(resolution: requested)
+        let generation = loadGeneration
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.live, self.window != nil, self.loadGeneration == generation else { return }
+                let requested = self.requestedResolution()
+                guard self.resolution?.covers(requested) != true, self.loadingResolution?.covers(requested) != true else { return }
+                self.reload(resolution: requested)
+            }
+        }
+        pendingResolutionUpgrade = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
     }
 
 

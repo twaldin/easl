@@ -3,6 +3,7 @@ package measure
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -129,10 +130,14 @@ func rasterPreview(data []byte, maxPixels int) (*ImagePreview, error) {
 	}
 	var config image.Config
 	var err error
+	var unsupported jpeg.UnsupportedError
 	if isPNG {
 		config, err = png.DecodeConfig(bytes.NewReader(data))
 	} else {
 		config, err = jpeg.DecodeConfig(bytes.NewReader(data))
+	}
+	if errors.As(err, &unsupported) {
+		return nil, nil
 	}
 	if err != nil || config.Width != w || config.Height != h {
 		return bad()
@@ -145,6 +150,9 @@ func rasterPreview(data []byte, maxPixels int) (*ImagePreview, error) {
 		source, err = png.Decode(bytes.NewReader(data))
 	} else {
 		source, err = jpeg.Decode(bytes.NewReader(data))
+	}
+	if errors.As(err, &unsupported) {
+		return nil, nil
 	}
 	if err != nil {
 		return bad()

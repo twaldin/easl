@@ -112,9 +112,9 @@ actor HostImagePreviews {
 
     deinit { connection?.close() }
 
-    func read(object: String, maxPixels: Int, priority: HostReadPriority) async throws -> HostImagePreview? {
+    func read(object: String, maxPixels: Int, priority: HostReadPriority,
+              deadline: ContinuousClock.Instant = .now + .seconds(30)) async throws -> HostImagePreview? {
         let started = Metrics.now()
-        let deadline = ContinuousClock.now + .seconds(30)
         try await acquire(priority: priority, deadline: deadline)
         let admitted = Metrics.now()
         var preview: HostImagePreview?
@@ -135,11 +135,9 @@ actor HostImagePreviews {
             link = makeConnection()
             connection = link
         }
+        let reply: JSONValue
         do {
-            let reply = try await link.request("image.preview", .object(["id": .string(object), "maxPixels": .number(Double(maxPixels))]), timeout: remaining)
-            preview = try await offPool { Result { try HostImagePreview.decode(reply, maxPixels: maxPixels) } }.get()
-            try Task.checkCancellation()
-            return preview
+            reply = try await link.request("image.preview", .object(["id": .string(object), "maxPixels": .number(Double(maxPixels))]), timeout: remaining)
         } catch is CancellationError {
             link.close()
             connection = nil
@@ -152,6 +150,10 @@ actor HostImagePreviews {
             if failure.code == "invalid_params" { throw failure }
             throw HostFileError(code: failure.code, message: failure.message, limit: HostImagePreview.integer(failure.data?["limit"]))
         }
+        preview = try await offPool { Result { try HostImagePreview.decode(reply, maxPixels: maxPixels) } }.get()
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw HostFileError.unavailable("host image preview timed out") }
+        return preview
     }
 
     private func acquire(priority: HostReadPriority, deadline: ContinuousClock.Instant) async throws {
