@@ -18,7 +18,7 @@ Example config (all paths are on the macOS viewer):
 Direct mode measures local WebKit input without a streamed image. Its source RPC
 still addresses easld through socket or SSH, never the app's unsupported browser.call.
 Optional keys: count=60, deadline_s=15, rpc_timeout_s=30, click=[29,195], marker=[525,88],
-content_top=68 (supplemental Cua crops only), pause_s=0, app_log=<dev_home>/app.log,
+content_top=68 (Cua marker/count crop offset), pause_s=0, app_log=<dev_home>/app.log,
 cua_driver=<standard app path>, count_script="Number(clicks)",
 arm_script=<JS using __COLOR__ JSON substitution>. Board coordinates map to DevInput
 content points through viewport. The native observer converts these to window pixels.
@@ -26,8 +26,9 @@ count_region is [x,y,width,height] in those same coordinates; calibrate it on th
 actual fixture. The existing fixture must already expose #click, #rcMark and
 rcCapture, rcExpectedType, rcNextColor. No fixture is installed or reset here.
 
-Gate A requires an own-NSWindow SCStream RGB transition and exactly one independently
-checked DOM increment. Cua screenshots and count crops are supplemental audit only.
+Gate A requires an own-NSWindow SCStream RGB transition and exactly one independently checked DOM increment.
+Cua's before-pixel selects a contrasting target; only the native observer supplies
+Gate A's endpoint. Count crops remain supplemental audit.
 
 The supplied timed-input executable accepts one JSON string of string-valued pid,
 kind,x,y, prints same-viewer mach_absolute_time milliseconds taken immediately

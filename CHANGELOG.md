@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Browser relay negotiates retained sharp references and bounded refinement pipelining between matching peers; older viewers keep independent refreshes. Response measurements separate native first-visible input effects from settled sharp assignment.
+- Browser relay negotiates cached sharp references and bounded pipelining; input-triggered sharpening settles sooner while autonomous changes keep their original quiet period. Measurements separate native first-visible effects from settled sharp assignment; older viewers retain independent refreshes.
 - Composer prompts reconcile lost replies without resending; uncertain delivery stays visible instead of becoming an unsent draft.
 - Undo and redo of deleted composer mentions no longer crash the app. Mentions whose tiles still exist keep their editor undo history.
 - Japanese and other input-method composition no longer draws the composer's placeholder over the text being composed.

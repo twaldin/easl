@@ -229,9 +229,10 @@ private final class SurfaceImageRefresh: @unchecked Sendable {
 public final class SurfaceImageEncoder: @unchecked Sendable {
     public static let motionBytes = 16 << 20
     public static let refinementBytes = 576 * 1024
-    public static let settle: TimeInterval = 0.3
+    public static let settle: TimeInterval = 1
     public private(set) var captureDelay: TimeInterval = 0.1
 
+    private static let inputSettle: TimeInterval = 0.3
     private let refinement: SurfaceRefinement
     private var video: SurfaceVideoEncoder
     private let refresh: SurfaceImageRefresh
@@ -240,6 +241,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
     private var observed: SurfaceImageIdentity?
     private var sharp: SurfaceImageIdentity?
     private var refreshArmed = false
+    private var refreshFromInput = false
     private var imageVersion: UInt64 = 0
     private var refreshEpoch: UInt64 = 0
     private var motionVersion: UInt64?
@@ -299,6 +301,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         }
         let change = identity.change(from: observed)
         observed = identity
+        if inputActive { refreshFromInput = true }
         let resumeMotion: Bool
         if case .large = change { resumeMotion = inputActive }
         else { resumeMotion = false }
@@ -307,6 +310,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             imageVersion &+= 1
             refreshEpoch &+= 1
             changedAt = now
+            refreshFromInput = inputActive
             refreshArmed = true
         case .small:
             imageVersion &+= 1
@@ -316,6 +320,7 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
         if !refreshArmed, case .large = identity.change(from: sharp) {
             refreshEpoch &+= 1
             changedAt = now
+            refreshFromInput = inputActive
             refreshArmed = true
         }
         let key = SurfaceImageRefresh.Key(epoch: refreshEpoch, inputRevision: inputRevision)
@@ -325,7 +330,8 @@ public final class SurfaceImageEncoder: @unchecked Sendable {
             unacknowledgedRevision = nil
             motionVersion = nil
         }
-        let due = max(changedAt, lastInput) + (refinement == .independent ? 1 : Self.settle)
+        let quietPeriod = refinement == .retained && refreshFromInput ? Self.inputSettle : Self.settle
+        let due = max(changedAt, lastInput) + quietPeriod
         if mode == .video, !inputActive, now >= due {
             if let encoded = try refresh.take(key: key, revision: revision) {
                 unacknowledgedRevision = inputRevision

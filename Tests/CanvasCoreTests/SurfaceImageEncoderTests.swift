@@ -187,7 +187,7 @@ struct SurfaceImageEncoderTests {
         work.finish()
         #expect(try capture(encoder, source, at: SurfaceImageEncoder.settle, revision: revision) == nil)
         work.finish()
-        let sharp = try #require(try capture(encoder, source, at: 0.5, revision: revision))
+        let sharp = try #require(try capture(encoder, source, at: SurfaceImageEncoder.settle + 0.1, revision: revision))
         #expect(sharp.canvas == CGSize(width: 129, height: 97))
         try expectSharp(sharp, source: source, video: video)
         for time in [1.2, 1.5, 100] {
@@ -203,16 +203,16 @@ struct SurfaceImageEncoderTests {
         #expect(visible[0] > visible[1] && visible[0] > visible[2])
     }
 
-    @Test(arguments: [SurfaceRefinement.independent, .retained])
-    func refinementWaitsForItsNegotiatedQuietPeriod(refinement: SurfaceRefinement) throws {
+    @Test(arguments: [SurfaceRefinement.independent, .retained], [false, true])
+    func quietPeriodDistinguishesInputFromAutonomousChanges(refinement: SurfaceRefinement, input: Bool) throws {
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue, refinement: refinement)
         let revision = SurfaceInputRevision()
         let source = try fixture()
-        let motion = try #require(try capture(encoder, source, at: 0, revision: revision))
+        let motion = try #require(try capture(encoder, source, at: 0, revision: revision, input: input))
         _ = try decode(motion)
         encoder.acknowledgeFrame()
-        let settle: TimeInterval = refinement == .independent ? 1 : 0.3
+        let settle: TimeInterval = refinement == .retained && input ? 0.3 : 1
         #expect(try capture(encoder, source, at: settle - 0.01, revision: revision) == nil)
         work.finish()
         #expect(try capture(encoder, source, at: settle, revision: revision) == nil)
