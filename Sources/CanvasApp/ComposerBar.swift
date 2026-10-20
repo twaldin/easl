@@ -14,6 +14,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     private let placeholder = NSTextField(labelWithString: "")
     private let question = NSTextField(labelWithString: "")
     private let deliveryStatus = NSTextField(labelWithString: "")
+    private let dismissDelivery = NSButton(title: "Dismiss", target: nil, action: nil)
     /// "→ name ▾": a click opens `targetMenu` (the board's terminals, several can be checked).
     private let target = NSButton(title: "", target: nil, action: nil)
     /// The draft as last shown or synced, to tell what an edit changed.
@@ -25,6 +26,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     /// The user changed the text (typing, deleting, ⌘Z, a paste): the draft before it.
     var onEdit: ((ComposerDraft) -> Void)?
     var onSend: (() -> Void)?
+    var onDismissDeliveryStatus: (() -> Void)?
     /// ↑ (true) or ↓ in the text: whether the composer recalled a sent prompt instead of moving.
     var onRecall: ((Bool) -> Bool)?
     var onReveal: ((Mention) -> Void)?
@@ -88,6 +90,14 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         deliveryStatus.lineBreakMode = .byTruncatingTail
         deliveryStatus.isHidden = true
         deliveryStatus.setAccessibilityLabel("Prompt delivery")
+        dismissDelivery.isBordered = false
+        dismissDelivery.font = Self.labelFont
+        dismissDelivery.target = self
+        dismissDelivery.action = #selector(dismissDeliveryClicked(_:))
+        dismissDelivery.identifier = NSUserInterfaceItemIdentifier("composer.dismissPreviousDelivery")
+        dismissDelivery.setAccessibilityLabel("Dismiss previous delivery warning")
+        dismissDelivery.toolTip = "Hide this warning in this window without resending or discarding the held prompt."
+        dismissDelivery.isHidden = true
         target.isBordered = false
         target.setButtonType(.momentaryChange)
         target.alignment = .right
@@ -96,7 +106,7 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         target.target = self
         target.action = #selector(targetClicked(_:))
         target.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for view in [question, deliveryStatus, placeholder, scroll, target] as [NSView] { addSubview(view) }
+        for view in [question, deliveryStatus, dismissDelivery, placeholder, scroll, target] as [NSView] { addSubview(view) }
         setContentCompressionResistancePriority(NSLayoutConstraint.Priority(490), for: .horizontal)
         showTarget(title: nil, extra: [], hasTerminal: false)
         NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: AppShortcuts.didChange, object: nil)
@@ -207,11 +217,12 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
         refresh()
     }
 
-    func showDeliveryStatus(_ text: String?, uncertain: Bool) {
+    func showDeliveryStatus(_ text: String?, uncertain: Bool, dismissible: Bool = false) {
         deliveryStatus.stringValue = text ?? ""
         deliveryStatus.toolTip = text
         deliveryStatus.textColor = uncertain ? .systemOrange : .secondaryLabelColor
         deliveryStatus.isHidden = text == nil
+        dismissDelivery.isHidden = text == nil || !dismissible
         refresh()
     }
 
@@ -303,7 +314,9 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
             top = Self.questionHeight
         }
         if !deliveryStatus.isHidden {
-            deliveryStatus.frame = NSRect(x: insets.left, y: top + 6, width: bounds.width - insets.left - insets.right, height: Self.questionHeight - 2)
+            let dismissWidth = dismissDelivery.isHidden ? 0 : dismissDelivery.intrinsicContentSize.width
+            dismissDelivery.frame = NSRect(x: bounds.width - insets.right - dismissWidth, y: top + 6, width: dismissWidth, height: Self.questionHeight - 2)
+            deliveryStatus.frame = NSRect(x: insets.left, y: top + 6, width: max(0, bounds.width - insets.left - insets.right - (dismissWidth > 0 ? dismissWidth + 8 : 0)), height: Self.questionHeight - 2)
             top += Self.questionHeight
         }
         let targetSize = target.intrinsicContentSize
@@ -361,6 +374,10 @@ final class ComposerBar: NSVisualEffectView, NSTextViewDelegate {
     /// Typing after a token never takes its look.
     func textView(_ textView: NSTextView, shouldChangeTypingAttributes oldTypingAttributes: [String: Any], toAttributes newTypingAttributes: [NSAttributedString.Key: Any]) -> [NSAttributedString.Key: Any] {
         Self.attributes
+    }
+
+    @objc private func dismissDeliveryClicked(_ sender: NSButton) {
+        onDismissDeliveryStatus?()
     }
 
     @objc private func targetClicked(_ sender: NSButton) {

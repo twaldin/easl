@@ -233,8 +233,9 @@ func TestPromptReceiptsMetadataValidationAndReconcileRequirement(t *testing.T) {
 }
 
 func TestPromptReceiptsDelegateUncertaintyRetainsMentionsAndDefiniteRefusalWithdraws(t *testing.T) {
-	for _, uncertain := range []bool{true, false} {
-		t.Run(fmt.Sprint(uncertain), func(t *testing.T) {
+	for _, outcome := range []string{"disconnect", "malformed", "refused"} {
+		t.Run(outcome, func(t *testing.T) {
+			uncertain := outcome != "refused"
 			f := newFixture(t)
 			tile := f.agentTerminal("", map[string]any{})
 			f.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "idle", "protocol": 1.0})
@@ -246,8 +247,10 @@ func TestPromptReceiptsDelegateUncertaintyRetainsMentionsAndDefiniteRefusalWithd
 			completed := make(chan map[string]any, 1)
 			go func() { completed <- receiptRequest(f, params) }()
 			forwarded := receiptAwait(t, app.calls)
-			if uncertain {
+			if outcome == "disconnect" {
 				app.close()
+			} else if outcome == "malformed" {
+				f.router.clients.Answer(app, map[string]any{"id": forwarded["id"], "ok": true, "result": "not a receipt"})
 			} else {
 				f.router.clients.Answer(app, map[string]any{"id": forwarded["id"], "ok": false, "error": map[string]any{"code": api.CodeUnavailable, "message": "no terminal surface"}})
 			}

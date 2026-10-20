@@ -1262,6 +1262,8 @@ public final class BoardMirror: BoardHost {
         let ping: JSONValue
         do {
             ping = try await connection.request("agent.prompt_epoch", .object([:]), timeout: .seconds(10))
+        } catch let failure as EaslConnection.Failure where failure.isHostResponse && failure.code == "invalid_params" {
+            throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
         } catch {
             throw ApiRouter.Failure("unavailable", "\(hostName) could not confirm safe prompt delivery (agent.prompt was not sent)")
         }

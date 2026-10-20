@@ -84,14 +84,12 @@ private enum ComposerDelivery {
         defer { f.window.close() }
         var notices: [String] = []
         var pending: CheckedContinuation<Void, Error>?
-        var closed = false
         f.controller.notice = { notices.append($0) }
         f.controller.send = { _, terminal, _, _ in
             if terminal == f.a { throw ApiRouter.Failure("unavailable", "refusal-A") }
-            do { try await withCheckedThrowingContinuation { pending = $0 } }
-            catch { closed = true; throw error }
+            try await withCheckedThrowingContinuation { pending = $0 }
         }
-        f.controller.sendDraft()
+        let completion = f.controller.sendDraft()!
         try await until { pending != nil }
         let deadline = ContinuousClock.now + .seconds(5)
         while !notices.contains(where: { $0.contains("target-A") && $0.contains("refusal-A") }) && ContinuousClock.now < deadline {
@@ -99,7 +97,7 @@ private enum ComposerDelivery {
         }
         let reportedBeforeClose = notices.contains { $0.contains("target-A") && $0.contains("refusal-A") }
         pending!.resume(throwing: BoardMirror.PromptOutcomeUnknown())
-        try await until { closed }
+        await completion.value
         try require(reportedBeforeClose, "target A's refusal must be reported before target B resolves or the window closes")
         try require(f.bar.draft.isEmpty && f.controller.state.outgoing.map(\.text) == ["one prompt"],
                     "unknown target B must keep the outgoing prompt held, not restore it")
@@ -109,20 +107,18 @@ private enum ComposerDelivery {
         let f = Fixture(draft: "first prompt", multiple: true)
         defer { f.window.close() }
         var pending: CheckedContinuation<Void, Never>?
-        var lateTargetFinished = false
         f.controller.send = { text, terminal, _, _ in
             if text == "first prompt" && terminal == f.b {
                 await withCheckedContinuation { pending = $0 }
-                lateTargetFinished = true
             }
         }
-        f.controller.sendDraft()
+        let first = f.controller.sendDraft()!
         try await until { pending != nil && f.controller.state.history.map(\.text) == ["first prompt"] }
         f.bar.show(ComposerDraft(text: "second prompt"), board: f.board)
-        f.controller.sendDraft()
-        try await until { f.controller.state.history.last?.text == "second prompt" }
+        let second = f.controller.sendDraft()!
+        await second.value
         pending!.resume()
-        try await until { lateTargetFinished && f.controller.state.outgoing.isEmpty }
+        await first.value
         try require(f.controller.state.history.map(\.text) == ["first prompt", "second prompt"],
                     "a slow second target must not repeat or reorder the first prompt in recall history")
     }

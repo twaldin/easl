@@ -115,7 +115,7 @@ public struct ComposerState: Codable, Equatable, Sendable {
     public var history: [ComposerDraft]
     /// Terminals picked in the target menu besides the tray's target (`PromptTarget`), each once.
     public var alsoTo: [ObjectID]
-    /// Submitted drafts whose complete delivery outcome is not yet known.
+    /// Drafts with no confirmed recipient; uncertainty never makes them editable again.
     public var outgoing: [ComposerDraft]
 
     public static let historyLimit = 100

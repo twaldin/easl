@@ -1213,18 +1213,8 @@ public final class ApiRouter {
     /// blocked check alone, unlike `force`, carries no mentions, and is queued as an answer only
     /// where the integration submits answers as prompts (`PromptTarget.answersAsPrompt`).
     public func composerPrompt(_ text: String, to terminal: ObjectID, on board: Board, mentions: [Mention], answer: Bool) async throws {
-        let params: JSONValue = .object([
-            "target": .string(terminal), "text": .string(text), "composer": .bool(true),
-            "answer": .bool(answer), "staged": try JSONValue.encode(answer ? [] : mentions),
-            "submission": .object([
-                "id": .string("sub_" + UUID().uuidString), "epoch": .string(promptSubmissions.epoch),
-                "createdAt": .string(Date().formatted(.iso8601)),
-            ]),
-        ])
-        _ = try await receiptPrompt(params) {
-            guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
-            return try await self.submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer, viewer: nil), caller: nil, force: false)
-        }
+        guard let tile = board.objects[terminal], tile.type == .terminal else { throw Failure("not_found", "terminal \(terminal) was closed") }
+        _ = try await submitPrompt(text, to: tile, on: board, attached: .composer(answer ? [] : mentions, answer: answer, viewer: nil), caller: nil, force: false)
     }
 
     private func submitPrompt(_ text: String, to terminal: CanvasObject, on board: Board, attached: Attached, caller sender: ObjectID?, force: Bool) async throws -> JSONValue {

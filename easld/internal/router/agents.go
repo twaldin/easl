@@ -769,12 +769,17 @@ func (r *Router) executePrompt(p map[string]any) (any, error) {
 	}
 	params := copyParams(p)
 	delete(params, "mentions")
+	delete(params, "submission")
+	delete(params, "reconcile")
 	params["target"] = terminal.ID
 	// From here until its turn reports, agent.restart counts the prompt as work (promptPending).
 	r.typing[terminal.ID]++
 	result, err := r.await(c, b.ID(), "agent.prompt", params, clients.TerminalDeadline)
 	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
 		delete(r.typing, terminal.ID)
+	}
+	if failure, ok := err.(*clients.Failure); ok && p["submission"] != nil && failure.Transport {
+		result, err = promptDelivery("unknown"), nil
 	}
 	if err != nil {
 		b.Commit(ids)
@@ -869,11 +874,16 @@ func (r *Router) forwardComposer(p map[string]any, b *board.Board, terminal mode
 	delete(params, "mentions")
 	delete(params, "staged")
 	delete(params, "viewer")
+	delete(params, "submission")
+	delete(params, "reconcile")
 	params["target"] = terminal.ID
 	r.typing[terminal.ID]++
 	result, err := r.await(c, b.ID(), "agent.prompt", params, clients.TerminalDeadline)
 	if r.typing[terminal.ID]--; r.typing[terminal.ID] <= 0 {
 		delete(r.typing, terminal.ID)
+	}
+	if failure, ok := err.(*clients.Failure); ok && p["submission"] != nil && failure.Transport {
+		result, err = promptDelivery("unknown"), nil
 	}
 	if err != nil {
 		if queued != "" {
