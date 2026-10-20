@@ -32,7 +32,7 @@ final class RemoteReplayQueue {
     func reconcilePrompt(_ params: [String: JSONValue], connection: EaslConnection,
                          changed: @escaping (BoardMirror.PromptDelivery) -> Void) async throws {
         let id = params["submission"]?["id"]?.string ?? ""
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             guard !promptReconciliationStopped else {
                 changed(.unknown)
                 continuation.resume(throwing: BoardMirror.PromptOutcomeUnknown())
@@ -41,7 +41,7 @@ final class RemoteReplayQueue {
             let receipt = PromptReceipt(params: params, connection: connection,
                                         continuation: continuation, changed: changed)
             promptReceipts[id] = receipt
-            changed(promptReconciliationStopped ? .unknown : .checking)
+            changed(.checking)
             checkPrompt(id, receipt)
         }
     }

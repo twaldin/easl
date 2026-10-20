@@ -237,7 +237,7 @@ final class ComposerController {
             notice("Mentions stay staged: a slash command or shell escape doesn't take them")
         }
         let board = self.board
-        enum Result {
+        enum Result: Sendable {
             case delivered(ObjectID)
             case refused(String)
             case unknown

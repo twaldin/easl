@@ -49,7 +49,6 @@ func promptDelivery(delivery string) map[string]any {
 	return map[string]any{"delivery": delivery}
 }
 
-// prompt owns receipts under the registry lock, including the reservation before await unlocks it.
 func (r *Router) prompt(p map[string]any) (any, error) {
 	reconcile := false
 	if value, present := p["reconcile"]; present {

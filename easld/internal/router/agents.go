@@ -666,9 +666,6 @@ func (r *Router) finalAnswer(terminal model.Object, b *board.Board, p map[string
 	return result, nil
 }
 
-// executePrompt queues agent.prompt for an integration that takes messages; otherwise, and
-// for a composer's prompt into any terminal, a client types it,
-// after the board's refusals, with the mentions the board hands over.
 func (r *Router) executePrompt(p map[string]any) (any, error) {
 	if err := checkComposer(p); err != nil {
 		return nil, err

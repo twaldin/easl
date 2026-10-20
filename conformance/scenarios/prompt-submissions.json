@@ -5,22 +5,22 @@
     "request.submission.epoch": "The request carries the current host's opaque registry incarnation."
   },
   "steps": [
-    { "call": "agent.prompt_epoch", "save": "host" },
+    { "call": "agent.prompt_epoch", "save": "host", "expect": { "response.ok": true } },
     {
       "call": "object.create",
       "params": { "board": "{{board}}", "type": "terminal", "props": { "cwd": "{{root}}", "command": ["/bin/cat"], "name": "receipt-worker" }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } },
       "save": "terminal"
     },
-    { "call": "agent.report", "params": { "tile": "{{terminal.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "source": "receipts", "seq": 1 } },
+    { "call": "agent.report", "params": { "tile": "{{terminal.object.id}}", "kind": "omp", "state": "idle", "protocol": 1, "source": "canvas-omp", "seq": 1 } },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
       "save": "sent",
       "expect": { "response.ok": true, "response.result.delivery": "message" }
     },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
       "expect": { "response.ok": true, "response.result.message": "{{sent.message}}", "response.result.submittedAt": "{{sent.submittedAt}}", "eventCount": 0 }
     },
     {
@@ -31,23 +31,23 @@
     { "call": "agent.inbox", "params": { "tile": "{{terminal.object.id}}", "ack": ["{{sent.message}}"] }, "expect": { "response.result.messages": [] } },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "params": { "target": "{{terminal.object.id}}", "text": "receive this prompt once", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
       "expect": { "response.ok": true, "response.result.message": "{{sent.message}}", "response.result.submittedAt": "{{sent.submittedAt}}", "eventCount": 0 }
     },
     { "call": "agent.inbox", "params": { "tile": "{{terminal.object.id}}" }, "expect": { "response.result.messages": [] } },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
+      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" }, "reconcile": true },
       "expect": { "response.ok": true, "response.result.delivery": "not-delivered", "eventCount": 0 }
     },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "params": { "target": "{{terminal.object.id}}", "text": "never type the cancelled composer prompt", "composer": true, "submission": { "id": "sub_cancelled-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
       "expect": { "response.ok": true, "response.result.delivery": "not-delivered", "eventCount": 0 }
     },
     {
       "call": "agent.prompt",
-      "params": { "target": "{{terminal.object.id}}", "text": "a different payload cannot reuse the receipt", "submission": { "id": "sub_delivered_once", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
+      "params": { "target": "{{terminal.object.id}}", "text": "a different payload cannot reuse the receipt", "submission": { "id": "sub_delivered-{{terminal.object.id}}", "epoch": "{{host.promptEpoch}}", "createdAt": "{{now}}" } },
       "expect": { "response.ok": false, "response.error.code": "invalid_params", "eventCount": 0 },
       "ignore": { "response.error.message": "Both hosts reject changed payloads, with host-specific diagnostic wording." }
     },
