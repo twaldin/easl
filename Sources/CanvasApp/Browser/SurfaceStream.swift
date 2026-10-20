@@ -94,6 +94,10 @@ final class SurfaceStream {
         return try result.get()
     }
 
+    func discardRefinement() {
+        inputRevision.advance()
+    }
+
     /// The outstanding frame acknowledged grants exactly one more; an older ack changes nothing.
     func ack(_ frame: Int) throws {
         switch flow.acknowledge(frame, at: ProcessInfo.processInfo.systemUptime) {

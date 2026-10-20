@@ -546,7 +546,6 @@ def run(config, args):
     save(directory / "metadata.json", metadata)
     source = observer = trace = None
     rows = []
-    previous_target = None
 
     def page(script):
         return source.call("browser.call", {"id": config["tile"], "method": "browser.eval", "params": {"script": script}}).get("value")
@@ -575,12 +574,10 @@ def run(config, args):
                 before = observer.capture(f"{sample:03d}-before")
                 row["before"] = before
                 candidates = [(50, 50, 75), (210, 180, 195)]
-                color = next(c for c in candidates if distance(c, observer.pixel) > 32
-                             and (previous_target is None or distance(c, previous_target) > 32))
+                color = next((c for c in candidates if distance(c, before["pixel"]) > 32), None)
+                if color is None:
+                    raise RuntimeError(f"No marker target differs from current pixel {before['pixel']}")
                 row["target"] = color
-                if distance(observer.pixel, color) <= 16:
-                    raise RuntimeError("Pre-click own-window marker already passes target16")
-                previous_target = color
                 row["source_before"] = page(config.get("count_script", "Number(clicks)"))
                 if type(row["source_before"]) not in (int, float):
                     raise RuntimeError("Source count_script must return a number")

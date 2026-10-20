@@ -349,7 +349,7 @@ final class BrowserSurface {
                     nextDelay = min(nextDelay, delay)
                     guard let encoded else { continue }
                     if encoded.refresh, stream.accepted != accepted {
-                        stream.inputRevision.advance()
+                        stream.discardRefinement()
                         continue
                     }
                     frame.format = encoded.format
