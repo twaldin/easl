@@ -150,6 +150,24 @@ extension LayoutApiTests {
         #expect(board.geometry.layoutCheck().hints.isEmpty)
     }
 
+    @Test func drawingMentionsIgnoreArchivedQuestionGeometry() async throws {
+        let box = board.create(type: .shape, props: .object(["kind": "rect"]), frame: Frame(x: 0, y: 0, w: 400, h: 400))
+        let question = archivedQuestion(frame: Frame(x: 100, y: 100, w: 100, h: 100), archived: false)
+        let mark = board.create(type: .shape, props: .object(["kind": "rect"]), frame: Frame(x: 120, y: 120, w: 20, h: 20))
+        _ = board.create(type: .arrow, props: ArrowSpec(from: .object(question.id), to: .point(CGPoint(x: 10, y: 10))).props)
+        for object in [box, mark] {
+            try board.stage(.object(object.id))
+            let context = await board.drain().context
+            #expect(context.contains(question.id))
+        }
+        _ = try board.update(question.id, props: .object(["archived": .bool(true)]))
+        for object in [box, mark] {
+            try board.stage(.object(object.id))
+            let context = await board.drain().context
+            #expect(!context.contains(question.id))
+        }
+    }
+
     @Test func unsupportedArchivePropsDoNotHideNoteGeometry() async throws {
         _ = board.create(type: .note, props: .object(["markdown": "one", "archived": .bool(true), "hidden": .bool(true)]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         _ = board.create(type: .note, props: .object(["markdown": "two"]), frame: Frame(x: 100, y: 0, w: 200, h: 100))
