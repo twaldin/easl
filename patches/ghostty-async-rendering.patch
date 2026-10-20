@@ -198,26 +198,35 @@ index a5e027a..abaeac7 100644
 +                display_invalidated or
                  swap_chain_rebuilt or
 diff --git a/src/renderer/metal/Frame.zig b/src/renderer/metal/Frame.zig
-index 388b4f9..4aee9e5 100644
+index 388b4f9..878079d 100644
 --- a/src/renderer/metal/Frame.zig
 +++ b/src/renderer/metal/Frame.zig
 @@ -21,2 +21,3 @@ pub const Options = struct {
      queue: objc.Object,
 +    publication: ?Target.Publication.Frame,
  };
-@@ -50,2 +51,5 @@ pub fn begin(
+@@ -43,2 +44,4 @@ pub fn begin(
+ 
++    if (opts.publication) |frame| frame.state.retain();
++
+     // Create our block to register for completion updates.
+@@ -50,2 +53,5 @@ pub fn begin(
              .sync = false,
 +            .presentation_revision = renderer.api.layer.presentationRevision(),
 +            .publication = if (opts.publication) |frame| frame.state else null,
 +            .publication_generation = if (opts.publication) |frame| frame.generation else 0,
          },
-@@ -62,2 +66,5 @@ const CompletionBlock = objc.Block(struct {
+@@ -62,2 +68,5 @@ const CompletionBlock = objc.Block(struct {
      sync: bool,
 +    presentation_revision: u64,
 +    publication: ?*Target.Publication,
 +    publication_generation: u64,
  }, .{
-@@ -79,7 +86,15 @@ fn bufferCompleted(
+@@ -70,2 +79,3 @@ fn bufferCompleted(
+ ) callconv(.c) void {
++    defer if (block.publication) |state| state.release();
+     const buffer = objc.Object.fromId(buffer_id);
+@@ -79,7 +89,15 @@ fn bufferCompleted(
  
 +    const publication: ?Target.Publication.Frame = if (block.publication) |state|
 +        .{ .state = state, .generation = block.publication_generation }
