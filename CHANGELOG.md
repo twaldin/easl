@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Undo and redo of deleted composer mentions no longer crash the app or discard the editor's undo history.
+
 ## 0.3.0
 
 Deckbox-hosted boards on easld now work fully from a Mac. Browser relay, host-backed HTML and video, shared stacking, and whole-board rendering complete the remote-board work deferred from 0.2.8.

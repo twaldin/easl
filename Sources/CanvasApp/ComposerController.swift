@@ -113,10 +113,9 @@ final class ComposerController {
         scheduleSave()
     }
 
-    /// The bar shows `draft`: rebuilt when its text or tokens changed, else its tokens rebound
-    /// (numbers, labels), keeping the text and its undo.
+    /// Keeps native undo intact when restaging a token changes only its mention identity.
     private func show(_ draft: ComposerDraft, caret: Int?, replacing before: ComposerDraft) {
-        if draft.text != before.text || draft.tokens.map(\.id) != before.tokens.map(\.id) {
+        if draft.text != before.text || draft.tokens.count != before.tokens.count {
             bar.show(draft, caret: caret, board: board)
         } else {
             bar.rebind(draft, board: board)
