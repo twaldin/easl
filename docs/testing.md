@@ -436,7 +436,7 @@ The pan uses 40 × 20 point steps, reverses every 60 scheduled steps, and must t
 
 Rows retain render failures, placeholders, omitted objects, and gesture failures rather than treating fast failures as successful measurements. Output includes the original fixture, raw logs, stream replies, startup capture receipts, render object records, and PNGs. Compare the native bounds as well as fixture bytes before attributing a difference to the app.
 
-Cold-preview proximity defers distant snapshots until near, and new cold admissions wait until a pinch ends. Distant roots leave the native hierarchy after live departure capture; terminal, browser, selected and focused roots stay attached. VoiceOver and Full Keyboard Access retain all roots. Completed cards survive far/near without being redrawn. Nearby zoomed-out headers can use cached images during pinch after their body card settles, then restore native controls. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
+Cold-preview proximity defers distant snapshots until near, and new cold admissions wait until a pinch ends. Distant roots leave the native hierarchy after live departure capture; terminal, browser, selected and focused roots stay attached. VoiceOver, Switch Control and Full Keyboard Access retain all roots. Completed cards survive far/near without being redrawn. Nearby zoomed-out headers can use cached images during pinch after their body card settles, then restore native controls. Explicit whole-board renders remain uncapped, and remote HTML keeps its existing host-bound file and network rules.
 
 #### Native preview lifecycle regression
 

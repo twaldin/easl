@@ -147,9 +147,10 @@ final class CanvasView: NSScrollView {
     private var geometryDirty = false
     private var magnifying = false
     private var voiceOverObservation: NSKeyValueObservation?
+    private var switchControlObservation: NSKeyValueObservation?
     private var fullKeyboardAccessEnabled = NSApplication.shared.isFullKeyboardAccessEnabled
     private var needsNativeAccessibility: Bool {
-        NSWorkspace.shared.isVoiceOverEnabled || NSApp.isFullKeyboardAccessEnabled
+        NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled || NSApp.isFullKeyboardAccessEnabled
     }
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
@@ -265,6 +266,9 @@ final class CanvasView: NSScrollView {
         voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.scheduleLiveness() }
         }
+        switchControlObservation = NSWorkspace.shared.observe(\.isSwitchControlEnabled, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.scheduleLiveness() }
+        }
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
         board.viewport = { [weak self] in
             guard let self, self.viewPlaced else { return nil }
@@ -312,6 +316,8 @@ final class CanvasView: NSScrollView {
         NotificationCenter.default.removeObserver(self)
         voiceOverObservation?.invalidate()
         voiceOverObservation = nil
+        switchControlObservation?.invalidate()
+        switchControlObservation = nil
         for tile in tiles.values {
             (tile.content as? TerminalTile)?.discard()
             tile.removeFromSuperview()
