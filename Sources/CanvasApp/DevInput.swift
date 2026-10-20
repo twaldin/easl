@@ -104,10 +104,14 @@ enum DevInput {
             single["repeat"] = nil
             let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
             let oscillate = max(0, Int(fields["oscillate"] ?? "") ?? 0)
+            let realtime = fields["realtime"] != nil && (fields["kind"] == "scroll" || fields["kind"] == "magnify")
+            let dx = single["dx"].flatMap(Double.init), dy = single["dy"].flatMap(Double.init)
+            let amount = single["amount"].flatMap(Double.init)
             let canvas = CanvasWindowController.frontmost?.canvas
             @MainActor final class Burst {
                 let start = Date()
                 var step = 0, last: Date?, gap = 0.0, gapStep = 0, lateness = 0.0
+                var delivered = 0
                 var timer: DispatchSourceTimer?
                 var minX = Double.infinity, maxX = -Double.infinity
                 var minZoom = Double.infinity, maxZoom = -Double.infinity
@@ -119,8 +123,11 @@ enum DevInput {
             timer.schedule(deadline: .now(), repeating: interval, leeway: .nanoseconds(0))
             timer.setEventHandler {
                 MainActor.assumeIsolated {
-                    let now = Date(), step = burst.step
-                    burst.step += 1
+                    let now = Date(), firstStep = burst.step
+                    let ticks = realtime ? max(1, min(count - firstStep, Int(burst.timer?.data ?? 1))) : 1
+                    let step = firstStep + ticks - 1
+                    burst.step = step + 1
+                    burst.delivered += 1
                     burst.lateness += max(0, now.timeIntervalSince(burst.start) - interval * Double(step)) * 1000
                     if let last = burst.last, now.timeIntervalSince(last) * 1000 > burst.gap {
                         burst.gap = now.timeIntervalSince(last) * 1000
@@ -128,12 +135,29 @@ enum DevInput {
                     }
                     burst.last = now
                     // A scroll burst is one trackpad gesture: began, changed…, ended.
+                    if realtime, firstStep == 0 {
+                        var begin = single
+                        begin["phase"] = "began"
+                        if dx != nil { begin["dx"] = "0" }
+                        if dy != nil { begin["dy"] = "0" }
+                        if amount != nil { begin["amount"] = "0" }
+                        replay(begin)
+                    }
                     var event = single
-                    event["phase"] = step == 0 ? "began" : step == count - 1 ? "ended" : "changed"
-                    if oscillate > 0, (step / oscillate) % 2 == 1 {
-                        for key in ["dx", "dy", "amount"] {
-                            if let value = event[key].flatMap(Double.init) { event[key] = String(-value) }
-                        }
+                    event["phase"] = realtime ? "changed" : firstStep == 0 ? "began" : step == count - 1 ? "ended" : "changed"
+                    let delta: Int
+                    if oscillate > 0 {
+                        let from = firstStep % oscillate, to = (step + 1) % oscillate
+                        let fromPosition = (firstStep / oscillate) % 2 == 0 ? from : oscillate - from
+                        let toPosition = ((step + 1) / oscillate) % 2 == 0 ? to : oscillate - to
+                        delta = toPosition - fromPosition
+                    } else {
+                        delta = ticks
+                    }
+                    if delta != 1 {
+                        if let dx { event["dx"] = String(dx * Double(delta)) }
+                        if let dy { event["dy"] = String(dy * Double(delta)) }
+                        if let amount { event["amount"] = String(amount * Double(delta)) }
                     }
                     replay(event)
                     if let canvas {
@@ -146,10 +170,18 @@ enum DevInput {
                     guard step == count - 1 else { return }
                     burst.timer?.cancel()
                     burst.timer = nil
+                    if realtime {
+                        event["phase"] = "ended"
+                        if dx != nil { event["dx"] = "0" }
+                        if dy != nil { event["dy"] = "0" }
+                        if amount != nil { event["amount"] = "0" }
+                        replay(event)
+                    }
                     NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), longest gap %.1f ms before step %d, mean lateness %.1f ms",
                           count, fields["kind"] ?? "", Date().timeIntervalSince(burst.start) * 1000, interval * 1000 * Double(count - 1),
-                          burst.gap, burst.gapStep, burst.lateness / Double(count))
+                          burst.gap, burst.gapStep, burst.lateness / Double(burst.delivered))
                     NSLog("DevInput.motion: x %.2f %.2f zoom %.4f %.4f", burst.minX, burst.maxX, burst.minZoom, burst.maxZoom)
+                    NSLog("DevInput.delivery: scheduled %d delivered %d coalesced %d realtime %d", count, burst.delivered, count - burst.delivered, realtime ? 1 : 0)
                     DevPerf.phase("settle")
                     DispatchQueue.main.asyncAfter(deadline: .now() + DevPerf.settle) { MainActor.assumeIsolated { DevPerf.end() } }
                 }

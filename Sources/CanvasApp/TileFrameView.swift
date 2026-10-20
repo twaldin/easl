@@ -294,13 +294,15 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
-    func updateTitleBar(near viewport: NSRect) {
+    func updateProximity(to viewport: NSRect) {
         if frame.intersects(viewport) {
             guard titleBar.superview == nil else { return }
             addSubview(titleBar, positioned: .below, relativeTo: zoomView)
             if window?.occlusionState.contains(.visible) == true { syncTitle() }
+            if window != nil, !isLive, cardTask == nil { requestCard() }
         } else if titleBar.superview != nil {
             titleBar.removeFromSuperview()
+            if !isLive, !contentLive { invalidateCard() }
         }
     }
 
@@ -630,6 +632,7 @@ final class TileFrameView: NSView {
 
     private func requestCard() {
         invalidateCard()
+        guard contentLive || titleBar.superview != nil else { return }
         syncTitle()
         if hostBoardClosed {
             if contentLive {

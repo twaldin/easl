@@ -5,7 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Detach distant tile title controls to reduce AppKit work while panning and zooming large local and remote boards.
-- Reuse a bounded pool of local HTML pages for tile snapshots and whole-board renders, clearing each page between tiles.
+- Defer distant card previews until they approach the viewport, while preserving snapshots of live tiles as they leave it.
 - Refuse unreadable or newer-format local boards instead of opening empty replacements; preserve recovery copies and keep their files unchanged through restore, migration, close, and quit.
 
 ## 0.3.0

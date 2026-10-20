@@ -93,7 +93,7 @@ class Run:
         self.server = None
         self.pid = None
         self.env = dict(os.environ, EASL_DEV_HOME=str(self.home), EASL_DEV_APP=str(app),
-                        EASL_DEV_FRAME='0 0 1200 760', EASL_DEV_PERF='1')
+                        EASL_DEV_FRAME='0 0 1000 500', EASL_DEV_PERF='1')
         for key in ('EASL_BOARD_ID', 'EASL_TILE_ID'):
             self.env.pop(key, None)
         if mode == 'remote':
@@ -144,8 +144,24 @@ class Run:
         windows = wait_for(lambda: json.loads(command(self.args.window_helper, self.pid)))
         window = max(windows, key=lambda item: item['kCGWindowBounds']['Width'] * item['kCGWindowBounds']['Height'])
         self.native_bounds = window['kCGWindowBounds']
-        self.native_receipt = native.capture(self.home, window['kCGWindowNumber'], self.output / 'startup.png')
-        self.startup_capture_ms = (time.monotonic() - started) * 1000
+        attempts = []
+        deadline = time.monotonic() + 30
+        while True:
+            image = self.output / ('startup-attempt-' + str(len(attempts)) + '.png')
+            receipt = native.capture(self.home, window['kCGWindowNumber'], image)
+            captured_ms = (time.monotonic() - started) * 1000
+            probe = json.loads(command(self.args.window_helper, '--drawn', image))
+            attempts.append(dict(probe, captured_ms=captured_ms, capture_id=receipt['capture_id']))
+            (self.output / 'startup-attempts.json').write_text(json.dumps(attempts, indent=2))
+            if probe['drawn']:
+                self.native_receipt = receipt
+                self.startup_capture_ms = captured_ms
+                for suffix in ('.png', '.capture.json', '.capture.stderr'):
+                    shutil.copy2(image.with_suffix(suffix), self.output / ('startup' + suffix))
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError('No fixture terminal output in native startup pixels')
+            time.sleep(0.05)
         time.sleep(5)
         self.dev('input', 'perf', '1')
         time.sleep(0.2)
@@ -167,17 +183,21 @@ class Run:
             time.sleep(2)
         before = self.call('view.get')
         offset = len(self.log())
-        args = ['scroll', 600, 300, -2, 0, '--mods', 'cmd'] if kind == 'pan' else ['magnify', 600, 300, 0.25]
-        self.dev('input', *args, '--repeat', 601, '--interval', 16.666667, '--oscillate', 60)
+        args = ['scroll', 600, 300, -40, -20, '--mods', 'cmd'] if kind == 'pan' else ['magnify', 600, 300, 0.01]
+        oscillate = 60 if kind == 'pan' else 120
+        self.dev('input', *args, '--repeat', 601, '--interval', 16.666667, '--oscillate', oscillate, '--realtime')
         wait_for(lambda: 'DevPerfFrames:' in self.log()[offset:] and ' settle ' in self.log()[offset:], 90)
         text = self.log()[offset:]
         after = self.call('view.get')
         motion = re.search(r'DevInput.motion: x ([-\d.]+) ([-\d.]+) zoom ([\d.]+) ([\d.]+)', text)
         assert motion, 'No gesture movement witness'
+        delivery = re.search(r'DevInput.delivery: scheduled (\d+) delivered (\d+) coalesced (\d+) realtime (\d+)', text)
+        assert delivery and delivery[4] == '1', 'App/helper did not honor real-time gesture delivery'
         x0, x1, z0, z1 = map(float, motion.groups())
-        moved = x1 - x0 > 10 if kind == 'pan' else z1 - z0 > 0.01
+        moved = x1 - x0 > before['viewport']['rect']['w'] if kind == 'pan' else z1 - z0 > 0.01
         self.output.joinpath(kind + '.log').write_text(text)
         return {'before': before, 'after': after, 'moved': moved, 'frame_rows': frames(text),
+                'input_delivery': dict(zip(('scheduled', 'delivered', 'coalesced', 'realtime'), map(int, delivery.groups()))),
                 'stalls50': [line for line in text.splitlines() if 'DevPerfWake:' in line]}
 
     def measure(self):
