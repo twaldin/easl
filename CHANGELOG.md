@@ -16,7 +16,7 @@ These changes need easld 0.3.1 for their full effect on remote boards:
 
 A 0.3.1 app on easld 0.3.0 falls back to original image bytes and legacy prompts (#177). Legacy prompts retain the old lost-reply risk: a draft can return after execution, and manually sending it again can duplicate it. The app does not resend automatically. Host-side archived-question geometry stays unchanged until easld updates.
 
-A 0.3.0 app on easld 0.3.1 works, without gaining the new app features. Both mixed-version directions were exercised in the release-candidate passes, and the `release-compatibility` CI gate checks them. The coordinator deploys easld on deckbox right after the tag.
+A 0.3.0 app on easld 0.3.1 works, without gaining the new app features. The release-candidate mixed-version matrix exercised both app/host directions. The `release-compatibility` CI gate checks the current app's Core client against the previous easld and the previous Python SDK against the current easld. The coordinator deploys easld on deckbox right after the tag.
 
 The remaining changes are app-side features and fixes, measurement tools, tests, or verification documentation. SSH compression and native terminal activity handling do not need a new easld. The new preview and prompt-receipt methods also exist on Mac hosts.
 
@@ -26,9 +26,9 @@ The board format is unchanged since 0.3.0, still format 3. The Mac app now refus
 
 ### Remote performance
 
-These measurements describe specific fixtures and links, not latency guarantees.
+These studies measured individual changes, not a final 0.3.0-versus-0.3.1 comparison. They describe specific fixtures and links, not latency guarantees.
 
-On a guest-loopback scratch easld, a 62-tile board was measured before and after the image-preview and SSH-compression changes. With 1 Mbit/s, 80 ms added RTT, and 1% loss in each direction, single observations were:
+On a guest-loopback scratch easld, a 62-tile board was measured before and after distant-preview deferral (#167), image previews, and SSH compression (#171). This comparison does not isolate any one change. With 1 Mbit/s, 80 ms added RTT, and 1% loss in each direction, single observations were:
 
 | Operation | Before | After |
 |---|---:|---:|
@@ -38,9 +38,9 @@ On a guest-loopback scratch easld, a 62-tile board was measured before and after
 
 These are not population percentiles. The poor-link usable-open and browser latency gates were not qualified.
 
-In a separate native-key study over guest-loopback SSH, echo measured 79 ms median / 97 ms p95 at 10 Mbit/s and 35 ms added RTT, with 500 spaced keys. A pre-fix 100-key cohort on the 1 Mbit/s, 80 ms added-RTT link with 1% loss each way measured 125 / 202 ms; the pooled 500-key after result was 128 / 200 ms. These native-frame observations include tracing overhead and do not establish a native-key speedup.
+In a separate native-key study over guest-loopback SSH, echo measured 79 ms median / 97 ms p95 at 10 Mbit/s and 35 ms added RTT, with 500 spaced keys. On the 1 Mbit/s, 80 ms added-RTT link with 1% loss each way, the first matched 100-key pair measured 125 / 202 ms before the stale-HID fix and 133 / 216 ms after. The full 500-key poor-link cohorts measured 124 / 193 ms before and 128 / 200 ms after. These native-frame observations include tracing overhead and do not establish a native-key speedup.
 
-On a six-core, 16 GiB macOS guest, a 500-object fixture with eight terminals producing about 2 KiB/s each gave these medians over five runs per variant and board kind:
+For distant-preview deferral (#167), a six-core, 16 GiB macOS guest ran a 500-object fixture with eight terminals producing about 2 KiB/s each. Medians over five runs per variant and board kind were:
 
 | Measurement | Local before / after | Guest-local scratch easld before / after |
 |---|---:|---:|
@@ -52,6 +52,8 @@ The open bound includes all eight terminal workers becoming ready and an accepte
 ### Known limits
 
 Pan and zoom on boards of 500 or more objects are not smoother yet. Opening a terminal still pauses the main thread for about 130 ms.
+
+In that 500-object study, whole-board render medians rose from 3.732 to 3.881 s locally and from 7.052 to 7.480 s on guest-local easld. Remote zoom callback-gap p95 rose from 27.37 to 30.58 ms. Callback gaps are not GPU presentation times.
 
 ### Changes
 
