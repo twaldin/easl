@@ -73,17 +73,18 @@ private enum MoveEscape {
         let tile = canvas.tiles[object.id]!
         let initialPreview = tile.frame
 
-        func mouse(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat) {
-            let point = container.convert(NSPoint(x: x, y: container.bounds.height - y), to: nil)
+        let start = tile.content.convert(NSPoint(x: 50, y: 80), to: nil)
+        func mouse(_ type: NSEvent.EventType, _ dx: CGFloat, _ dy: CGFloat) {
+            let point = NSPoint(x: start.x + dx, y: start.y - dy)
             post(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
         }
         let held = scenario != "responder-idle"
         if held {
-            mouse(.leftMouseDown, 134.5, 221)
+            mouse(.leftMouseDown, 0, 0)
             for step in 1...8 {
-                mouse(.leftMouseDragged, 134.5 + CGFloat(step) * 50 / 8, 221 + CGFloat(step) * 30 / 8)
+                mouse(.leftMouseDragged, CGFloat(step) * 50 / 8, CGFloat(step) * 30 / 8)
             }
             try require(tile.frame.origin == NSPoint(x: initialPreview.minX + 50, y: initialPreview.minY + 30),
                         "Held terminal-body drag must show the 50 by 30 preview before Escape")
@@ -99,7 +100,7 @@ private enum MoveEscape {
         try require(drawing.tool == .select, "Escape must return Move to Select via \(scenario)")
         try require(tile.frame == initialPreview, "Escape must restore the visible original frame")
         if held {
-            mouse(.leftMouseUp, 184.5, 251)
+            mouse(.leftMouseUp, 50, 30)
             try require(tile.frame == initialPreview, "Release after Escape must not resurrect the preview")
         }
         try require(board.objects[object.id]?.frame == original, "Escape and release must preserve the committed frame")

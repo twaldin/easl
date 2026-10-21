@@ -55,7 +55,7 @@ def main():
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
         environment.pop("EASL_ROOT", None)
         for scenario in ("responder-idle", "responder-held", "posted-held"):
-            result = subprocess.run([str(executable), scenario], cwd=root, env=environment)
+            result = subprocess.run([str(executable), scenario], cwd=root, env=environment, timeout=30)
             if result.returncode:
                 failed.append(scenario)
     if failed:
