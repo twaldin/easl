@@ -26,7 +26,7 @@ Preconditions: an isolated board, one owned zsh terminal, and a note with unique
 - Send a unique shell prompt, then use Up and Down in the composer to recall and clear history. Keep different local and remote drafts while switching tabs. Reopen and relaunch separately. Local drafts persist; remote drafts are memory-only and clear when their tab closes or the app exits. Record each case separately.
 - For multiple targets, select two terminals in the target menu and use a unique receipt file for each. Require one receipt in each and no receipt in an unselected control. No-target behavior is not covered by a successful one-target send.
 - For integrated delivery, follow [the isolated omp setup](../omp-provider.md). Start real omp with the repo's easl extension, wait for a live session with the expected model and no draft, then target it through the same native menu and composer. Hyper-click the note and send a unique marker. Inspect the actual session JSONL for exactly one user message and one hidden `canvas.mentions` custom message containing the resolved note text. Capture omp's visible reply. Repeat local and remote; a stub HTTP request count alone is not a session receipt.
-- For transport-failure claims, run [prompt delivery after a lost reply](prompt-delivery.md). It covers execution-before-reply-loss, before-dispatch loss, persistent uncertainty, and hosts without receipt support. Do not substitute a direct API send for native Command-Return.
+- For transport-failure claims, run [prompt delivery after a lost reply](prompt-delivery.md). It covers execution-before-reply-loss, before-dispatch loss, transient reconciliation, and hosts without receipt support. Do not substitute a direct API send for native Command-Return.
 
 ## Gotchas
 

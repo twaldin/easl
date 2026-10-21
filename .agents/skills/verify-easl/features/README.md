@@ -9,7 +9,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Unreadable boards](unreadable-boards.md) covers refusal, recovery copies, restore, and migration.
 - [Terminals](terminals.md) covers native creation, typing, persistent sessions, and remote ownership.
 - [Composer](composer.md) covers focus, targets, sending, mentions, text editing, history, and delivery receipts.
-- [Prompt delivery](prompt-delivery.md) covers lost replies, non-delivery, uncertainty, and unsupported hosts.
+- [Prompt delivery](prompt-delivery.md) covers lost replies, non-delivery, reconciliation, and unsupported hosts.
 - [Browser tiles](browser-tiles.md) covers native navigation, browser automation, and a relay between two instances.
 - [Remote boards](remote-boards.md) covers scratch easld over guest-loopback SSH, synchronization, and closure.
 - [Remote image previews](image-previews.md) covers display-sized reads, zoom detail, original selection, and old hosts.
