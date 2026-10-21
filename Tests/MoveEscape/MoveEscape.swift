@@ -74,9 +74,9 @@ private enum MoveEscape {
         let tile = canvas.tiles[object.id]!
         let initialPreview = tile.frame
 
-        let start = tile.content.convert(NSPoint(x: 50, y: 80), to: nil)
+        let start = tile.content.convert(NSPoint(x: 50, y: 80), to: canvas.document)
         func mouse(_ type: NSEvent.EventType, _ dx: CGFloat, _ dy: CGFloat) {
-            let point = NSPoint(x: start.x + dx, y: start.y - dy)
+            let point = canvas.document.convert(NSPoint(x: start.x + dx, y: start.y + dy), to: nil)
             post(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
@@ -87,7 +87,7 @@ private enum MoveEscape {
             for step in 1...8 {
                 mouse(.leftMouseDragged, CGFloat(step) * 50 / 8, CGFloat(step) * 30 / 8)
             }
-            try require(tile.frame.origin == NSPoint(x: initialPreview.minX + 50, y: initialPreview.minY + 30),
+            try require(abs(tile.frame.minX - initialPreview.minX - 50) < 0.01 && abs(tile.frame.minY - initialPreview.minY - 30) < 0.01,
                         "Held terminal-body drag must show the 50 by 30 preview before Escape")
             try require(board.objects[object.id]?.frame == original && board.revision == revision,
                         "A held drag must not write the board before release")

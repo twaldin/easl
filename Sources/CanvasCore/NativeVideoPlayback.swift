@@ -20,7 +20,7 @@ public enum NativeVideoPlayback {
         try Task.checkCancellation()
         let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
         return await offPool {
-            // AVKit reads this synchronously when a player is attached. Never give it an audio track.
+            // AVKit reads currentMediaSelection synchronously after attachment.
             _ = item.currentMediaSelection
             return PreparedVideoPlayback(item: item, transform: transform, duration: duration)
         }
