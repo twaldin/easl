@@ -9,7 +9,7 @@ This repo keeps project skills in `.agents/skills/`, not `.cursor/skills/`. Read
 
 ## Hard rules
 
-- Run all GUI launches, input, and captures inside a claimed `agent-gui` or `agent-gui-2`. Never put an easl window on twaldin-home's display, even hidden. Never move its Spaces, focus, or windows.
+- Run all GUI launches, input, and captures inside a claimed `agent-gui`. Never put an easl window on twaldin-home's display, even hidden. Never move its Spaces, focus, or windows.
 - Never touch Tim's `/Applications/easl.app` or connect to `easld@tim`. Use only guest-local scratch easld servers. Never SSH to twaldin-work.
 - Never register a bundle with LaunchServices on home. `scripts/dev.sh` calls `dev-bundle.sh`, which calls `lsregister`, so both belong in the guest. Headless builds on home are not permission to run either launcher there.
 - Keep guests muted. The current claim helper mutes the selected guest on boot. Never change home's audio. Use `screencapture -x` for any native capture to suppress the shutter sound.
@@ -197,7 +197,7 @@ scripts/dev.sh cli system.ping &&
 scripts/dev.sh cli board.get
 ```
 
-Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. The guest-internal claim uses the legacy `agent-gui` record even on `agent-gui-2`; home status is the authority for the concrete VM.
+Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. Home status is the authority for the VM.
 
 For a remote tab, `board.get` on the viewer socket cannot read its host's board. Replace the final `scripts/dev.sh cli board.get` with `scripts/dev.sh input state` to confirm the selected remote tab, then read the host board through `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"`. Keep `system.ping` on the viewer socket to check the viewer.
 

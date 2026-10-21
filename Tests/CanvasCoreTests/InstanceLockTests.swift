@@ -63,7 +63,7 @@ final class InstanceLockTests {
         let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("30"), nil]
         defer { argv.forEach { free($0) } }
         #expect(posix_spawn(&child, "/bin/sleep", nil, nil, argv, environ) == 0)
-        defer { kill(child, SIGKILL); waitpid(child, nil, 0) }
+        defer { if child > 0 { kill(child, SIGKILL); waitpid(child, nil, 0) } }
         let lsof = Process()
         lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         lsof.arguments = ["-a", "-p", "\(child)", lock]

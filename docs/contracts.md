@@ -103,7 +103,7 @@ The release feed retains the `version`, `url`, `sha256`, `size`, and `notes` wir
 
 ### Guest-local update artifacts
 
-`scripts/update-proof.py` prepares artifacts from an existing `.build/easl.app` in a claimed `agent-gui` or `agent-gui-2` guest. It requires an explicit `EASL_DEV_HOME` below a scratch directory in `/tmp` and `EASL_GUI_GUEST` naming that guest. It never builds, launches a GUI, reads signing identities, publishes a release, or writes production app paths.
+`scripts/update-proof.py` prepares artifacts from an existing `.build/easl.app` in a claimed `agent-gui` guest. It requires an explicit `EASL_DEV_HOME` below a scratch directory in `/tmp` and `EASL_GUI_GUEST` naming that guest. It never builds, launches a GUI, reads signing identities, publishes a release, or writes production app paths.
 
 The helper copies the real source bundle into `EASL_DEV_HOME/update-proof/old/easl.app` and `new/easl.app`, changes their bundle versions, and signs both ad hoc. Both carry the same isolated bundle identifier and scratch home. They contain the same compiled executable. This exercises a real bundle swap, not historical 0.2.7 or 0.2.8 binaries. The manifest records the source executable's SHA-256.
 

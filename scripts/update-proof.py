@@ -32,8 +32,8 @@ VARIANTS = ("valid", "corrupt", "unsigned")
 
 
 def scratch_home():
-    if sys.platform != "darwin" or os.environ.get("EASL_GUI_GUEST") not in ("agent-gui", "agent-gui-2"):
-        raise ValueError("run only inside the claimed agent-gui or agent-gui-2 guest")
+    if sys.platform != "darwin" or os.environ.get("EASL_GUI_GUEST") != "agent-gui":
+        raise ValueError("run only inside the claimed agent-gui guest")
     value = os.environ.get("EASL_DEV_HOME", "")
     if not value or not Path(value).is_absolute():
         raise ValueError("set EASL_DEV_HOME to an explicit absolute guest scratch path")
