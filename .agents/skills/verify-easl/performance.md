@@ -57,9 +57,9 @@ Use a lane-specific copied helper at `$G/shape-link.py`:
 ```sh
 test ! -e "$G/proof/shape-before.json" && test ! -e "$G/proof/shape-before-helper.json" &&
 python3 "$G/shape-link.py" status "$G" > "$G/proof/shape-before.json" &&
-mv "$G/shape-status.json" "$G/proof/shape-before-helper.json"
-python3 "$G/shape-link.py" poor "$G"
-python3 "$G/shape-link.py" clear "$G"
+mv "$G/shape-status.json" "$G/proof/shape-before-helper.json" &&
+python3 "$G/shape-link.py" poor "$G" &&
+python3 "$G/shape-link.py" clear "$G" &&
 test ! -e "$G/proof/shape-after.json" && test ! -e "$G/proof/shape-after-helper.json" &&
 python3 "$G/shape-link.py" status "$G" > "$G/proof/shape-after.json" &&
 mv "$G/shape-status.json" "$G/proof/shape-after-helper.json"

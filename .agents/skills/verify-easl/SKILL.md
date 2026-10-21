@@ -89,6 +89,8 @@ git status --porcelain
 Require empty output before changing revisions. Stop if dirty or if an unowned compiler or instance still uses the checkout. Do not force a switch, reset, or remove the cache.
 
 ```sh
+set -eu
+: "${EXPECTED_HEAD:?set EXPECTED_HEAD to the full intended SHA}"
 git fetch origin "$BRANCH"
 git switch --detach "$EXPECTED_HEAD"
 HEAD=$(git rev-parse HEAD)
