@@ -587,7 +587,7 @@ The app-to-host audit for changes after v0.3.0 is:
 | #169, archived-question geometry | Existing object, question, group, and layout requests, with no new fields. | The app excludes archived questions in its own geometry. Host-computed placement, groups, and graphs retain v0.3.0 geometry until easld updates. Archived answers remain readable. |
 | #170, deferred arrow routing | Viewer-only snapshot scheduling, with no protocol change. | Board loading, edits, and explicit exports use existing requests. |
 | #171, image previews and SSH compression | Adds `image.preview`. SSH requests compression. Original-byte reads are unchanged. | One missing-method reply per live preview connection selects original bytes through the same lazy admission. Real preview errors still fail. SSH negotiates compression without an easld API change. |
-| #174, native activity | Viewer-local activity and idle-clock handling. Existing `view.activity` requests are unchanged. | Existing activity reporting works. No new host method or parameter. |
+| #174, native activity | Viewer-local activity and idle-clock handling. Existing `viewer.activity` requests are unchanged. | Existing activity reporting works. No new host method or parameter. |
 
 A v0.3.0 client can still use the current easld without receipt fields or preview requests. Legacy prompt requests keep their original reply shape. Existing object types, saved-board format, schema version, and request fields remain supported.
 

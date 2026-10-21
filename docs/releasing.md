@@ -14,7 +14,7 @@ The version lives in `VERSION`, and its notes in `CHANGELOG.md`: a release's not
 
 Require the `release-compatibility` CI job before releasing. Rolling app updates must keep working against the previous easld release.
 
-Run `python3 scripts/release-compatibility.py` on macOS with Swift 6.4, Go, Bun, and Python 3.11 or newer. Fetch full git history and tags first. The command selects the highest stable `vMAJOR.MINOR.PATCH` tag reachable from the tested head, so it advances when the next release is tagged. Before creating a new tag, that tag is the previous published release even when `VERSION` has not been bumped.
+Run `python3 scripts/release-compatibility.py` on macOS with Swift 6.4, Go, Bun, and Python 3.11 or newer. Fetch full git history and tags first. The command selects the highest stable `vMAJOR.MINOR.PATCH` tag reachable from the tested head, excluding tags on that head itself. It therefore checks the previous release on a tagged commit too. Between releases, the latest published tag is the baseline even when `VERSION` has not been bumped.
 
 The gate builds easld from that tag and runs the current app's Core remote client without a GUI. It checks opening, edits, undo and redo, image previews and original bytes, composer prompts, question answers, browser tile creation, and saved-board reopening after a daemon restart. Its delegated terminal executes shell commands and checks their exact output for duplicate delivery. It also runs the tagged Python SDK against the current daemon and verifies saved edits, questions, and browser tiles after restart.
 

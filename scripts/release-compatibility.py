@@ -32,9 +32,10 @@ def git(*arguments: str) -> str:
 
 def previous_release() -> str:
     releases = []
+    head = git("rev-parse", "HEAD")
     for tag in git("tag", "--merged", "HEAD", "--list").splitlines():
         match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag)
-        if match:
+        if match and git("rev-parse", tag + "^{commit}") != head:
             releases.append((tuple(map(int, match.groups())), tag))
     if not releases:
         raise RuntimeError("No reachable stable release tag. Fetch the full history and tags first.")
