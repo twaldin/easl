@@ -2,7 +2,58 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.1
+
+easl 0.3.1 adds keyboard shortcuts you can change and a Move tool for dragging tiles from their bodies. It also adds prompt delivery that reconciles lost replies without sending twice, safer board-file handling, and faster opening of big boards and remote content on slow links.
+
+### easld and the app
+
+These changes need easld 0.3.1 for their full effect on remote boards:
+
+- Display-sized image reads through `image.preview` (#171).
+- Idempotent prompt delivery and receipt-based reconciliation (#166).
+- Excluding archived questions from host-side geometry (#169).
+
+A 0.3.1 app on easld 0.3.0 falls back to original image bytes and legacy prompts (#177). Legacy prompts retain the old lost-reply risk: a draft can return after execution, and manually sending it again can duplicate it. The app does not resend automatically. Host-side archived-question geometry stays unchanged until easld updates.
+
+A 0.3.0 app on easld 0.3.1 works, without gaining the new app features. Both mixed-version directions were exercised in the release-candidate passes, and the `release-compatibility` CI gate checks them. The coordinator deploys easld on deckbox right after the tag.
+
+The remaining changes are app-side features and fixes, measurement tools, tests, or verification documentation. SSH compression and native terminal activity handling do not need a new easld. The new preview and prompt-receipt methods also exist on Mac hosts.
+
+### Board format
+
+The board format is unchanged since 0.3.0, still format 3. The Mac app now refuses unreadable or newer-format board files and leaves them untouched instead of opening empty replacements (#163).
+
+### Remote performance
+
+These measurements describe specific fixtures and links, not latency guarantees.
+
+On a guest-loopback scratch easld, a 62-tile board was measured before and after the image-preview and SSH-compression changes. With 1 Mbit/s, 80 ms added RTT, and 1% loss in each direction, single observations were:
+
+| Operation | Before | After |
+|---|---:|---:|
+| `seq 1 20000` | 11.64 s | 3.21 s |
+| Code open | 4.16 s | 1.21 s |
+| HTML first paint | 11.07 s | 4.12 s |
+
+These are not population percentiles. The poor-link usable-open and browser latency gates were not qualified.
+
+In a separate native-key study over guest-loopback SSH, echo measured 79 ms median / 97 ms p95 at 10 Mbit/s and 35 ms added RTT, with 500 spaced keys. A pre-fix 100-key cohort on the 1 Mbit/s, 80 ms added-RTT link with 1% loss each way measured 125 / 202 ms; the pooled 500-key after result was 128 / 200 ms. These native-frame observations include tracing overhead and do not establish a native-key speedup.
+
+On a six-core, 16 GiB macOS guest, a 500-object fixture with eight terminals producing about 2 KiB/s each gave these medians over five runs per variant and board kind:
+
+| Measurement | Local before / after | Guest-local scratch easld before / after |
+|---|---:|---:|
+| Open capture bound | 6.395 / 2.843 s | 6.101 / 2.972 s |
+| Quiet post-open app RSS | 695.5 / 325.4 MiB | 714.1 / 335.3 MiB |
+
+The open bound includes all eight terminal workers becoming ready and an accepted native viewport capture, not exact first presentation or completion of offscreen tiles. RSS is a main-app snapshot, not whole-system memory.
+
+### Known limits
+
+Pan and zoom on boards of 500 or more objects are not smoother yet. Opening a terminal still pauses the main thread for about 130 ms.
+
+### Changes
 
 - Escape leaves Move and cancels a held drag without moving objects or changing the board revision, including through the active canvas responder.
 - Cold offscreen browsers defer their first card preview until they enter the viewport margin.
