@@ -136,6 +136,7 @@ const snake = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCas
 function pyType(s: Schema): string {
   if (Array.isArray(s.type)) return s.type.map((type) => pyType({ ...s, type })).join(" | ");
   if (s.$ref) return `"${refName(s.$ref)}"`;
+  if (typeof s.const === "boolean") return `Literal[${s.const ? "True" : "False"}]`;
   if (s.const !== undefined) return `Literal[${JSON.stringify(s.const)}]`;
   if (s.enum) return `Literal[${s.enum.map((v) => JSON.stringify(v)).join(", ")}]`;
   if (s.oneOf) return `Union[${s.oneOf.map(pyType).join(", ")}]`;

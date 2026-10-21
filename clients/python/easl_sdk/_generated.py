@@ -179,7 +179,7 @@ class Lifecycle(TypedDict):
     message: NotRequired[str]
     seen: NotRequired[bool]
     error: NotRequired[str]
-    restored: NotRequired[Literal[true]]
+    restored: NotRequired[Literal[True]]
     via: NotRequired[Literal["notifications"]]
 
 ObjectKey = str
@@ -403,7 +403,7 @@ class PageLog(TypedDict):
     entries: NotRequired[list["PageLogEntry"]]
     omitted: NotRequired[int]
     dropped: NotRequired[int]
-    reloaded: NotRequired[Literal[true]]
+    reloaded: NotRequired[Literal[True]]
     cursor: NotRequired[str]
     vitals: NotRequired[dict[str, Any]]
 
@@ -478,14 +478,14 @@ class BoardInfo(TypedDict):
 
 class RemoteBoardInfo(TypedDict):
     """An open remote tab in the Mac app's board.list. The host owns its board id and root. Local-only metadata is absent."""
-    remote: Required[Literal[true]]
+    remote: Required[Literal[True]]
     host: Required[str]
     sshTarget: Required[str]
     board: Required["Id"]
     root: Required[str]
     title: Required[str]
     window: Required[int]
-    open: Required[Literal[true]]
+    open: Required[Literal[True]]
 
 class WorktreeInfo(TypedDict):
     path: Required[str]
