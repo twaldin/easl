@@ -62,6 +62,7 @@ public enum NativeVideoPlayback {
     }
 }
 
+// AVPlayerItem's internal notifications use main even when its player is created on a worker.
 public final class IsolatedVideoAudio: Sendable {
     public enum State: Equatable, Sendable {
         case ready
