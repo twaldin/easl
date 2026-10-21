@@ -92,7 +92,7 @@ struct IsolatedVideoAudioTests {
             audio.synchronize(seconds: ProcessInfo.processInfo.systemUptime - hostStart, rate: 1, volume: 0)
         }
         try #require(states == [.ready])
-        for (phase, target) in [("playing", 0.0), ("seek", 2.0)] {
+        for (phase, target) in [("playing", 0.0), ("seek", 20.0)] {
             let beforeSamples = receipt.output.withLock { $0.samples }
             let beforeStarts = receipt.output.withLock { $0.starts }
             if target != 0 { audio.synchronize(seconds: target, rate: 1, volume: 0) }
