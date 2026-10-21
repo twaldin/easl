@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the remote Core journey on the latest reachable stable release and its SDK on HEAD.
 
-Requires macOS, Swift 6.4, Go from easld/go.mod, Bun, Python 3.9+, git, and tar.
+Requires macOS, Swift 6.4, Go from easld/go.mod, Bun, Python 3.11+, git, and tar.
 Use --client-ref 1e857a2 to copy only the new Core suite into the release candidate.
 """
 
@@ -163,7 +163,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, help="New directory for sources, scratch state, and logs")
     args = parser.parse_args()
     require(platform.system() == "Darwin", "The remote Core release gate requires macOS")
-    require(sys.version_info >= (3, 9), "Python 3.9 or newer is required")
+    require(sys.version_info >= (3, 11), "Python 3.11 or newer is required by the released SDK")
     for executable in ["swift", "go", "bun", "git", "tar"]:
         require(shutil.which(executable) is not None, f"Missing dependency: {executable}")
     swift = subprocess.check_output(["swift", "--version"], text=True)
