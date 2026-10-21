@@ -6,7 +6,7 @@ Each version's section is its GitHub release's notes.
 
 - Respect native app activity for terminal redraws and automatic update idleness when the HID clock is stale; add per-stage remote echo measurements.
 - Open saved boards with attached arrow previews while obstacle routing finishes in the background; edits and explicit exports still settle their final routes.
-- Remote PNG and JPEG tiles request display-sized previews from the host and load more detail on zoom. Update the Mac app and easld together for `image.preview`.
+- Remote PNG and JPEG tiles request display-sized previews and load more detail on zoom; older easld hosts use original image bytes and legacy composer prompts. CI checks the app's remote Core paths against the previous release.
 - Remote board and terminal SSH connections compress text, code, and metadata.
 - Development observers can retain the first complete native window frame without sending input or changing the canvas.
 - Archived questions no longer occupy space in layout checks, placement, fit avoidance, graphs, groups, arrow routing, navigation, or board-wide renders on either host; their answers remain readable.

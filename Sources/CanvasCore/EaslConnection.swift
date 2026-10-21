@@ -202,6 +202,10 @@ public final class EaslConnection: @unchecked Sendable {
 
     public var schemaVersion: Int? { queue.sync { advertisedSchemaVersion } }
 
+    func methodUnavailable(_ method: String) -> Bool {
+        queue.sync { link?.unavailableMethods.contains(method) == true }
+    }
+
     /// Why the connection isn't online, for the user: the relay's last stderr line (ssh's
     /// "Connection refused", nc's "No such file or directory"), a refused connect, a silent
     /// server. Nil while online.
@@ -611,6 +615,10 @@ public final class EaslConnection: @unchecked Sendable {
             if handshake.isEmpty { cameOnline(link) }
             return
         }
+        if let method = pending[id]?.method, pending[id]?.sentOn == link.generation,
+           failure?.code == "invalid_params", failure?.message == "unknown method \(method)" {
+            link.unavailableMethods.insert(method)
+        }
         finish(id, failure.map { .failure($0) } ?? .success(message["result"] ?? .null))
     }
 
@@ -795,6 +803,7 @@ private final class Link: @unchecked Sendable {
     let readFD: Int32
     let writeFD: Int32
     let process: Process?
+    var unavailableMethods: Set<String> = []
     var source: DispatchSourceRead?
     /// The write fd's source, made in `start` and resumed only while `outbox` waits on a full fd,
     /// so a link that never fills it gets no write events. Nil before `start` and once stopped.

@@ -10,6 +10,18 @@ The version lives in `VERSION`, and its notes in `CHANGELOG.md`: a release's not
 
 `bundle.sh` copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `Contents/Resources`. It also copies the app icon, `scripts/AppIcon.icns` (Info.plist `CFBundleIconFile`). The icon is drawn from the brand mark and rebuilt with the site's `bun scripts/app-icon.ts <out.icns>`, which renders each size of an `.iconset` and packs it with `iconutil`. When a package, `resources/` asset or the libghostty-spm xcframework changes, update the notices: the libghostty table follows the Ghostty commit the xcframework was built from (`ar -t` on its `libghostty.a` lists the C libraries; the fonts are the ones `src/font/embedded.zig` embeds), and the GNU libintl section's source links, checksum and relinking steps follow its gettext version, as do the tarball name and `GETTEXT_SHA256` in `release.yml`. The libintl section includes a written offer of its source, valid three years from each release.
 
+## Previous-release compatibility gate
+
+Require the `release-compatibility` CI job before releasing. Rolling app updates must keep working against the previous easld release.
+
+Run `python3 scripts/release-compatibility.py` on macOS with Swift 6.4, Go, Bun, and Python 3.9 or newer. Fetch full git history and tags first. The command selects the highest stable `vMAJOR.MINOR.PATCH` tag reachable from the tested head, so it advances when the next release is tagged. Before creating a new tag, that tag is the previous published release even when `VERSION` has not been bumped.
+
+The gate builds easld from that tag and runs the current app's Core remote client without a GUI. It checks opening, edits, undo and redo, image previews and original bytes, composer prompts, question answers, browser tile creation, and saved-board reopening after a daemon restart. Its delegated terminal executes shell commands and checks their exact output for duplicate delivery. It also runs the tagged Python SDK against the current daemon and verifies saved edits, questions, and browser tiles after restart.
+
+CI prints Swift 6.4 and retains the selected commits, build logs, and journey output in the `release-compatibility` artifact. A hard error or incorrect persisted result fails the job. Native rendering and composer gestures still require the claimed-guest journeys in `.agents/skills/verify-easl/`.
+
+To check the original 0.3.1 regression, run `python3 scripts/release-compatibility.py --client-ref 1e857a2`. This archives that candidate and adds only the new integration suite. Its old-host image preview must fail. Use `--output-dir <new-directory>` to retain a named evidence directory. The default retains evidence under `.build/release-compat-*`.
+
 ## One-time setup
 
 Once, by the Account Holder, after enrolling in the Apple Developer Program:

@@ -135,6 +135,7 @@ actor HostImagePreviews {
             link = makeConnection()
             connection = link
         }
+        if link.methodUnavailable("image.preview") { return nil }
         let reply: JSONValue
         do {
             reply = try await link.request("image.preview", .object(["id": .string(object), "maxPixels": .number(Double(maxPixels))]), timeout: remaining)
@@ -143,6 +144,9 @@ actor HostImagePreviews {
             connection = nil
             throw CancellationError()
         } catch let failure as EaslConnection.Failure {
+            if failure.isHostResponse, failure.code == "invalid_params", failure.message == "unknown method image.preview" {
+                return nil
+            }
             if !failure.isHostResponse, failure.code == "timeout" {
                 link.close()
                 connection = nil

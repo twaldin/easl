@@ -1259,26 +1259,35 @@ public final class BoardMirror: BoardHost {
         guard connection.state == .online, connection.schemaVersion != nil else {
             throw ApiRouter.Failure("unavailable", "\(hostName) is offline (agent.prompt was not sent)")
         }
-        let ping: JSONValue
+        var ping: JSONValue?
         do {
-            ping = try await connection.request("agent.prompt_epoch", .object([:]), timeout: .seconds(10))
-        } catch let failure as EaslConnection.Failure where failure.isHostResponse && failure.code == "invalid_params" {
-            throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
+            if !connection.methodUnavailable("agent.prompt_epoch") {
+                ping = try await connection.request("agent.prompt_epoch", .object([:]), timeout: .seconds(10))
+            }
+        } catch let failure as EaslConnection.Failure where failure.isHostResponse &&
+            failure.code == "invalid_params" && failure.message == "unknown method agent.prompt_epoch" {
+            ping = nil
         } catch {
             throw ApiRouter.Failure("unavailable", "\(hostName) could not confirm safe prompt delivery (agent.prompt was not sent)")
         }
         try requireCurrent(generation)
-        guard let epoch = ping["promptEpoch"]?.string, !epoch.isEmpty, epoch.utf8.count <= 80 else {
-            throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
+        var epoch: String?
+        if let ping {
+            guard let value = ping["promptEpoch"]?.string, !value.isEmpty, value.utf8.count <= 80 else {
+                throw ApiRouter.Failure("unavailable", "Update easl on \(hostName) before sending prompts safely (agent.prompt was not sent)")
+            }
+            epoch = value
         }
-        let submission = "sub_\(UUID().uuidString)"
+        let submission = epoch.map { _ in "sub_\(UUID().uuidString)" }
         var params: [String: JSONValue] = [
             "target": .string(terminal), "text": .string(text), "composer": .bool(true),
-            "submission": .object([
+        ]
+        if let epoch, let submission {
+            params["submission"] = .object([
                 "id": .string(submission), "epoch": .string(epoch),
                 "createdAt": .string(ISO8601DateFormatter().string(from: Date())),
-            ]),
-        ]
+            ])
+        }
         if answer { params["answer"] = .bool(true) }
         let staged = !answer && !mentions.isEmpty
         var wireMentions: [Mention] = []
@@ -1303,7 +1312,17 @@ public final class BoardMirror: BoardHost {
             } catch let failure as EaslConnection.Failure where failure.isHostResponse {
                 throw ApiRouter.Failure(failure.code, failure.message)
             } catch {
+                guard let submission else {
+                    if let failure = error as? EaslConnection.Failure {
+                        throw ApiRouter.Failure(failure.code, failure.message)
+                    }
+                    throw error
+                }
                 try await reconcilePrompt(params, submission: submission, terminal: terminal)
+                return
+            }
+            guard let submission else {
+                try requireCurrent(generation)
                 return
             }
             switch result["delivery"]?.string {

@@ -28,6 +28,6 @@ Preconditions: matched candidate viewer and guest-local scratch easld, SSH forwa
 
 - `Sources/CanvasApp/ImageTile.swift` chooses backing-pixel resolution, upgrades after zoom, and presents read failures.
 - `Sources/CanvasCore/HostImagePreview.swift` requests and validates previews. `LocalImagePreview.swift` and `easld/internal/router/imagepreview.go` implement host selection.
-- At the recorded 0.3.1 candidate, only an explicit `kind: original` selects fallback. Unknown-method, malformed-reply, authorization, and transport failures remain errors. Do not describe old-host fallback as implemented without live evidence.
+- An exact `invalid_params: unknown method image.preview` host reply selects original bytes. The live connection caches missing support; a new connection probes again. Malformed replies, authorization failures, and transport failures remain errors.
 - SSH compression is requested by `RemoteHost.swift`, `HostMaster.swift`, and `HostedTerminal.swift`. Retain negotiated compression diagnostics before claiming it was used; command arguments alone are insufficient.
 - A scratch macOS easld qualifies that artifact and host OS. It does not prove Linux encoder parity or a physical-network transfer result.
