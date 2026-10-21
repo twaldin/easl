@@ -5,10 +5,16 @@ import tempfile
 import subprocess
 import sys
 import unittest
+import time
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('terminal_echo', Path(__file__).parent / 'terminal-echo/analyze-echo.py')
 echo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(echo)
+
+observer_spec = importlib.util.spec_from_file_location('terminal_echo_observer', Path(__file__).parent / 'terminal-echo/ssh-echo-observed.py')
+observer = importlib.util.module_from_spec(observer_spec)
+observer_spec.loader.exec_module(observer)
 
 
 class TerminalEchoAnalysisTests(unittest.TestCase):
@@ -133,6 +139,24 @@ class TerminalEchoAnalysisTests(unittest.TestCase):
         result = self.cohort(rows)
         self.assertFalse(result['valid'])
         self.assertEqual(result['complete'], 1)
+
+    def test_non_utf8_ssh_diagnostics_do_not_break_negotiated_compression(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            debug = root / 'ssh.log'
+            debug.write_bytes(b'debug1: kex: server->client cipher: chacha20-poly1305 MAC: <implicit> compression: zlib@openssh.com\n'
+                              b'debug1: kex: client->server cipher: chacha20-poly1305 MAC: <implicit> compression: zlib@openssh.com\n'
+                              b'debug1: Sending command: truncated \xe2\n')
+            trace = observer.Trace(root / 'trace.jsonl', SimpleNamespace(now=lambda: time.monotonic() * 1000),
+                                   False, ['compression yes'], debug)
+            try:
+                trace.transport()
+            finally:
+                observer.os.close(trace.fd)
+            rows = [json.loads(line) for line in (root / 'trace.jsonl').read_text().splitlines()]
+            transport = next(row for row in rows if row['stage'] == 'ssh.transport')
+            self.assertEqual(transport['negotiated_compression'],
+                             {'server->client': 'zlib@openssh.com', 'client->server': 'zlib@openssh.com'})
 
 
 if __name__ == '__main__':

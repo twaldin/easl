@@ -107,7 +107,8 @@ class Trace:
     def transport(self):
         if self.transport_recorded:
             return
-        negotiated = dict(re.findall(r"kex:\s+(server->client|client->server).*?compression:\s+(\S+)", self.debug.read_text()))
+        pairs = re.findall(rb"kex:\s+(server->client|client->server).*?compression:\s+(\S+)", self.debug.read_bytes())
+        negotiated = {direction.decode("ascii"): algorithm.decode("ascii") for direction, algorithm in pairs}
         self.emit("ssh.transport", options=self.options, negotiated_compression=negotiated, debug_file=str(self.debug))
         self.transport_recorded = True
 

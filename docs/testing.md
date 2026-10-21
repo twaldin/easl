@@ -87,7 +87,7 @@ Run `scripts/terminal-echo/` only inside a claimed GUI guest, against a guest-lo
 
 Copy the tools into a fresh scratch directory and retain every binary until the session ends. Give the directory a `repo` symlink to the claimed checkout. Provide an authenticated loopback alias named `easl-guest` in `ssh_config`, with strict host-key checking and connection sharing disabled. Provide `ssh`, a wrapper for `/usr/bin/ssh -F <scratch>/ssh_config`, for link calibration. Keep credentials outside the fixture.
 
-Build `easld` with `go build -p 2`, copy zmx 0.8.1 into the scratch directory as `zmx`, and build the tracer and native input helper there:
+Build `easld` with `go -C "$G/repo/easld" build -p 2 -o "$G/easld" ./cmd/easld`, copy zmx 0.8.1 into the scratch directory as `zmx`, and build the tracer and native input helper there:
 
 ```sh
 clang -arch arm64 -std=c11 -O2 -Wall -Wextra -Werror -dynamiclib "$G/pty-trace.c" -o "$G/host-pty-trace.dylib"
