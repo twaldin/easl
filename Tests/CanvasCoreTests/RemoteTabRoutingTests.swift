@@ -36,14 +36,14 @@ extension ApiRouterTests {
         }
         let listed = try #require(try await call(client, "board.list", [:])["result"]?["boards"]?.array)
         #expect(listed == before + [.object([
-            "remote": true, "host": "deckbox", "sshTarget": "agents@deckbox", "board": "brd_remote",
-            "root": "/host/repo", "title": "repo @ deckbox", "window": 47, "open": true,
+            "remote": .bool(true), "host": "deckbox", "sshTarget": "agents@deckbox", "board": "brd_remote",
+            "root": "/host/repo", "title": "repo @ deckbox", "window": 47, "open": .bool(true),
         ])])
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         #expect(try encoder.encode(Array(listed.dropLast())) == encoder.encode(before))
         #expect(registry.boards[remote.board.id] == nil)
-        #expect(try await call(client, "board.close", ["board": "brd_remote"])["ok"] == true)
+        #expect(try await call(client, "board.close", ["board": "brd_remote"])["ok"] == .bool(true))
         #expect(try await call(client, "board.list", [:])["result"]?["boards"] == .array(before))
         #expect(try await call(client, "view.get", ["board": "brd_remote"])["error"]?["code"] == "not_found")
     }
@@ -63,17 +63,17 @@ extension ApiRouterTests {
         }
         let client = try connect()
         #expect(try await call(client, "view.get", ["board": "brd_remote"])["result"] == .object([
-            "board": "brd_remote", "viewport": state.viewport.json, "selection": ["obj_note"], "visible": true,
+            "board": "brd_remote", "viewport": state.viewport.json, "selection": ["obj_note"], "visible": .bool(true),
             "appearance": "dark", "promptTarget": "obj_term", "focused": "obj_note", "enteredGroup": "obj_group",
         ]))
         let rect: JSONValue = .object(["x": 0, "y": 0, "w": 20, "h": 15])
-        let result = try await call(client, "view.render", ["board": "brd_remote", "target": rect, "inline": true])["result"]
+        let result = try await call(client, "view.render", ["board": "brd_remote", "target": rect, "inline": .bool(true)])["result"]
         #expect(result?["data"] == "AQID")
         #expect(result?["width"] == 40)
         #expect(result?["height"] == 30)
         #expect(result?["path"] == nil)
         #expect(try await call(client, "view.render", ["board": "brd_remote", "target": rect])["error"]?["code"] == "invalid_params")
-        #expect(try await call(client, "view.render", ["board": "brd_remote", "target": rect, "inline": true, "out": "/tmp/remote.png"])["error"]?["code"] == "invalid_params")
+        #expect(try await call(client, "view.render", ["board": "brd_remote", "target": rect, "inline": .bool(true), "out": "/tmp/remote.png"])["error"]?["code"] == "invalid_params")
         #expect(try await call(client, "view.snapshot", ["board": "brd_remote"])["error"]?["code"] == "unsupported")
         router.viewState = { _ in nil }
         #expect(try await call(client, "view.get", ["board": "brd_remote"])["error"]?["code"] == "unavailable")
@@ -114,7 +114,7 @@ extension ApiRouterTests {
             #expect(try await call(client, method, ["board": "brd_remote"])["error"]?["code"] == "ambiguous")
         }
         #expect(try await call(client, "view.get", ["board": "brd_unknown"])["error"]?["code"] == "not_found")
-        #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.filter { $0["remote"] == true }.count == 2)
+        #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.filter { $0["remote"] == .bool(true) }.count == 2)
         board.repo = RepoRecord(commonDir: dir.appendingPathComponent("common.git").path, merged: ["brd_remote"])
         #expect(try await call(client, "board.get", ["board": "brd_remote"])["result"]?["board"] == .string(board.id))
         let collision = remoteTabFixture(board: Board(remote: board.id, root: URL(fileURLWithPath: "/other/root"), host: RemoteTabTestHost.shared))
@@ -129,7 +129,7 @@ extension ApiRouterTests {
         let client = try connect()
         #expect(try await call(client, "board.get", ["board": "brd_remote"])["error"] == .object(["code": "conflict", "message": "host refused the revision"]))
         #expect(try await call(client, "events.subscribe", ["board": "brd_remote"])["error"]?["code"] == "unsupported")
-        #expect(try await call(client, "viewer.activity", ["board": "brd_remote", "input": true])["error"]?["code"] == "unsupported")
+        #expect(try await call(client, "viewer.activity", ["board": "brd_remote", "input": .bool(true)])["error"]?["code"] == "unsupported")
         let hidden = remoteTabFixture(open: false)
         router.remoteTabs = { [hidden] }
         #expect(try await call(client, "board.get", ["board": "brd_remote"])["error"]?["code"] == "not_found")
@@ -140,8 +140,8 @@ extension ApiRouterTests {
 
     @Test func remotePickerDoesNotOfferAnotherAppsRemoteTabsAsItsBoards() {
         let result = RemoteBoard.list(boards: .object(["boards": .array([
-            .object(["board": "brd_owned", "root": "/host/owned", "open": true, "archived": false, "objects": 0]),
-            .object(["board": "brd_elsewhere", "root": "/other/elsewhere", "remote": true, "open": true,
+            .object(["board": "brd_owned", "root": "/host/owned", "open": .bool(true), "archived": .bool(false), "objects": 0]),
+            .object(["board": "brd_elsewhere", "root": "/other/elsewhere", "remote": .bool(true), "open": .bool(true),
                      "host": "other", "sshTarget": "other", "title": "elsewhere @ other", "window": 22]),
         ])]), agents: .object(["agents": .array([])]))
         #expect(result.map(\.id) == ["brd_owned"])
