@@ -188,9 +188,6 @@ public final class IsolatedVideoAudio: Sendable {
     }
 
     private func install(_ item: AVPlayerItem, into state: inout Playback) {
-        for track in item.tracks where track.assetTrack?.mediaType != .audio {
-            track.isEnabled = false
-        }
         _ = item.currentMediaSelection
         guard !cancelled else { return }
         let player = AVPlayer()

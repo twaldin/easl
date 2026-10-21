@@ -54,10 +54,14 @@ def main():
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
         environment.pop("EASL_ROOT", None)
-        for scenario in ("responder-idle", "responder-held", "posted-held"):
-            result = subprocess.run([str(executable), scenario], cwd=root, env=environment, timeout=30)
-            if result.returncode:
-                failed.append(scenario)
+        try:
+            for scenario in ("responder-idle", "responder-held", "posted-held"):
+                result = subprocess.run([str(executable), scenario], cwd=root, env=environment, timeout=30)
+                if result.returncode:
+                    failed.append(scenario)
+        finally:
+            subprocess.run([str(root / "scripts/dev.sh"), "stop"], cwd=root,
+                           env={**environment, "EASL_DEV_HOME": temporary}, check=True, timeout=30)
     if failed:
         raise SystemExit("Move/Escape regressions failed: " + ", ".join(failed))
 

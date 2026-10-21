@@ -61,6 +61,16 @@ private enum MoveEscape {
             window.close()
         }
         window.makeKeyAndOrderFront(nil)
+        app.activate()
+        let activationDeadline = Date(timeIntervalSinceNow: 5)
+        while !app.isActive || !window.isKeyWindow {
+            try require(Date() < activationDeadline, "Move fixture must own the active key window")
+            while let event = app.nextEvent(matching: .any, until: Date(timeIntervalSinceNow: 0.01),
+                                           inMode: .default, dequeue: true) {
+                app.sendEvent(event)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         try await Task.sleep(for: .milliseconds(200))
         canvas.contentView.scroll(to: NSPoint(x: CanvasDocumentView.origin.x - 504.5,
                                               y: CanvasDocumentView.origin.y - 76))

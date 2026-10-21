@@ -141,7 +141,7 @@ final class VideoTile: NSView, TileContent {
                 }
             }
         }
-        endedObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+        endedObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self, weak item] _ in
             Task { @MainActor [weak self, weak item] in
                 guard let self, let item, self.live, !self.hostBoardClosed, self.player.currentItem === item,
                       self.object.props["loop"] == .bool(true) else { return }
