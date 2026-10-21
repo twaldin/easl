@@ -27,15 +27,20 @@ extension ShapeLayer {
         guard event.type == .keyDown, canvasHasKeyboard, editor == nil else { return false }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         if event.keyCode == 53, modifiers.isEmpty {  // Escape ends the active gesture or tool.
-            guard gesture != nil || tool != .select else { return false }
-            cancelGesture()
-            tool = .select
-            return true
+            return cancelTool()
         }
         // A selected changes tile's keys are its own (r discards there, never the rectangle tool).
         if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
         guard let action = AppShortcuts.action(for: event), let match = Tool.allCases.first(where: { $0.actionID == action.id }) else { return false }
         tool = match
+        return true
+    }
+
+    @discardableResult
+    func cancelTool() -> Bool {
+        guard editor == nil, gesture != nil || tool != .select else { return false }
+        cancelGesture()
+        tool = .select
         return true
     }
 
