@@ -156,6 +156,7 @@ go run ./conformance/cmd/easl-conformance record --socket … --on "easl main <s
 On `twaldin-home`, run every development or test GUI step inside `agent-gui`, including launch, input, and window captures. Never launch a development bundle on the host display, hidden or visible. Do not touch `/Applications/easl.app` on the host. Headless host builds and core tests remain allowed.
 
 Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md` for the tested claim, guest setup, proof, export, and cleanup commands. If that recipe is absent, GUI proof is not ready. Do not substitute a host launch.
+Use the project-local [verify-easl skill](../.agents/skills/verify-easl/SKILL.md) for guest launch, ownership checks, native feature journeys, retained evidence, and cleanup.
 
 The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, bun, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
 
