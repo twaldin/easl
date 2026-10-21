@@ -166,8 +166,6 @@ final class VideoTile: NSView, TileContent {
         audio = IsolatedVideoAudio(source: source.asset, work: audioWork) { [weak self] state in
             guard let self, self.audioGeneration == generation, self.live, !self.hostBoardClosed else { return }
             switch state {
-            case .preparing:
-                break
             case .ready:
                 self.audioDeadline?.cancel()
                 self.audioDeadline = nil

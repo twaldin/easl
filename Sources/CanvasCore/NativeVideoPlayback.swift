@@ -64,10 +64,15 @@ public enum NativeVideoPlayback {
 
 public final class IsolatedVideoAudio: Sendable {
     public enum State: Equatable, Sendable {
-        case preparing
         case ready
         case silent
         case failed(String)
+    }
+
+    private struct Input: Sendable {
+        let asset: AVURLAsset
+        let track: UncheckedBox<AVAssetTrack>
+        let duration: Double
     }
 
     private struct Position: Sendable {
@@ -80,41 +85,49 @@ public final class IsolatedVideoAudio: Sendable {
     private struct Control {
         var cancelled = false
         var started = false
-        var item: AVPlayerItem?
-        var prerollResult: Bool?
+        var input: Input?
         var reported: State?
         var position = Position()
         var preparation: Task<Void, Never>?
     }
 
+    private struct Playback {
+        var input: Input?
+        var renderer: AVSampleBufferAudioRenderer?
+        var clock: AVSampleBufferRenderSynchronizer?
+        var reader: AVAssetReader?
+        var output: AVAssetReaderTrackOutput?
+        var pending: CMSampleBuffer?
+        var previous: Position?
+        var rate: Float = 0
+        var ended = false
+    }
+
     private let work: VideoAudioWorkQueue
     private let id = UUID()
     private let control = Locked(Control())
-    private let changed: @MainActor @Sendable (State) -> Void
-    private struct Playback {
-        var audio: VideoAudioPlayback<AVPlayer>?
-        var itemObservation: NSKeyValueObservation?
-        var playerObservation: NSKeyValueObservation?
-    }
     private let playback = Locked(Playback())
+    private let changed: @MainActor @Sendable (State) -> Void
 
     @MainActor
-    public init(source: AVAsset, work: VideoAudioWorkQueue, changed: @escaping @MainActor @Sendable (State) -> Void) {
+    public init(source: AVURLAsset, work: VideoAudioWorkQueue, changed: @escaping @MainActor @Sendable (State) -> Void) {
         self.work = work
         self.changed = changed
         let preparation = Task { @MainActor [weak self] in
             do {
-                guard !(try await source.loadTracks(withMediaType: .audio)).isEmpty else {
-                    self?.notify(.silent)
-                    return
+                let tracks = try await source.loadTracks(withMediaType: .audio)
+                var selected: AVAssetTrack?
+                for track in tracks {
+                    if try await track.load(.isEnabled) {
+                        selected = track
+                        break
+                    }
                 }
-                _ = try await source.load(.duration, .tracks, .isPlayable, .hasProtectedContent, .availableMediaCharacteristicsWithMediaSelectionOptions)
+                guard let selected else { self?.notify(.silent); return }
+                let duration = try await source.load(.duration).seconds
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
-                let item = AVPlayerItem(asset: source, automaticallyLoadedAssetKeys: [String]())
-                item.preferredForwardBufferDuration = 2
-                guard !self.cancelled else { return }
-                self.control.withLock { $0.item = item }
+                self.control.withLock { $0.input = Input(asset: source, track: UncheckedBox(selected), duration: duration) }
                 self.schedule()
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -140,7 +153,7 @@ public final class IsolatedVideoAudio: Sendable {
     public func cancel() {
         let (started, preparation) = control.withLock { control in
             control.cancelled = true
-            control.item = nil
+            control.input = nil
             return (control.started, control.preparation)
         }
         preparation?.cancel()
@@ -157,67 +170,93 @@ public final class IsolatedVideoAudio: Sendable {
 
     private func process() {
         playback.withLock { state in
-            let next = control.withLock { control -> (AVPlayerItem?, Bool?, Position)? in
+            let next = control.withLock { control -> (Input?, Position)? in
                 guard !control.cancelled else { return nil }
                 control.started = true
-                defer {
-                    control.item = nil
-                    control.prerollResult = nil
-                }
-                return (control.item, control.prerollResult, control.position)
+                defer { control.input = nil }
+                return (control.input, control.position)
             }
-            guard let (item, prerollResult, position) = next else {
-                state.itemObservation = nil
-                state.playerObservation = nil
-                state.audio?.player.cancelPendingPrerolls()
-                state.audio?.player.pause()
-                state.audio?.player.replaceCurrentItem(with: nil)
-                state.audio = nil
+            guard let (input, position) = next else {
+                state.reader?.cancelReading()
+                state.renderer?.flush()
+                if let renderer = state.renderer, let clock = state.clock {
+                    clock.setRate(0, time: .zero)
+                    clock.removeRenderer(renderer, at: .negativeInfinity, completionHandler: nil)
+                }
+                state = Playback()
                 return
             }
-            if let item { install(item, into: &state) }
-            guard !cancelled else { schedule(); return }
-            if let finished = prerollResult {
-                state.audio?.ready = finished
-                if !finished {
-                    notify(.failed(state.audio?.player.currentItem?.error?.localizedDescription ?? "audio output could not start"))
+            do {
+                if let input {
+                    state.input = input
+                    let renderer = AVSampleBufferAudioRenderer()
+                    let clock = AVSampleBufferRenderSynchronizer()
+                    state.renderer = renderer
+                    state.clock = clock
+                    clock.addRenderer(renderer)
                 }
+                guard !cancelled else { schedule(); return }
+                try synchronize(position, state: &state)
+            } catch {
+                notify(.failed(error.localizedDescription))
             }
-            checkStatus(&state)
-            guard let audio = state.audio, audio.ready else { return }
-            let elapsed = ProcessInfo.processInfo.systemUptime - position.hostTime
-            let seconds = max(0, position.seconds + elapsed * Double(position.rate))
-            audio.synchronize(seconds: seconds, rate: position.rate, volume: position.volume)
-            notify(.ready)
         }
     }
 
-    private func install(_ item: AVPlayerItem, into state: inout Playback) {
-        guard !cancelled else { return }
-        let player = AVPlayer()
-        player.allowsExternalPlayback = false
-        state.audio = VideoAudioPlayback(player: player)
-        state.itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
-            self?.schedule()
+    private func synchronize(_ position: Position, state: inout Playback) throws {
+        guard let input = state.input, let renderer = state.renderer, let clock = state.clock else { return }
+        guard position.rate >= 0 else { throw HostFileError.unavailable("reverse audio playback is unavailable") }
+        let elapsed = max(0, ProcessInfo.processInfo.systemUptime - position.hostTime)
+        let seconds = max(0, position.seconds + elapsed * Double(position.rate))
+        let current = clock.currentTime().seconds
+        let discontinuity = state.previous.map {
+            abs(position.seconds - ($0.seconds + (position.hostTime - $0.hostTime) * Double($0.rate))) > 0.1
+        } ?? true
+        state.previous = position
+        if state.reader == nil || discontinuity {
+            state.reader?.cancelReading()
+            renderer.flush()
+            clock.setRate(0, time: CMTime(seconds: seconds, preferredTimescale: 600))
+            state.rate = 0
+            state.pending = nil
+            state.ended = seconds >= input.duration
+            let reader = try AVAssetReader(asset: input.asset)
+            let output = AVAssetReaderTrackOutput(track: input.track.value, outputSettings: nil)
+            output.alwaysCopiesSampleData = false
+            guard reader.canAdd(output) else { throw HostFileError.unavailable("audio samples cannot be read") }
+            reader.add(output)
+            let remaining = input.duration.isFinite
+                ? CMTime(seconds: max(0, input.duration - seconds), preferredTimescale: 600) : .positiveInfinity
+            reader.timeRange = CMTimeRange(start: CMTime(seconds: seconds, preferredTimescale: 600), duration: remaining)
+            guard state.ended || reader.startReading() else {
+                throw reader.error ?? HostFileError.unavailable("audio samples could not start")
+            }
+            state.reader = reader
+            state.output = output
         }
-        state.playerObservation = player.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
-            self?.schedule()
+        if renderer.volume != position.volume { renderer.volume = position.volume }
+        let limit = (current.isFinite && !discontinuity ? current : seconds) + 2
+        for _ in 0..<256 {
+            guard !state.ended, renderer.isReadyForMoreMediaData else { break }
+            guard let sample = state.pending ?? state.output?.copyNextSampleBuffer() else {
+                if let error = state.reader?.error { throw error }
+                state.ended = true
+                break
+            }
+            if sample.presentationTimeStamp.seconds > limit {
+                state.pending = sample
+                break
+            }
+            state.pending = nil
+            renderer.enqueue(sample)
         }
-        player.replaceCurrentItem(with: item)
-    }
-
-    private func checkStatus(_ state: inout Playback) {
-        guard let audio = state.audio, let item = audio.player.currentItem else { return }
-        if item.status == .failed || audio.player.status == .failed {
-            state.audio?.ready = false
-            notify(.failed(item.error?.localizedDescription ?? audio.player.error?.localizedDescription ?? "audio could not load"))
-            return
+        if renderer.status == .failed { throw renderer.error ?? HostFileError.unavailable("audio output could not start") }
+        if state.rate != position.rate || (current.isFinite && abs(current - seconds) > 0.1) {
+            let anchor = max(0, position.seconds + max(0, ProcessInfo.processInfo.systemUptime - position.hostTime) * Double(position.rate))
+            clock.setRate(position.rate, time: CMTime(seconds: anchor, preferredTimescale: 600))
+            state.rate = position.rate
         }
-        state.audio?.preroll { [weak self] finished in
-            guard let self, !self.cancelled else { return }
-            self.control.withLock { $0.prerollResult = finished }
-            self.schedule()
-        }
+        if renderer.status == .rendering && renderer.hasSufficientMediaDataForReliablePlaybackStart { notify(.ready) }
     }
 
     private func notify(_ state: State) {
@@ -234,54 +273,3 @@ public final class IsolatedVideoAudio: Sendable {
     }
 }
 
-protocol VideoAudioClockPlayer: AnyObject {
-    var automaticallyWaitsToMinimizeStalling: Bool { get set }
-    var isReady: Bool { get }
-    var itemIsReady: Bool { get }
-    var currentSeconds: Double { get }
-    var rate: Float { get }
-    var volume: Float { get set }
-    func prepareAudio(completion: @escaping @Sendable (Bool) -> Void)
-    func synchronize(rate: Float, seconds: Double)
-}
-
-struct VideoAudioPlayback<Player: VideoAudioClockPlayer> {
-    let player: Player
-    var ready = false
-    private var prerolling = false
-
-    init(player: Player) {
-        self.player = player
-        player.automaticallyWaitsToMinimizeStalling = false
-    }
-
-    mutating func preroll(completion: @escaping @Sendable (Bool) -> Void) {
-        guard player.isReady, player.itemIsReady, !prerolling else { return }
-        prerolling = true
-        player.prepareAudio(completion: completion)
-    }
-
-    func synchronize(seconds: Double, rate: Float, volume: Float) {
-        guard ready, player.isReady, player.itemIsReady else { return }
-        if player.volume != volume { player.volume = volume }
-        let current = player.currentSeconds
-        if !current.isFinite || abs(current - seconds) > 0.1 || player.rate != rate {
-            player.synchronize(rate: rate, seconds: seconds)
-        }
-    }
-}
-
-extension AVPlayer: VideoAudioClockPlayer {
-    nonisolated var isReady: Bool { status == .readyToPlay }
-    nonisolated var itemIsReady: Bool { currentItem?.status == .readyToPlay }
-
-    nonisolated var currentSeconds: Double { currentTime().seconds }
-
-    nonisolated func prepareAudio(completion: @escaping @Sendable (Bool) -> Void) {
-        preroll(atRate: 1, completionHandler: completion)
-    }
-
-    nonisolated func synchronize(rate: Float, seconds: Double) {
-        setRate(rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
-    }
-}
