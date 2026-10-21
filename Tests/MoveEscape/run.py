@@ -56,8 +56,10 @@ def main():
         environment.pop("EASL_ROOT", None)
         try:
             for scenario in ("responder-idle", "responder-held", "posted-held"):
-                result = subprocess.run([str(executable), scenario], cwd=root, env=environment, timeout=30)
-                if result.returncode:
+                result = subprocess.run([str(executable), scenario], cwd=root, env=environment,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30)
+                print(result.stdout, end="", flush=True)
+                if result.returncode or f"PASS {scenario}:" not in result.stdout:
                     failed.append(scenario)
         finally:
             subprocess.run([str(root / "scripts/dev.sh"), "stop"], cwd=root,

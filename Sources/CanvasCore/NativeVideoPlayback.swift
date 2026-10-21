@@ -16,9 +16,9 @@ public enum NativeVideoPlayback {
         let composition = prepared.asset
         let transform = prepared.transform
         let duration = try await composition.load(.duration).seconds
-        _ = try await composition.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
+        _ = try await composition.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions, .tracks, .hasProtectedContent)
         try Task.checkCancellation()
-        let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+        let item = AVPlayerItem(asset: composition)
         return await offPool {
             // AVKit reads currentMediaSelection synchronously after attachment.
             _ = item.currentMediaSelection
@@ -32,11 +32,12 @@ public enum NativeVideoPlayback {
             return type == .video || type == .text || type == .subtitle || type == .closedCaption
         }
         guard tracks.contains(where: { $0.mediaType == .video }) else { return nil }
-        var prepared: [(track: UncheckedBox<AVAssetTrack>, mediaType: AVMediaType, range: CMTimeRange, transform: CGAffineTransform)] = []
+        var prepared: [(track: UncheckedBox<AVAssetTrack>, mediaType: AVMediaType, range: CMTimeRange, transform: CGAffineTransform, enabled: Bool, language: String?, languageTag: String?)] = []
         for track in tracks {
             let range = try await track.load(.timeRange)
             let transform = track.mediaType == .video ? try await track.load(.preferredTransform) : .identity
-            prepared.append((UncheckedBox(track), track.mediaType, range, transform))
+            let (enabled, language, languageTag) = try await track.load(.isEnabled, .languageCode, .extendedLanguageTag)
+            prepared.append((UncheckedBox(track), track.mediaType, range, transform, enabled, language, languageTag))
         }
         try Task.checkCancellation()
         let transform = prepared.first(where: { $0.mediaType == .video })?.transform ?? .identity
@@ -50,6 +51,9 @@ public enum NativeVideoPlayback {
                     }
                     try target.insertTimeRange(source.range, of: source.track.value, at: source.range.start)
                     target.preferredTransform = source.transform
+                    target.isEnabled = source.enabled
+                    target.languageCode = source.language
+                    target.extendedLanguageTag = source.languageTag
                 }
                 return UncheckedBox(composition)
             }
@@ -108,6 +112,7 @@ public final class IsolatedVideoAudio: Sendable {
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
                 let item = AVPlayerItem(asset: source, automaticallyLoadedAssetKeys: [String]())
+                item.preferredForwardBufferDuration = 2
                 guard !self.cancelled else { return }
                 self.control.withLock { $0.item = item }
                 self.schedule()
