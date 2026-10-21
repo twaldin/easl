@@ -17,9 +17,8 @@ public enum NativeVideoPlayback {
         let transform = try await track?.load(.preferredTransform) ?? .identity
         _ = try await composition.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
         try Task.checkCancellation()
-        let composition = UncheckedBox(composition)
+        let item = await AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
         return await offPool {
-            let item = AVPlayerItem(asset: composition.value, automaticallyLoadedAssetKeys: [String]())
             // AVKit reads this synchronously when a player is attached. Never give it an audio track.
             _ = item.currentMediaSelection
             return PreparedVideoPlayback(item: item, transform: transform, duration: duration)
@@ -31,14 +30,14 @@ public enum NativeVideoPlayback {
         let range = try await track.load(.timeRange)
         let transform = mediaType == .video ? try await track.load(.preferredTransform) : .identity
         try Task.checkCancellation()
-        let track = UncheckedBox(track)
+        let sourceTrack = UncheckedBox(track)
         return try await offPool {
             Result<UncheckedBox<AVComposition>, Error> {
                 let composition = AVMutableComposition()
                 guard let target = composition.addMutableTrack(withMediaType: mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else {
                     throw HostFileError.unavailable("video track could not be prepared")
                 }
-                try target.insertTimeRange(range, of: track.value, at: range.start)
+                try target.insertTimeRange(range, of: sourceTrack.value, at: range.start)
                 target.preferredTransform = transform
                 return UncheckedBox(composition)
             }
@@ -63,7 +62,7 @@ public final class IsolatedVideoAudio: Sendable {
     private struct Control {
         var cancelled = false
         var started = false
-        var composition: AVComposition?
+        var item: AVPlayerItem?
         var prerollResult: Bool?
         var reported: State?
         var position = Position()
@@ -90,7 +89,9 @@ public final class IsolatedVideoAudio: Sendable {
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
                 guard let composition else { self.notify(.silent); return }
-                self.control.withLock { $0.composition = composition }
+                let item = await AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+                guard !self.cancelled else { return }
+                self.control.withLock { $0.item = item }
                 self.schedule()
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -116,7 +117,7 @@ public final class IsolatedVideoAudio: Sendable {
     public func cancel() {
         let (started, preparation) = control.withLock { control in
             control.cancelled = true
-            control.composition = nil
+            control.item = nil
             return (control.started, control.preparation)
         }
         preparation?.cancel()
@@ -133,16 +134,16 @@ public final class IsolatedVideoAudio: Sendable {
 
     private func process() {
         playback.withLock { state in
-            let next = control.withLock { control -> (AVComposition?, Bool?, Position)? in
+            let next = control.withLock { control -> (AVPlayerItem?, Bool?, Position)? in
                 guard !control.cancelled else { return nil }
                 control.started = true
                 defer {
-                    control.composition = nil
+                    control.item = nil
                     control.prerollResult = nil
                 }
-                return (control.composition, control.prerollResult, control.position)
+                return (control.item, control.prerollResult, control.position)
             }
-            guard let (composition, prerollResult, position) = next else {
+            guard let (item, prerollResult, position) = next else {
                 state.observation = nil
                 state.player?.cancelPendingPrerolls()
                 state.player?.pause()
@@ -150,7 +151,7 @@ public final class IsolatedVideoAudio: Sendable {
                 state.player = nil
                 return
             }
-            if let composition { install(composition, into: &state) }
+            if let item { install(item, into: &state) }
             guard !cancelled else { schedule(); return }
             if let finished = prerollResult {
                 if finished {
@@ -173,8 +174,7 @@ public final class IsolatedVideoAudio: Sendable {
         }
     }
 
-    private func install(_ composition: AVComposition, into state: inout Playback) {
-        let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+    private func install(_ item: AVPlayerItem, into state: inout Playback) {
         _ = item.currentMediaSelection
         guard !cancelled else { return }
         let player = AVPlayer()
