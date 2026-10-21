@@ -111,7 +111,7 @@ scripts/dev.sh cli system.ping
 scripts/dev.sh cli board.get
 ```
 
-Retain command output, build logs, tool versions, head, and hashes in `proof`. Require Swift 6.4 when the task requires it. The short development home isolates boards, sockets, browser profiles, zmx sockets, state, and temporary files. It is **not** a replacement for the macOS account's `HOME`. Do not inherit installed easl data. A fresh home opens **Get Started**. Capture that state, then close it through native input before testing the board. For a non-onboarding study, seed only `{"dismissed":true}` in `$EASL_DEV_HOME/get-started.json` before launch and record that precondition.
+Retain command output, build logs, tool versions, head, and hashes in `proof`. Require Swift 6.4 when the task requires it. The short development home isolates boards, sockets, browser profiles, zmx sockets, state, and temporary files. It is **not** a replacement for the macOS account's `HOME`. Do not inherit installed easl data. A fresh home opens **Get Started**. Capture it, then press the fresh AX button labelled **Close Get Started** using the background action described under Drive. It is board content, not a separate window to close. For a non-onboarding study, seed only `{"dismissed":true}` in `$EASL_DEV_HOME/get-started.json` before launch and record that precondition.
 
 Ready means the expected board root is selected, its native window has usable content, and a real input produces visible output. Socket existence or `system.ping` alone is not readiness. Retain an exact-window capture at readiness. Record signed executable hashes **after launch**; per-home signing can change executable bytes from the frozen source bundle.
 
@@ -204,6 +204,8 @@ scripts/dev.sh cli view.get
 ```
 
 Use **Prompt** and the target button's current label in a fresh CuaDriver accessibility tree. An AX action uses that snapshot's `element_token`, the same session, exact PID and window, and `delivery_mode: background`; see `Tests/RemoteClosedBoard/native.py` for the existing `click` request shape. Never reuse a token after another snapshot. A synchronous target popup can outlive an AXPress timeout. Capture its native menu before deciding that it failed. `mainmenu` invokes a real menu action but does not prove the menu's visual layout or physical keyboard navigation.
+
+Menu paths separate levels with `/`. Escape a literal slash inside a title as `//`. A newly created shell can have no `name` in `agent.list`; its current target title is then its directory. Read the actual **Only …** menu item in the fresh AX tree rather than guessing it from the tile ID.
 
 For canvas gestures without an accessibility action, derive coordinates from a fresh own-window capture and `view.get`. Record the geometry. Replay coordinates are top-left **content points**, not screenshot pixels or board coordinates. At scale 2, divide pixels by 2 and subtract measured chrome, usually 28 points or 64 with tabs. Verify actual bounds rather than assuming those offsets. Examples with measured `X`, `Y`, `TO_X`, and `TO_Y`:
 
