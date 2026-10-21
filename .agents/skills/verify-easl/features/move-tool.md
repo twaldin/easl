@@ -10,6 +10,10 @@ Users drag tile bodies without focusing their content. Move also pans over live 
 - `move-cancel` cancels a held drag without committing frames.
 - `move-pan` pans over live tiles and prevents parked content from regaining focus.
 
+## How to get to it (user POV)
+
+Choose Move in the drawing toolbar or Drawing > Move, or press the default M key with canvas focus. Drag a tile's body. V or Escape returns to Select.
+
 ## Driving it with dev.sh
 
 Preconditions: a selected scratch board with a live terminal, a note, and a group. Retain frames, terminal readback, responder state, and fresh measured content-point coordinates. Run locally, then on scratch easld with a second viewer.
@@ -20,7 +24,7 @@ Preconditions: a selected scratch board with a live terminal, a note, and a grou
 4. Start `input drag "$X" "$Y" "$TO_X" "$TO_Y" --hold`. Capture the preview, press Escape, then `input release "$TO_X" "$TO_Y"`. Require unchanged committed frames and no terminal byte.
 5. In Move, `input scroll "$X" "$Y" 0 100` over the terminal must pan, not scroll its history. Focus a terminal in Select, pan it out until parked, enter Move, and pan back. It must not regain terminal focus. V or Escape returns to Select.
 
-## Sources and gotchas
+## Gotchas
 
 - `Sources/CanvasApp/Drawing/ShapeLayer.swift` defines tools and suppresses content refocus in Move.
 - `Sources/CanvasApp/CanvasView.swift` intercepts tile bodies and commits grouped movement.

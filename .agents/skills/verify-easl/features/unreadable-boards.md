@@ -9,6 +9,10 @@ Users receive a refusal instead of an empty replacement when a saved local board
 - `board-restore-refuse` retains failed restore roots without overwriting their boards.
 - `board-migration-refuse` refuses unreadable legacy and repository boards before merging or adoption.
 
+## How to get to it (user POV)
+
+Choose File > Open Board… and select a folder with an unreadable saved board. The app reports why it cannot open the file. Startup restore and repository adoption also refuse unreadable inputs.
+
 ## Driving it with dev.sh
 
 Preconditions: an isolated development home and disposable board roots. Save a valid board with a unique note first. Record its actual storage path from that home's board directory, board ID, original bytes, and hashes. Stop the app before changing a saved fixture. Never corrupt a production board or a board currently being saved.
@@ -19,7 +23,7 @@ Preconditions: an isolated development home and disposable board roots. Save a v
 4. For restore, create a valid restore entry through an ordinary open and quit. Corrupt that saved board while stopped, then relaunch the same home. Capture the restore refusal and confirm the root remains in restore state. Repair it with the retained valid fixture and require its unique note on the next open. Keep the recovery copy unchanged.
 5. Exercise the unreadable legacy and repository-adoption fixtures described by `Tests/CanvasCoreTests/RepoBoardUnreadableMigrationTests.swift` in separate disposable roots. Require refusal before any merge, normalization, path rewrite, or retirement. Compare every source and destination file with its before copy. A normal board-open refusal does not qualify migration.
 
-## Sources and gotchas
+## Gotchas
 
 - `Sources/CanvasCore/BoardFile.swift` distinguishes missing files from refused files and deduplicates recovery copies by bytes.
 - `Sources/CanvasCore/BoardStore.swift` reads before normalization or repository adoption.
