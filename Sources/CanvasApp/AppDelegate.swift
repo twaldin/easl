@@ -619,6 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func closeBoard(_ id: BoardID, endSessions: Bool?) async throws -> BoardCloseResult {
         guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
         if registry.board(id: id) == nil {
+            guard !registry.store.owns(id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
             let opening = remoteLoads.compactMap { $0.key.board == id ? $0.value : nil }
             for load in opening { load.cancel() }
             let loads = reopenList.load().filter { $0.board == id }.compactMap { backgroundLoads[Self.remoteKey($0)] }

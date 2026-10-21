@@ -2804,11 +2804,7 @@ public final class ApiRouter {
     }
     /// Open and stored local boards, including migrated ids, take precedence over remote tabs.
     public func remoteTab(id: BoardID, includingClosed: Bool = false) throws -> RemoteBoardTab? {
-        guard registry.board(id: id) == nil else { return nil }
-        let file = registry.store.url(for: id)
-        let migrated = registry.store.directory.appendingPathComponent(RepoBoardMigration.backupFolder).appendingPathComponent(file.lastPathComponent)
-        guard !FileManager.default.fileExists(atPath: file.path),
-              !FileManager.default.fileExists(atPath: migrated.path) else { return nil }
+        guard registry.board(id: id) == nil, !registry.store.owns(id) else { return nil }
         let tabs = remoteTabs?() ?? []
         var found: RemoteBoardTab?
         for tab in tabs where tab.board.id == id && (includingClosed || tab.isOpen) {

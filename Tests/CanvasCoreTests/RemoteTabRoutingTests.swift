@@ -113,6 +113,8 @@ extension ApiRouterTests {
         for method in ["view.get", "board.get", "object.find"] {
             #expect(try await call(client, method, ["board": "brd_remote"])["error"]?["code"] == "ambiguous")
         }
+        let message = try #require(try await call(client, "view.get", ["board": "brd_remote"])["error"]?["message"]?.string)
+        #expect(message.contains(first.id) && message.contains(second.id))
         #expect(try await call(client, "view.get", ["board": "brd_unknown"])["error"]?["code"] == "not_found")
         #expect(try await call(client, "board.list", [:])["result"]?["boards"]?.array?.filter { $0["remote"] == .bool(true) }.count == 2)
         board.repo = RepoRecord(commonDir: dir.appendingPathComponent("common.git").path, merged: ["brd_remote"])
@@ -171,7 +173,7 @@ extension ApiRouterTests {
         var mentions: [String] = []
         for note in notes {
             let staged = try await call(client, "tray.stage", [
-                "board": .string(mirror.id), "target": .object(["object": .string(note.id)]),
+                "board": .string(mirror.id), "target": .object(["kind": "object", "object": .string(note.id)]),
             ])
             mentions.append(try #require(staged["result"]?["mention"]?["id"]?.string))
         }
@@ -238,5 +240,18 @@ extension ApiRouterTests {
         let event = try await watcher.next()
         #expect(event["event"] == "object.created")
         #expect(event["data"]?["id"] == .string(note.id))
+    }
+
+    @Test func remoteRequestsConflictWhileTheirTabIsClosing() async throws {
+        let remote = remoteTabFixture()
+        router.remoteTabs = { [remote] }
+        let observer = try connect()
+        router.closeBoard = { [self] _, _ in
+            #expect(try await call(observer, "view.get", ["board": "brd_remote"])["error"]?["code"] == "conflict")
+            #expect(try await call(observer, "board.get", ["board": "brd_remote"])["error"]?["code"] == "conflict")
+            throw ApiRouter.Failure("unavailable", "close held for requests")
+        }
+        let client = try connect()
+        #expect(try await call(client, "board.close", ["board": "brd_remote"])["error"]?["code"] == "unavailable")
     }
 }

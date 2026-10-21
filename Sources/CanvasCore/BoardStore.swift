@@ -38,6 +38,12 @@ public final class BoardStore {
         files.url(for: id)
     }
 
+    public func owns(_ id: BoardID) -> Bool {
+        let file = url(for: id)
+        let migrated = directory.appendingPathComponent(RepoBoardMigration.backupFolder).appendingPathComponent(file.lastPathComponent)
+        return FileManager.default.fileExists(atPath: file.path) || FileManager.default.fileExists(atPath: migrated.path)
+    }
+
     /// The board for a directory: a repository's board, rooted at its canonical root
     /// (`boardRoot`), else the directory's. The registry passes what it already worked out: the
     /// board root, `id`, and the repository's common git directory (`repo`). A repository board

@@ -2,7 +2,7 @@
 
 Each version's section is its GitHub release's notes.
 
-- The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve remote tabs by the host's board id.
+- The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
 
 ## 0.3.1
 
