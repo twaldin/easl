@@ -234,7 +234,7 @@ scripts/dev.sh input menu "$X" "$Y" "Content Zoom/150%"
 
 `--window` is supported for click, text, key, and shortcut. Other input kinds use the instance's selected board; confirm it with `input state` first. Do not use internal setters, direct draft mutation, or `agent.prompt` to stand in for a composer gesture. API calls may seed fixtures and inspect side effects, but cannot prove a different native entry point.
 
-`input state` queues a request and prints no state to stdout. Read the newest `DevInput.state` JSON line in that home's `app.log` after the request. Use its `selected`, `window`, `board`, and `responder` fields to identify the selected tab and focus. Do not treat an empty helper response as an empty board or a failed request.
+`input state` queues a request and prints no state to stdout. Record the byte offset of that home's `app.log` before the request. Wait with a bounded deadline for a new complete `DevInput.state` JSON line after that offset; an older line is not a receipt for this request. Use `selected`, `window`, `board`, and `responder` to identify the selected tab and focus. Require the intended board, since a remote open can still be in progress when the state request runs. Missing fresh state or the wrong selected board means readiness is unproven. Do not interpret empty helper stdout as an empty board or a failed request.
 
 ## Evidence
 
