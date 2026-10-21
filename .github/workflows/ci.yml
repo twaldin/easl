@@ -48,6 +48,37 @@ jobs:
       - name: Script tests
         run: python3 -m unittest discover -s scripts
 
+  release-compatibility:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: easld/go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Select Swift 6.4 Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+      - name: Released host and client compatibility
+        run: python3 scripts/release-compatibility.py --output-dir "$RUNNER_TEMP/release-compatibility"
+      - name: Preserve compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-compatibility
+          path: |
+            ${{ runner.temp }}/release-compatibility/*.log
+            ${{ runner.temp }}/release-compatibility/selection.json
+            ${{ runner.temp }}/release-compatibility/legacy-journey.json
+            ${{ runner.temp }}/release-compatibility/journey/journey.json
+            ${{ runner.temp }}/release-compatibility/journey/terminal-output
+
   conformance:
     runs-on: ubuntu-latest
     steps:
