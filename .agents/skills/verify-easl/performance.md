@@ -48,17 +48,21 @@ The runner refuses physical-Mac launch and owns its run instances. Require real 
 
 ## Shape only the guest-loopback board route
 
-The retained implementation is `/home/tim/agents/projects/easl/state/lanes/easl-slow-link-perf-1/shape-link.py`; its report records limits rather than a passing SLA. Copy it into your guest scratch, inspect it, and adapt its private PF anchor to your lane. Its fixed pipe IDs 27101/27102 must be absent before acquisition. Never overwrite an existing pipe or another lane's anchor. This mutates guest networking and is unnecessary for ordinary functional proof.
+The retained implementation is `/home/tim/agents/projects/easl/state/lanes/easl-slow-link-perf-1/shape-link.py`; its report records limits rather than a passing SLA. Copy it into your guest scratch, inspect it, and adapt its private PF anchor to `com.apple/$LANE`. Keep the `com.apple/` prefix so the default PF configuration evaluates it. Its fixed pipe IDs 27101/27102 must be absent before acquisition. Never overwrite an existing pipe or another lane's anchor. This mutates guest networking and is unnecessary for ordinary functional proof.
 
 The tested profiles are 10 Mbit/s with 17+18 ms delay, 1 Mbit/s with 40+40 ms and 1% loss per direction, and 100 kbit/s with 75+75 ms. Rules select only IPv4 `lo0` TCP port 22, in both directions, leaving management SSH outside that route. The helper records prior PF status and loopback MTU, acquires a PF enable token, and temporarily sets MTU 1500. Verify the actual rule, endpoint, rate, and RTT rather than treating profile labels as observations.
 
 Use a lane-specific copied helper at `$G/shape-link.py`:
 
 ```sh
-python3 "$G/shape-link.py" status "$G"
+test ! -e "$G/proof/shape-before.json" && test ! -e "$G/proof/shape-before-helper.json" &&
+python3 "$G/shape-link.py" status "$G" > "$G/proof/shape-before.json" &&
+mv "$G/shape-status.json" "$G/proof/shape-before-helper.json"
 python3 "$G/shape-link.py" poor "$G"
 python3 "$G/shape-link.py" clear "$G"
-python3 "$G/shape-link.py" status "$G"
+test ! -e "$G/proof/shape-after.json" && test ! -e "$G/proof/shape-after-helper.json" &&
+python3 "$G/shape-link.py" status "$G" > "$G/proof/shape-after.json" &&
+mv "$G/shape-status.json" "$G/proof/shape-after-helper.json"
 ```
 
 Run `clear` only after a successful acquisition with its saved `shaper-state.json`. It empties only the private anchor, deletes only owned pipes, releases only its PF token, and restores the saved MTU. Require matching final state, not a global PF flush or disable. Retain setup, calibration, and teardown receipts before guest stop. Never run shaping commands on home. A failed acquisition needs inspection and cleanup of the recorded partial state, not another blind invocation.

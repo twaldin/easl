@@ -46,7 +46,7 @@ Create a terminal through `object.create` with `type: terminal`, `props.cwd` set
 
 ```sh
 /usr/bin/env PI_CODING_AGENT_DIR="$G/omp-profile" \
-  bunx --bun @oh-my-pi/pi-coding-agent \
+  bunx --bun @oh-my-pi/pi-coding-agent@18.12.3 \
   --model guest-stub/composer-fixed --thinking off --no-tools --no-lsp \
   --no-title --no-rules --no-skills --no-extensions \
   -e "$R/extensions/omp/easl.ts" --config "$G/omp-config.yml" \

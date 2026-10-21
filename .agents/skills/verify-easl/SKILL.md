@@ -78,7 +78,7 @@ Inspect previous-owner records. A lock without a live metadata record is still h
 
 ### Build the exact revision and open an empty local board
 
-All commands below, through guest cleanup, run in a **guest login shell**. Set `G`, `LANE`, and `BRANCH` to your recorded scratch, lane, and pushed branch. Use `/Users/lume/easl-gui/repo` as the persistent checkout. Clone it from `https://github.com/twaldin/easl.git` only if absent. Keep the checkout and `.build` between lanes.
+All commands below, through guest cleanup, run in a **guest login shell** unless a command names the lane machine or home. Set `G`, `LANE`, and `BRANCH` to your recorded scratch, lane, and pushed branch. Set `EXPECTED_HEAD` to the full SHA you intend to prove before fetching. Use `/Users/lume/easl-gui/repo` as the persistent checkout. Clone it from `https://github.com/twaldin/easl.git` only if absent. Keep the checkout and `.build` between lanes.
 
 ```sh
 R=/Users/lume/easl-gui/repo
@@ -90,8 +90,9 @@ Require empty output before changing revisions. Stop if dirty or if an unowned c
 
 ```sh
 git fetch origin "$BRANCH"
-git switch --detach "origin/$BRANCH"
+git switch --detach "$EXPECTED_HEAD"
 HEAD=$(git rev-parse HEAD)
+test "$HEAD" = "$EXPECTED_HEAD"
 printf '%s\n' "$HEAD" > "$G/head.txt"
 sw_vers
 swift --version
@@ -113,7 +114,7 @@ scripts/dev.sh cli board.get
 
 Retain command output, build logs, tool versions, head, and hashes in `proof`. Require Swift 6.4 when the task requires it. The short development home isolates boards, sockets, browser profiles, zmx sockets, state, and temporary files. It is **not** a replacement for the macOS account's `HOME`. Do not inherit installed easl data. A fresh home opens **Get Started**. Capture it, then press the fresh AX button labelled **Close Get Started** using the background action described under Drive. It is board content, not a separate window to close. For a non-onboarding study, seed only `{"dismissed":true}` in `$EASL_DEV_HOME/get-started.json` before launch and record that precondition.
 
-Ready means the expected board root is selected, its native window has usable content, and a real input produces visible output. Socket existence or `system.ping` alone is not readiness. Retain an exact-window capture at readiness. Record signed executable hashes **after launch**; per-home signing can change executable bytes from the frozen source bundle.
+Ready means the expected board root is selected, its native window has usable content, and a real input produces visible output. Socket existence or `system.ping` alone is not readiness. Retain an exact-window capture at readiness. Record the signed executable hash after **every start or restart**, since per-home signing can change its bytes. Also record the replay helper hash with `shasum -a 256 "$R/.build/dev-input"`; bundling builds that helper in the shared checkout even when `SWIFTPM_BUILD_DIR` is set.
 
 If the compiler reports a stale precompiled module in the shared `.build`, retain that failure and leave the cache intact. Allocate a fresh build directory inside your recorded scratch with `export SWIFTPM_BUILD_DIR="$G/build"`. Require `swift build --show-bin-path` to name a path under it, then run the same bundling command there. Record this cold-build precondition and keep the selected build directory through the run. Never delete another lane's cache or accept an older binary after a failed build. Before launching, require `test -x "$G/frozen.app/Contents/MacOS/Easl"`. When using an SSH wrapper, retain the guest command's own exit status in its output as well as the controller exit status.
 
@@ -129,7 +130,7 @@ EASL_DEV_HOME="$G/view-b" scripts/dev.sh cli system.ping
 EASL_DEV_HOME="$G/view-b" scripts/dev.sh cli board.get
 ```
 
-Discover each home's PID and window independently. Run Doctor for both. Use an explicit home on every command targeting B. Two local boards alone do not exercise the relay. For that, attach both viewers to the same scratch board as [browser tiles](features/browser-tiles.md) specifies.
+Discover each home's PID and window independently. Run Doctor for A, then run its block in a subshell with `export EASL_DEV_HOME="$G/view-b"` and B's recorded `PID` and `WINDOW`. Use an explicit home on every command targeting B. Two local boards alone do not exercise the relay. For that, attach both viewers to the same scratch board as [browser tiles](features/browser-tiles.md) specifies.
 
 ### Add guest-local scratch easld over loopback SSH
 
@@ -137,16 +138,22 @@ Use the recipe's **Forward only the existing guest identity** procedure. From a 
 
 ```sh
 export EASL_GUI_GUEST
+SSH_CONFIG="$HOME/.config/agent-gui/ssh_config"
+ssh-keygen -lf "$HOME/.config/agent-gui/id_ed25519.pub" &&
+ssh -F "$SSH_CONFIG" -o BatchMode=yes -o IdentityAgent=none -o IdentitiesOnly=yes \
+  -i "$HOME/.config/agent-gui/id_ed25519" "$EASL_GUI_GUEST" true &&
 python3 -u "$H/forward-local.py" "$H" "$G"
 ```
 
-Require the public-fingerprint preflight, `loopbackSshExit: 0`, and `loopback-ssh-ok`. The helper forwards only the existing guest identity with a bounded dedicated agent. It writes the pinned loopback config and executable `$G/ssh` wrapper. Do not copy private keys, alter authorized keys, use home's general agent, or use the recipe's deckbox-server alternative. Keep forwarding alive until both viewers stop.
+Retain the public fingerprint and require the explicit-identity SSH preflight to succeed. Only native SSH and ssh-add may use the existing private identity; never open or copy its contents. Require `loopbackSshExit: 0` and `loopback-ssh-ok` from the forwarding helper. It forwards only that guest identity with a bounded dedicated agent and writes the pinned loopback config and executable `$G/ssh` wrapper. Do not alter authorized keys, use home's general agent, or use the recipe's deckbox-server alternative. Keep forwarding alive until both viewers stop.
 
 Start these as separate long-running **guest login-shell** jobs and record their actual PIDs:
 
 ```sh
 "$G/easld" --home "$G/host" --own-terminals
 ```
+
+From the lane machine, an owned long-running job can use `python3 "$S/guest.py" --guest "$EASL_GUI_GUEST" "$G/easld --home $G/host --own-terminals"`. That runner uses `zsh -lc`, so Homebrew tools are on PATH. Use the same runner for the HTTP job below, expanding your actual `G` in its command string. Do not use a plain non-login guest SSH command.
 
 Wait for its listening log and a successful `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" system.ping`. Then seed and serve the real fixture:
 
@@ -161,14 +168,17 @@ The seed prints and saves actual board and tile IDs in `$G/tiles.json`. Record t
 EASL_DEV_SSH="$G/ssh" EASL_DEV_REMOTE_HOME="$G/host" \
   EASL_DEV_FRAME="0 0 1200 760" scripts/dev.sh restart "$G/local-board"
 scripts/dev.sh input remote easl-guest "$BOARD" "$G/host"
-scripts/dev.sh cli board.get --board "$BOARD"
+scripts/dev.sh input state
+EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"
 ```
 
 Require the remote tab's expected root, real shell output, and advancing HTML and browser counters in native pixels. The guest account must have macOS 14+, CLT, Python, Bun, Go, and zmx 0.8.1. A missing tool or failed loopback check is a failed prerequisite, not a reason to use a production host.
 
+After any restart, remote open, or tab switch, refresh the PID, signed hash, and selected window identity before more input. Read the selected tab from `input state` and run Doctor for that window. Each native tab has its own window ID; an old background tab can still accept explicitly targeted input.
+
 ## Doctor
 
-Run this read-only check before driving and whenever ownership or readiness looks wrong. On home, `python3 "$H/claim.py" status` must show your lane holding the concrete guest. In the guest, set `PID` from `$EASL_DEV_HOME/pid`, discover windows with `swift "$G/window.swift" "$PID"`, then set `WINDOW` to that PID's onscreen, layer-zero **board** window. Hidden panels are not the board. Run this block as one check and retain all output:
+Run this read-only check before driving, after every restart or tab change, and whenever ownership or readiness looks wrong. On home, `python3 "$H/claim.py" status` must show your lane holding the concrete guest. In the guest, set `PID` from `$EASL_DEV_HOME/pid` and read the selected tab's window ID with `scripts/dev.sh input state`. Confirm it among `swift "$G/window.swift" "$PID"` results, then set `WINDOW` to that PID's onscreen, layer-zero **selected board** window. Hidden panels and other tabs are not the selected board. Run this block as one check and retain all output:
 
 ```sh
 test "$(git -C "$R" rev-parse HEAD)" = "$(cat "$G/head.txt")" &&
@@ -186,6 +196,8 @@ scripts/dev.sh cli board.get
 ```
 
 Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. The guest-internal claim uses the legacy `agent-gui` record even on `agent-gui-2`; home status is the authority for the concrete VM.
+
+For a remote tab, `board.get` on the viewer socket cannot read its host's board. Replace the final `scripts/dev.sh cli board.get` with `scripts/dev.sh input state` to confirm the selected remote tab, then read the host board through `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"`. Keep `system.ping` on the viewer socket to check the viewer.
 
 If using easld, include `cat "$G/host/instance.lock"`, `lsof -t "$G/host/instance.lock"`, `ps -p "$SERVER_PID" -o pid,command`, and a ping against `$G/host/easl.sock`. Require both lock values to equal your recorded `SERVER_PID`, with the command naming `$G/easld --home $G/host`. Do not drive on a mismatch. Doctor inspects only; it never repairs, relaunches, or kills.
 
@@ -207,7 +219,7 @@ scripts/dev.sh cli view.get
 
 Use **Prompt** and the target button's current label in a fresh CuaDriver accessibility tree. An AX action uses that snapshot's `element_token`, the same session, exact PID and window, and `delivery_mode: background`; see `Tests/RemoteClosedBoard/native.py` for the existing `click` request shape. Never reuse a token after another snapshot. A synchronous target popup can outlive an AXPress timeout. Capture its native menu before deciding that it failed. `mainmenu` invokes a real menu action but does not prove the menu's visual layout or physical keyboard navigation.
 
-Menu paths separate levels with `/`. Escape a literal slash inside a title as `//`. A newly created shell can have no `name` in `agent.list`; its current target title is then its directory. Read the actual **Only …** menu item in the fresh AX tree rather than guessing it from the tile ID.
+Menu paths separate levels with `/`. Escape a literal slash inside a title as `//`. A newly created shell can have no `name` in `agent.list`; its current target title is then its directory. Read the actual **Only …** menu item in the fresh AX tree rather than guessing it from the tile ID. These are Option-key alternate items and can be absent from a closed menu's AX tree. If absent, use the current target title to invoke its `Only ` variant, then inspect any `DevInput: no menu item … in [titles]` line in `app.log` for the exact available titles before retrying. Capture and verify the resulting target label.
 
 For canvas gestures without an accessibility action, derive coordinates from a fresh own-window capture and `view.get`. Record the geometry. Replay coordinates are top-left **content points**, not screenshot pixels or board coordinates. At scale 2, divide pixels by 2 and subtract measured chrome, usually 28 points or 64 with tabs. Verify actual bounds rather than assuming those offsets. Examples with measured `X`, `Y`, `TO_X`, and `TO_Y`:
 
@@ -238,12 +250,14 @@ Retain stdout as a separate unused JSON receipt. Require response PID and window
 
 For timing, separate input-to-first-visible, input-to-assignment, and input-to-settled-sharp. State capture and accessibility-walk cost, whether it is inside the interval, and clock domain. PNG completion time includes capture overhead and is not first presentation. Use the two-gate observer and denominator rules in [browser tiles](features/browser-tiles.md) and [performance](performance.md). Do not report a speedup from screenshots alone.
 
-Export before deleting scratch. On the lane machine, with the concrete guest and recorded `H`, `G`, and `E`:
+Export before deleting scratch. On the lane machine, set `EXPORT` to a new filename-safe attempt label such as `composer-01`, with the concrete guest and recorded `H`, `G`, and `E`:
 
 ```sh
+EXPORT=composer-01
+test ! -e "$E/$EXPORT" &&
 ssh -o BatchMode=yes twaldin-home \
-  "scp -r -F /Users/twaldin/.config/agent-gui/ssh_config $EASL_GUI_GUEST:$G/proof $H/"
-scp -r -o BatchMode=yes twaldin-home:"$H/proof" "$E/"
+  "test ! -e $H/$EXPORT && scp -r -F /Users/twaldin/.config/agent-gui/ssh_config $EASL_GUI_GUEST:$G/proof $H/$EXPORT" &&
+scp -r -o BatchMode=yes twaldin-home:"$H/$EXPORT" "$E/$EXPORT"
 ```
 
 Use a fresh evidence subdirectory on subsequent attempts. Compare hashes across export. Keep secrets, authentication files, and agent sockets out. After a squash merge, record the merge SHA and compare its tree to the reviewed head. If the tested and reviewed heads differ, record the changed paths and rerun affected journeys. Never relabel old images as proof of a new head.
@@ -257,7 +271,7 @@ Run cleanup after **every** failed attempt as well as success. Keep the claim wh
 3. For the unmodified `seed-local.py` fixture, `python3 "$G/cleanup-guest.py" "$G"` stops A, closes its remote board with `endSessions:true`, verifies and stops scratch easld and HTTP owners, and requests forwarding release. It assumes `$G/view`, `$G/tiles.json`, and port 18765. Do **not** run it against a partial or different fixture. For those, close every recorded scratch board through its socket with `board.close --board "$BOARD" --endSessions true`, verify each recorded daemon or HTTP PID's command and lock, send SIGTERM to those PIDs, and wait for exit. Touch `$G/release-agent` after viewer shutdown if forwarding was started.
 4. Stop any additional owned stub, observer, fault relay, or shaper. Restore network state as [performance](performance.md) specifies. No pattern kills.
 5. Exit the guest-internal claim shell and require `released`. Wait for forwarding to exit. For a forwarded fixture, run `python3 "$S/guest.py" --guest "$EASL_GUI_GUEST" "test ! -e /tmp/easl-gui-claims/$LANE.json && python3 $G/verify-cleanup.py $G $LANE"` on the lane machine. Require released locks, no forwarded socket, and loopback auth failure after agent teardown. Check the recorded dedicated agent PID is gone on home and its socket is absent.
-6. Export app/build logs, hashes, action and capture receipts, and cleanup output into `proof`, then export `proof`. Verify the lane-machine evidence opens and hashes match. Remove exactly the recorded `G`, never the shared checkout or `.build`.
+6. Export app/build logs, hashes, action and capture receipts, and cleanup output into `proof`, then export into a **new** `EXPORT` label using the guarded commands above. Never merge into a prior export directory. Verify the lane-machine evidence opens and hashes match. Remove exactly the recorded `G`, never the shared checkout or `.build`.
 7. Exit the home lifecycle shell. Require the helper's verified guest stop and `released`. Confirm with `lume ls` on home. Only then touch `$H/stop` and wait for the sampler to exit.
 8. Export the sampler and home cleanup records. Inspect for owned windows, focus changes, and Space changes. Report actual sample cadence and maximum gap, not uninterrupted observation. Remove exactly your recorded `H` after release and export.
 9. On the lane machine, reopen the retained before and after PNGs and check their hashes again. Confirm the evidence survives cleanup at `$E`. Report what was exercised, what failed, and what remains untested.
