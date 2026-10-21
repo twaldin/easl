@@ -115,6 +115,8 @@ Retain command output, build logs, tool versions, head, and hashes in `proof`. R
 
 Ready means the expected board root is selected, its native window has usable content, and a real input produces visible output. Socket existence or `system.ping` alone is not readiness. Retain an exact-window capture at readiness. Record signed executable hashes **after launch**; per-home signing can change executable bytes from the frozen source bundle.
 
+If the compiler reports a stale precompiled module in the shared `.build`, retain that failure and leave the cache intact. Allocate a fresh build directory inside your recorded scratch with `export SWIFTPM_BUILD_DIR="$G/build"`. Require `swift build --show-bin-path` to name a path under it, then run the same bundling command there. Record this cold-build precondition and keep the selected build directory through the run. Never delete another lane's cache or accept an older binary after a failed build. Before launching, require `test -x "$G/frozen.app/Contents/MacOS/Easl"`. When using an SSH wrapper, retain the guest command's own exit status in its output as well as the controller exit status.
+
 ### Add a second instance
 
 Keep the frozen app and checkout unchanged. Use a different development home and local root, never the first instance's home:
