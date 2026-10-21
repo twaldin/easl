@@ -17,6 +17,7 @@ Require the `release-compatibility` CI job before releasing. Rolling app updates
 Run `python3 scripts/release-compatibility.py` on macOS with Swift 6.4, Go, Bun, and Python 3.11 or newer. Fetch full git history and tags first. The command selects the highest stable `vMAJOR.MINOR.PATCH` tag reachable from the tested head, excluding tags on that head itself. It therefore checks the previous release on a tagged commit too. Between releases, the latest published tag is the baseline even when `VERSION` has not been bumped.
 
 The gate builds easld from that tag and runs the current app's Core remote client without a GUI. It checks opening, edits, undo and redo, image previews and original bytes, composer prompts, question answers, browser tile creation, and saved-board reopening after a daemon restart. Its delegated terminal executes shell commands and checks their exact output for duplicate delivery. It also runs the tagged Python SDK against the current daemon and verifies saved edits, questions, and browser tiles after restart.
+The local SSH adapter uses macOS system tools for host-side file reads. Its Python is independent of the Python 3.11 or newer that loads the released SDK.
 
 CI prints Swift 6.4 and retains the selected commits, build logs, and journey output in the `release-compatibility` artifact. A hard error or incorrect persisted result fails the job. Native rendering and composer gestures still require the claimed-guest journeys in `.agents/skills/verify-easl/`.
 

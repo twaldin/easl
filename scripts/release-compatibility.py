@@ -200,8 +200,9 @@ def main() -> None:
     journey = output / "journey"
     (journey / "root").mkdir(parents=True)
     transport = journey / "local-ssh"
-    transport.write_text('#!/bin/sh\nfor command; do :; done\nexec /bin/sh -c "$command"\n')
+    transport.write_text('#!/bin/sh\nPATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"\nexport PATH\nfor command; do :; done\nexec /bin/sh -c "$command"\n')
     transport.chmod(0o755)
+    print(f"Host files use macOS system Python; released SDK uses {sys.executable}", flush=True)
     legacy_root = output / "legacy-root"
     legacy_root.mkdir()
     sdk = load_released_sdk(previous)

@@ -1321,10 +1321,7 @@ public final class BoardMirror: BoardHost {
                 try await reconcilePrompt(params, submission: submission, terminal: terminal)
                 return
             }
-            guard let submission else {
-                try requireCurrent(generation)
-                return
-            }
+            guard let submission else { return }
             switch result["delivery"]?.string {
             case "typed", "message":
                 break
