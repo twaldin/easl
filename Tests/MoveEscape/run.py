@@ -49,7 +49,7 @@ def main():
                     "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
     failed = []
-    with tempfile.TemporaryDirectory(prefix="easl-move-escape-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="easl-move-", dir="/tmp") as temporary:
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
