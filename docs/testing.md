@@ -85,6 +85,12 @@ An aborted series retains all requested samples in each gate's denominator, with
 
 Run `scripts/terminal-echo/` only inside a claimed GUI guest, against a guest-local scratch easld. The fixture sends native `keyDown` events through the app queue. Do not substitute `input text`: direct text insertion bypasses the local event monitor. `UserIdleWatch` combines the session's HID-idle sample with elapsed time since native app input.
 
+The coordinator accepted the measured good-link native echo of 79 ms median and 97 ms p95 as meeting the intent of about RTT plus a display-link frame. The complete qualification used five interleaved pairs of 100 keys per profile and input mode. The earlier 356 ms baseline measured `DevInput` text replay, not native key handling. Do not use that baseline to claim a native-key speedup or continue frame-path optimization for this result.
+
+Keep OpenSSH's default `ObscureKeystrokeTiming` protection. Do not disable it or shorten its packet interval to improve echo measurements. A fixture-only diagnostic saved about 11 to 12 ms before the host PTY with protection off, but the coordinator rejected that privacy tradeoff. This decision closes that optimization path.
+
+Keep terminal SSH compression enabled. The same-boot A/B showed no interactive echo harm, while exact `seq 1 20000` receipt was 34% faster on the good profile and 47% faster on the poor profile. Preserve the measured child's effective SSH options and negotiated compression when reproducing the result.
+
 Copy the tools into a fresh scratch directory and retain every binary until the session ends. Give the directory a `repo` symlink to the claimed checkout. Provide an authenticated loopback alias named `easl-guest` in `ssh_config`, with strict host-key checking and connection sharing disabled. Provide `ssh`, a wrapper for `/usr/bin/ssh -F <scratch>/ssh_config`, for link calibration. Keep credentials outside the fixture.
 
 Build `easld` with `go -C "$G/repo/easld" build -p 2 -o "$G/easld" ./cmd/easld`, copy zmx 0.8.1 into the scratch directory as `zmx`, and build the tracer and native input helper there:
