@@ -230,7 +230,7 @@ extension ApiRouterTests {
 
     @Test func localSubscriptionCanConnectWhileItsBoardIsClosing() async throws {
         let watcher = try connect()
-        router.closeBoard = { [self] _, _ in
+        router.closeBoard = { [unowned self] _, _ in
             #expect(try await call(watcher, "events.subscribe", ["board": .string(board.id)])["ok"] == .bool(true))
             throw ApiRouter.Failure("unavailable", "close held for subscription")
         }
@@ -246,7 +246,7 @@ extension ApiRouterTests {
         let remote = remoteTabFixture()
         router.remoteTabs = { [remote] }
         let observer = try connect()
-        router.closeBoard = { [self] _, _ in
+        router.closeBoard = { [unowned self] _, _ in
             #expect(try await call(observer, "view.get", ["board": "brd_remote"])["error"]?["code"] == "conflict")
             #expect(try await call(observer, "board.get", ["board": "brd_remote"])["error"]?["code"] == "conflict")
             throw ApiRouter.Failure("unavailable", "close held for requests")
