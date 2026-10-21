@@ -50,8 +50,8 @@ private enum VideoPlaybackRegression {
         try require(!originalAudio.isEmpty, "fixture must contain an AAC audio track")
         let board = Board(id: "video-regression", root: root)
         let props: JSONValue = .object([
-            "path": "h264-aac.mp4", "poster": "", "loop": .bool(true), "muted": .bool(true),
-            "autoplay": .bool(false), "startTime": .number(0.125), "title": "Muted fixture", "key": "muted-fixture",
+            "path": .string("h264-aac.mp4"), "poster": .string(""), "loop": .bool(true), "muted": .bool(true),
+            "autoplay": .bool(false), "startTime": .number(0.125), "title": .string("Muted fixture"), "key": .string("muted-fixture"),
         ])
         let object = board.create(type: .video, props: props, frame: Frame(x: 0, y: 0, w: 320, h: 210))
         marker("VIDEO_CREATE_MUTED")
