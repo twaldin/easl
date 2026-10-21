@@ -15,7 +15,7 @@ logging or forwarding. Marker rows retain the containing read timestamp.
 For tty input, the slave inherits the original modes for SSH's remote tty-mode
 negotiation. The outer tty becomes raw and forwarding waits for SSH to make its
 slave raw/no-echo. Output uses a pipe, not the PTY, so no extra OPOST or ONLCR
-translation occurs. stderr stays separate. For pipe input, the slave starts raw;
+translation occurs. SSH diagnostics go to a private file. For pipe input, the slave starts raw;
 this intentionally makes -t allocate where unwrapped SSH would refuse. Such a
 smoke run is not evidence for original tty-mode negotiation. The remote fixture
 must set its own raw/no-echo modes for that case.
@@ -28,10 +28,9 @@ No fsync is performed. No timing correction is assumed by this program.
 Parent validation: compare modes and winsize at remote startup, verify one input
 'a' produces one marker with no local echo or CRLF changes, verify split markers
 and burst offsets, then compare instrumented/uninstrumented native frames.
-Inspect effective compression separately, never inside a timed invocation:
-/usr/bin/ssh -G -F "$ECHO_SSH_CONFIG" -o Compression=yes <original ssh args> |
-  python3 -c 'import sys; keys={"compression","controlmaster","requesttty"}; print("".join(s for s in sys.stdin if s.split() and s.split()[0] in keys),end="")'
-Use Compression=no for the other arm. Only the selected config keys are printed.
+Before input, retain selected `ssh -G` options and the measured child's negotiated
+compression from its private `-v -E` log. Diagnostic logs may contain command text;
+keep them with the fixture's private evidence.
 """
 
 import ctypes

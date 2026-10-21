@@ -113,6 +113,8 @@ Each cohort retains native key handling, SSH-input acceptance, actual host PTY w
 
 Absolute latency includes the text sampler and byte-tracing overhead. Only capture delivery delay is removed by using native display timestamps. Capture stop waits for startup, removes the stream output even after a stop error, and publishes `stopped.json` after the final trace write. The driver waits for both `complete.json` and `surface-complete.json`, then for the stop receipt; it does not rely on a fixed drain sleep.
 
+The driver records `observe-requested.json` before starting capture. Cleanup waits for a stop receipt only when capture was requested, so a preparation failure cannot be replaced by a timeout waiting for a nonexistent observer.
+
 `analyze-echo.py <cohort> --database <sqlite>` requires every expected stage, unique glyphs, matching host counts, actual byte-read coverage, and causal timestamps. It matches SSH reads and input to one marker-producing observer, rather than borrowing offsets or bulk bytes from another session. It preserves failed cohorts and exits nonzero instead of qualifying completed subsets. A marker split across reads uses the read containing the glyph, not the later marker terminator. The analyzer also requires the exact 20,000-line byte sequence for a bulk arm. Trace payloads and captures are fixture-only; never attach these observers to a real terminal session.
 
 ### Remote host-file throughput

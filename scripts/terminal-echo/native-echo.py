@@ -64,6 +64,7 @@ elif args.action == 'prepare':
     assert state.get('responder') == 'CanvasTerminalView', state
     print(json.dumps(state), flush=True)
 elif args.action == 'observe':
+    (target / 'observe-requested.json').write_text(json.dumps({'pid': pid, 'window': window}) + '\n')
     send(root, pid, window, kind='terminal-echo', action='start', directory=str(target / 'native'), count=config['count'])
     print(json.dumps(module['wait'](target / 'native/ready.json', 15)), flush=True)
 elif args.action == 'type':
@@ -80,9 +81,10 @@ elif args.action == 'capture':
     print(json.dumps(value), flush=True)
 elif args.action == 'finish':
     try:
-        send(root, pid, window, kind='terminal-echo', action='stop')
-        stopped = module['wait'](target / 'native/stopped.json', 15)
-        assert stopped['success'], stopped
+        if (target / 'observe-requested.json').exists():
+            send(root, pid, window, kind='terminal-echo', action='stop')
+            stopped = module['wait'](target / 'native/stopped.json', 15)
+            assert stopped['success'], stopped
     finally:
         (target / 'stop-fixture').touch()
         server = RPC(root / 'host/easl.sock')
