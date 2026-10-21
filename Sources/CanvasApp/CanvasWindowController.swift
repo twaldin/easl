@@ -1546,6 +1546,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
+    private var discardingMiddleSequence = false
     private(set) var scrollSequence: UInt64 = 0
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
@@ -1609,11 +1610,12 @@ final class CanvasWindow: NSWindow {
         switch event.type {
         case .otherMouseDown where event.buttonNumber == 2:
             cancelMiddlePan()
+            discardingMiddleSequence = false
             guard !HyperMonitor.isHyper(event.modifierFlags), canvas(at: event.locationInWindow) != nil else { return false }
             middlePan = (CanvasDragPan(at: event.locationInWindow), event)
             return true
         case .otherMouseDragged where event.buttonNumber == 2:
-            guard var gesture = middlePan else { return false }
+            guard var gesture = middlePan else { return discardingMiddleSequence }
             let wasPanning = gesture.pan.panning
             let delta = gesture.pan.move(to: event.locationInWindow)
             middlePan = gesture
@@ -1622,7 +1624,7 @@ final class CanvasWindow: NSWindow {
             canvas.pan(by: delta)
             return true
         case .otherMouseUp where event.buttonNumber == 2:
-            guard let ended = middlePan else { return false }
+            guard let ended = middlePan else { return discardingMiddleSequence }
             middlePan = nil
             if ended.pan.panning {
                 NSCursor.pop()
@@ -1642,6 +1644,7 @@ final class CanvasWindow: NSWindow {
     @objc private func cancelMiddlePan() {
         guard let ended = middlePan else { return }
         middlePan = nil
+        discardingMiddleSequence = true
         if ended.pan.panning { NSCursor.pop() }
     }
 }
