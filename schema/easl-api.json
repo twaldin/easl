@@ -1244,7 +1244,7 @@
       "params": {
         "type": "object",
         "properties": {
-          "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id of an open remote tab. The Mac app forwards remote board.get to its host; a local board wins an id collision, and several matching remote tabs are ambiguous" },
+          "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id of an open remote tab. The Mac app forwards remote board.get to its host. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "Include only this remote window's retained composer outcome receipts; omitted otherwise." },
           "since": { "type": "integer", "description": "board revision cursor from a previous call" },
           "branch": { "type": "string", "description": "only branch `branch`'s part of a repository board: the regions keyed `branch:<branch>` and what they hold, objects whose `ref` is the branch, terminals that started on it (`branch`), and arrows between those" }
@@ -1858,12 +1858,12 @@
       }
     },
     "tray.list": {
-      "description": "Staged mentions, in staging order.",
+      "description": "Staged mentions, in staging order. On an app-local remote tab this is the viewer's private tray, never the host user's tray.",
       "params": { "type": "object", "properties": { "board": { "$ref": "#/definitions/Id" } }, "additionalProperties": false },
       "result": { "type": "object", "required": ["mentions"], "properties": { "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" } } } }
     },
     "tray.stage": {
-      "description": "Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents).",
+      "description": "Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents). An app-local remote board target stages in this viewer's private tray.",
       "params": {
         "type": "object",
         "required": ["target"],
@@ -1873,7 +1873,7 @@
       "result": { "type": "object", "required": ["mention"], "properties": { "mention": { "$ref": "#/definitions/Mention" } } }
     },
     "tray.unstage": {
-      "description": "Remove one staged mention.",
+      "description": "Remove one staged mention from this app's local board or remote viewer tray, never another user's tray.",
       "params": { "type": "object", "required": ["id"], "properties": { "id": { "$ref": "#/definitions/Id" } }, "additionalProperties": false },
       "result": { "type": "object", "properties": {} }
     },
@@ -1882,7 +1882,7 @@
       "params": {
         "type": "object",
         "properties": {
-          "board": { "$ref": "#/definitions/Id" },
+          "board": { "$ref": "#/definitions/Id", "description": "an app-local remote board target drains only this viewer's private tray, never the host user's tray" },
           "caller": { "$ref": "#/definitions/Id" },
           "peek": { "type": "boolean", "default": false },
           "prompt": { "type": "string", "description": "the prompt text being submitted, in an agent integration's submission drain: compared folded (letters and digits only, case-folded) with the prompts easl's composer typed into the caller" }
@@ -1901,7 +1901,7 @@
       }
     },
     "tray.commit": {
-      "description": "Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored.",
+      "description": "Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. On an app-local remote tab only this viewer's private tray changes.",
       "params": {
         "type": "object",
         "required": ["ids"],
@@ -2160,7 +2160,7 @@
     },
     "view.get": {
       "description": "What the user is looking at right now, without pixels: the visible board rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light).",
-      "params": { "type": "object", "properties": { "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id from a remote board.list row. Remote tabs return this app's viewer state, not the host's window state. A local board wins an id collision; several matching remote tabs are ambiguous" } }, "additionalProperties": false },
+      "params": { "type": "object", "properties": { "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id from a remote board.list row. Remote tabs return this app's viewer state, not the host's window state. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous" } }, "additionalProperties": false },
       "result": {
         "type": "object",
         "required": ["board", "viewport", "selection", "visible", "appearance"],
@@ -2183,7 +2183,7 @@
         "required": ["url"],
         "properties": {
           "url": { "type": "string", "description": "an absolute http or https URL" },
-          "board": { "$ref": "#/definitions/Id" },
+          "board": { "$ref": "#/definitions/Id", "description": "an open local board id. An app-local remote tab target is unsupported because forwarding would move the host user's viewport. Use the remote tab's native link action or connect directly to its host" },
           "caller": { "$ref": "#/definitions/Id", "description": "the terminal the link comes from: the tile opens beside it; clients fill from EASL_TILE_ID" }
         },
         "additionalProperties": false
@@ -2203,7 +2203,7 @@
         "type": "object",
         "required": ["target"],
         "properties": {
-          "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id of an open remote tab. Remote tabs render this app's viewer content and require inline:true without out, so host content is not written locally. A local board wins an id collision; several matching remote tabs are ambiguous" },
+          "board": { "$ref": "#/definitions/Id", "description": "an open local board id or the host board id of an open remote tab. Remote tabs render this app's viewer content and require inline:true without out, so host content is not written locally. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous" },
           "target": { "oneOf": [{ "$ref": "#/definitions/Id" }, { "type": "array", "items": { "$ref": "#/definitions/Id" } }, { "$ref": "#/definitions/Frame" }] },
           "scale": { "type": "number", "minimum": 0.1, "maximum": 4, "default": 1, "description": "pixels per board point; lowered to keep the image under 32 megapixels (the result says what was used)" },
           "full": { "type": "boolean", "default": false, "description": "id targets: render the whole content, not just the part inside the frame" },

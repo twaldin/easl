@@ -124,12 +124,17 @@ extension ApiRouterTests {
     }
 
     @Test func remoteHostErrorsAndConnectionScopedRestrictionsAreExplicit() async throws {
-        let remote = remoteTabFixture { _, _ in throw EaslConnection.Failure("conflict", "host refused the revision") }
+        let remote = remoteTabFixture { _, _ in
+            throw EaslConnection.Failure("conflict", "host refused the revision", data: .object(["currentRev": 7]))
+        }
         router.remoteTabs = { [remote] }
         let client = try connect()
-        #expect(try await call(client, "board.get", ["board": "brd_remote"])["error"] == .object(["code": "conflict", "message": "host refused the revision"]))
+        #expect(try await call(client, "board.get", ["board": "brd_remote"])["error"] == .object([
+            "code": "conflict", "message": "host refused the revision", "data": .object(["currentRev": 7]),
+        ]))
         #expect(try await call(client, "events.subscribe", ["board": "brd_remote"])["error"]?["code"] == "unsupported")
         #expect(try await call(client, "viewer.activity", ["board": "brd_remote", "input": .bool(true)])["error"]?["code"] == "unsupported")
+        #expect(try await call(client, "view.open_url", ["board": "brd_remote", "url": "https://example.com"])["error"]?["code"] == "unsupported")
         let hidden = remoteTabFixture(open: false)
         router.remoteTabs = { [hidden] }
         #expect(try await call(client, "board.get", ["board": "brd_remote"])["error"]?["code"] == "not_found")
@@ -145,5 +150,93 @@ extension ApiRouterTests {
                      "host": "other", "sshTarget": "other", "title": "elsewhere @ other", "window": 22]),
         ])]), agents: .object(["agents": .array([])]))
         #expect(result.map(\.id) == ["brd_owned"])
+    }
+
+    @Test func remoteTrayChangesOnlyThisViewersPrivateMentions() async throws {
+        let host = try await ApiRouterTests()
+        let hostClient = try host.connect()
+        let notes = ["one", "two", "three"].map { host.board.create(type: .note, props: .object(["markdown": .string($0)])) }
+        let hostMention = try host.board.stage(.object(notes[0].id))
+        let mirror = Board(remote: host.board.id, root: host.board.root, host: RemoteTabTestHost.shared)
+        notes.forEach { mirror.applyHost($0) }
+        let remote = remoteTabFixture(board: mirror) { method, params in
+            let response = try await host.call(hostClient, method, params.object ?? [:])
+            if let error = response["error"], let code = error["code"]?.string {
+                throw EaslConnection.Failure(code, error["message"]?.string ?? code)
+            }
+            return response["result"] ?? .null
+        }
+        router.remoteTabs = { [remote] }
+        let client = try connect()
+        var mentions: [String] = []
+        for note in notes {
+            let staged = try await call(client, "tray.stage", [
+                "board": .string(mirror.id), "target": .object(["object": .string(note.id)]),
+            ])
+            mentions.append(try #require(staged["result"]?["mention"]?["id"]?.string))
+        }
+        let listed = try await call(client, "tray.list", ["board": .string(mirror.id)])
+        #expect(listed["result"]?["mentions"]?.array?.compactMap { $0["id"]?.string } == mentions)
+        #expect(try await call(client, "tray.unstage", ["id": .string(mentions[0])])["ok"] == .bool(true))
+        let peeked = try await call(client, "tray.drain", ["board": .string(mirror.id), "peek": .bool(true)])
+        #expect(peeked["result"]?["mentions"]?.array?.compactMap { $0["id"]?.string } == Array(mentions.dropFirst()))
+        #expect(mirror.tray.map(\.id) == Array(mentions.dropFirst()))
+        #expect(try await call(client, "tray.commit", ["board": .string(mirror.id), "ids": [.string(mentions[1])]])["ok"] == .bool(true))
+        let drained = try await call(client, "tray.drain", ["board": .string(mirror.id)])
+        #expect(drained["result"]?["mentions"]?.array?.compactMap { $0["id"]?.string } == [mentions[2]])
+        #expect(mirror.tray.isEmpty)
+        #expect(host.board.tray == [hostMention])
+    }
+
+    @Test func closedLocalAndMigratedIdsNeverRedirectToRemoteHosts() async throws {
+        let legacyRoot = dir.appendingPathComponent("legacy")
+        try FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+        let legacy = Board(id: BoardStore.pathID(legacyRoot), root: legacyRoot)
+        registry.store.save(legacy)
+        let backups = registry.store.directory.appendingPathComponent(RepoBoardMigration.backupFolder)
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: registry.store.url(for: legacy.id),
+                                         to: backups.appendingPathComponent("\(legacy.id).json"))
+        board.repo = RepoRecord(commonDir: dir.appendingPathComponent("common.git").path, merged: [legacy.id])
+        let host = try await ApiRouterTests()
+        let hostClient = try host.connect()
+        let hostedLocal = try await host.registry.open(root: board.root)
+        let hostedLegacy = try await host.registry.open(root: legacyRoot)
+        let hosted = [hostedLocal, hostedLegacy]
+        let tabs = hosted.map { candidate in
+            remoteTabFixture(board: Board(remote: candidate.id, root: candidate.root, host: RemoteTabTestHost.shared),
+                             id: "host|\(candidate.id)|socket") { method, params in
+                let response = try await host.call(hostClient, method, params.object ?? [:])
+                if let error = response["error"], let code = error["code"]?.string {
+                    throw EaslConnection.Failure(code, error["message"]?.string ?? code)
+                }
+                return response["result"] ?? .null
+            }
+        }
+        router.remoteTabs = { tabs }
+        let client = try connect()
+        #expect(try await call(client, "board.close", ["board": .string(board.id)])["ok"] == .bool(true))
+        for id in [board.id, legacy.id] {
+            let result = try await call(client, "object.create", [
+                "board": .string(id), "type": "note", "props": .object(["markdown": "must stay local"]),
+            ])
+            #expect(result["error"]?["code"] == "not_found")
+            #expect(try await call(client, "board.export", ["board": .string(id)])["error"]?["code"] == "not_found")
+        }
+        #expect(hosted.allSatisfy { $0.objects.isEmpty })
+    }
+
+    @Test func localSubscriptionCanConnectWhileItsBoardIsClosing() async throws {
+        let watcher = try connect()
+        router.closeBoard = { [self] _, _ in
+            #expect(try await call(watcher, "events.subscribe", ["board": .string(board.id)])["ok"] == .bool(true))
+            throw ApiRouter.Failure("unavailable", "close held for subscription")
+        }
+        let client = try connect()
+        #expect(try await call(client, "board.close", ["board": .string(board.id)])["error"]?["code"] == "unavailable")
+        let note = board.create(type: .note, props: .object(["markdown": "subscription stays connected"]))
+        let event = try await watcher.next()
+        #expect(event["event"] == "object.created")
+        #expect(event["data"]?["id"] == .string(note.id))
     }
 }

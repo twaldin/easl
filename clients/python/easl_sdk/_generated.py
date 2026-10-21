@@ -801,17 +801,17 @@ class TrayApi:
         self._call = call
 
     def list(self, *, board: "Id" | None = None) -> dict[str, Any]:
-        """Staged mentions, in staging order."""
+        """Staged mentions, in staging order. On an app-local remote tab this is the viewer's private tray, never the host user's tray."""
         params = {"board": board}
         return self._call("tray.list", params, ["board"])
 
     def stage(self, *, target: "MentionTarget", board: "Id" | None = None) -> dict[str, Any]:
-        """Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents)."""
+        """Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents). An app-local remote board target stages in this viewer's private tray."""
         params = {"target": target, "board": board}
         return self._call("tray.stage", params, ["board"])
 
     def unstage(self, *, id: "Id") -> dict[str, Any]:
-        """Remove one staged mention."""
+        """Remove one staged mention from this app's local board or remote viewer tray, never another user's tray."""
         params = {"id": id}
         return self._call("tray.unstage", params, [])
 
@@ -821,7 +821,7 @@ class TrayApi:
         return self._call("tray.drain", params, ["board","caller"])
 
     def commit(self, *, ids: list["Id"], board: "Id" | None = None) -> dict[str, Any]:
-        """Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored."""
+        """Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. On an app-local remote tab only this viewer's private tray changes."""
         params = {"board": board, "ids": ids}
         return self._call("tray.commit", params, ["board"])
 

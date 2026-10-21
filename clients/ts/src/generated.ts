@@ -1225,7 +1225,7 @@ export type AppUpdateResult = {
 };
 
 export type BoardGetParams = {
-  /** an open local board id or the host board id of an open remote tab. The Mac app forwards remote board.get to its host; a local board wins an id collision, and several matching remote tabs are ambiguous */
+  /** an open local board id or the host board id of an open remote tab. The Mac app forwards remote board.get to its host. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous */
   board?: Id;
   /** Include only this remote window's retained composer outcome receipts; omitted otherwise. */
   viewer?: ViewerId;
@@ -1825,6 +1825,7 @@ export type TrayUnstageParams = {
 export type TrayUnstageResult = Record<string, unknown>;
 
 export type TrayDrainParams = {
+  /** an app-local remote board target drains only this viewer's private tray, never the host user's tray */
   board?: Id;
   caller?: Id;
   peek?: boolean;
@@ -2067,7 +2068,7 @@ export type ViewAttentionResult = {
 };
 
 export type ViewGetParams = {
-  /** an open local board id or the host board id from a remote board.list row. Remote tabs return this app's viewer state, not the host's window state. A local board wins an id collision; several matching remote tabs are ambiguous */
+  /** an open local board id or the host board id from a remote board.list row. Remote tabs return this app's viewer state, not the host's window state. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous */
   board?: Id;
 };
 export type ViewGetResult = {
@@ -2088,6 +2089,7 @@ export type ViewGetResult = {
 export type ViewOpenUrlParams = {
   /** an absolute http or https URL */
   url: string;
+  /** an open local board id. An app-local remote tab target is unsupported because forwarding would move the host user's viewport. Use the remote tab's native link action or connect directly to its host */
   board?: Id;
   /** the terminal the link comes from: the tile opens beside it; clients fill from EASL_TILE_ID */
   caller?: Id;
@@ -2100,7 +2102,7 @@ export type ViewOpenUrlResult = {
 };
 
 export type ViewRenderParams = {
-  /** an open local board id or the host board id of an open remote tab. Remote tabs render this app's viewer content and require inline:true without out, so host content is not written locally. A local board wins an id collision; several matching remote tabs are ambiguous */
+  /** an open local board id or the host board id of an open remote tab. Remote tabs render this app's viewer content and require inline:true without out, so host content is not written locally. Open and stored local ids, including migrated ids, take precedence; a closed local target remains not_found. Several matching remote tabs are ambiguous */
   board?: Id;
   target: Id | Id[] | Frame;
   /** pixels per board point; lowered to keep the image under 32 megapixels (the result says what was used) */
@@ -2441,15 +2443,15 @@ export interface CanvasApi {
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {
-    /** Staged mentions, in staging order. */
+    /** Staged mentions, in staging order. On an app-local remote tab this is the viewer's private tray, never the host user's tray. */
     list(params?: TrayListParams): Promise<TrayListResult>;
-    /** Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents). */
+    /** Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents). An app-local remote board target stages in this viewer's private tray. */
     stage(params: TrayStageParams): Promise<TrayStageResult>;
-    /** Remove one staged mention. */
+    /** Remove one staged mention from this app's local board or remote viewer tray, never another user's tray. */
     unstage(params: TrayUnstageParams): Promise<TrayUnstageResult>;
     /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). `prompt` is the text the caller's agent integration is about to submit (its submission drain, the text as the agent passes it). Compared folded (letters and digits only, case-folded), so an agent's rewrites don't matter: when it contains the text of a prompt the user sent the caller from easl's composer with mentions (the oldest such; a folded text under 3 characters must equal it), the drain is that prompt's and takes the mentions it carried (numbered from 1) instead of the tray (`tray.commit` of their ids ends the wait). An answer Codex submits as a prompt is matched the same way and takes nothing. Any other drain takes the tray as described. */
     drain(params?: TrayDrainParams): Promise<TrayDrainResult>;
-    /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. */
+    /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. On an app-local remote tab only this viewer's private tray changes. */
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
   };
   follow: {

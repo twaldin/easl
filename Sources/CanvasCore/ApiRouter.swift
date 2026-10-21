@@ -193,10 +193,12 @@ public final class ApiRouter {
     public struct Failure: Error {
         public var code: String
         public var message: String
+        public var data: JSONValue?
 
-        public init(_ code: String, _ message: String) {
+        public init(_ code: String, _ message: String, data: JSONValue? = nil) {
             self.code = code
             self.message = message
+            self.data = data
         }
     }
 
@@ -405,13 +407,15 @@ public final class ApiRouter {
             try Self.checkParams(method, params)
             if let tab = try remoteTarget(method, params) {
                 switch method {
-                case "view.get": break
+                case "view.get", "tray.list", "tray.stage", "tray.drain", "tray.commit": break
                 case "view.render":
                     guard params["inline"]?.bool == true, params["out"] == nil else {
                         throw Failure("invalid_params", "a remote tab returns its render in the reply: pass inline: true and no out")
                     }
                 case "view.snapshot":
                     throw Failure("unsupported", "a remote tab does not save snapshots on this Mac; use view.render with inline: true")
+                case "view.open_url":
+                    throw Failure("unsupported", "open links in the remote tab's UI, or connect to its host to open them in the host's window")
                 case "events.subscribe", "viewer.activity":
                     throw Failure("unsupported", "\(method) requires a connection to the board's host")
                 default:
@@ -550,7 +554,7 @@ public final class ApiRouter {
         case let failure as Failure:
             return failure
         case let failure as EaslConnection.Failure:
-            return Failure(failure.code, failure.message)
+            return Failure(failure.code, failure.message, data: failure.data)
         case let unreadable as BoardFile.Unreadable:
             return Failure("unavailable", unreadable.localizedDescription)
         case let error as BoardError:
@@ -576,7 +580,9 @@ public final class ApiRouter {
     }
 
     static func error(_ id: JSONValue, _ failure: Failure) -> JSONValue {
-        .object(["id": id, "ok": .bool(false), "error": .object(["code": .string(failure.code), "message": .string(failure.message)])])
+        var details: [String: JSONValue] = ["code": .string(failure.code), "message": .string(failure.message)]
+        if let data = failure.data { details["data"] = data }
+        return .object(["id": id, "ok": .bool(false), "error": .object(details)])
     }
 
     /// Rejects a param the method's schema doesn't list and a required one that is missing,
@@ -1841,7 +1847,9 @@ public final class ApiRouter {
 
         case "tray.unstage":
             let id = try string(p, "id")
-            guard let board = registry.boards.values.first(where: { $0.tray.contains { $0.id == id } }) else { throw BoardError.notFound("mention \(id)") }
+            let local = registry.boards.values.first { $0.tray.contains { $0.id == id } }
+            let remote = local == nil ? remoteTabs?().first { $0.isOpen && $0.board.tray.contains { $0.id == id } }?.board : nil
+            guard let board = local ?? remote else { throw BoardError.notFound("mention \(id)") }
             try available(board)
             try board.unstage(id)
             return .object([:])
@@ -2794,13 +2802,19 @@ public final class ApiRouter {
         guard !closingBoards.contains(board.id) else { throw Failure("conflict", "board \(board.id) is closing") }
         return board
     }
-    /// Local boards, including merged ids, take precedence over remote tabs.
+    /// Open and stored local boards, including migrated ids, take precedence over remote tabs.
     public func remoteTab(id: BoardID, includingClosed: Bool = false) throws -> RemoteBoardTab? {
         guard registry.board(id: id) == nil else { return nil }
+        let file = registry.store.url(for: id)
+        let migrated = registry.store.directory.appendingPathComponent(RepoBoardMigration.backupFolder).appendingPathComponent(file.lastPathComponent)
+        guard !FileManager.default.fileExists(atPath: file.path),
+              !FileManager.default.fileExists(atPath: migrated.path) else { return nil }
+        let tabs = remoteTabs?() ?? []
         var found: RemoteBoardTab?
-        for tab in remoteTabs?() ?? [] where tab.board.id == id && (includingClosed || tab.isOpen) {
+        for tab in tabs where tab.board.id == id && (includingClosed || tab.isOpen) {
             guard found == nil else {
-                throw Failure("ambiguous", "board \(id) is viewed from more than one remote easl")
+                let candidates = tabs.filter { $0.board.id == id && (includingClosed || $0.isOpen) }.map(\.id).sorted().joined(separator: ", ")
+                throw Failure("ambiguous", "board \(id) is viewed from more than one remote easl: \(candidates)")
             }
             found = tab
         }
@@ -2814,9 +2828,9 @@ public final class ApiRouter {
              "layout.check", "tray.list", "tray.stage", "tray.drain", "tray.commit",
              "view.get", "view.render", "view.snapshot", "view.open_url", "text.measure",
              "events.subscribe", "viewer.activity":
-            guard let id = p["board"]?.string else { return nil }
+            guard let id = p["board"]?.string, let tab = try remoteTab(id: id) else { return nil }
             guard !closingBoards.contains(id) else { throw Failure("conflict", "board \(id) is closing") }
-            return try remoteTab(id: id)
+            return tab
         default:
             return nil
         }
