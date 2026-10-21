@@ -204,10 +204,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         router.snapshotBoard = { [weak self] board, format in await self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
-            guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
+            guard let canvas = self?.window(drawing: board)?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
             return try await canvas.render(request, format: format)
         }
-        router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
+        router.viewState = { [weak self] board in self?.window(drawing: board)?.canvas.viewState }
         router.showOpenedLink = { [weak self] board, opened, source in self?.controllers[board.id]?.canvas.showOpenedLink(opened, openedFrom: source) }
         router.openBoard = { [weak self, registry] root, select in
             if let self { return try await self.open(root: root, select: select) }
@@ -220,6 +220,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.openRemoteBoard = { [weak self] host, board, select in
             guard let self else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
             return try await self.openRemoteBoard(named: host, board: board, select: select)
+        }
+        router.remoteTabs = { [weak self] in
+            guard let self else { return [] }
+            return self.remoteControllers.compactMap { key, controller in
+                guard let window = controller.window, let remote = controller.remote,
+                      let info = try? self.opened(controller, alreadyOpen: true, includingClosed: true) else { return nil }
+                return RemoteBoardTab(id: key, info: info, board: controller.board,
+                                      isOpen: controller.isBoardOpen && !self.isHoldingClose(window)) { method, params in
+                    try await remote.mirror.connection.request(method, params)
+                }
+            }.sorted { $0.id < $1.id }
         }
         router.readTerminal = { [weak self] board, tile, lines in
             // Rows the terminal soft-wrapped join when its tile knows its width; the live
@@ -494,6 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func window(drawing board: Board) -> CanvasWindowController? {
         if let controller = controllers[board.id], controller.board === board { return controller }
+        if let controller = remoteControllers.values.first(where: { $0.board === board }) { return controller }
         return openingWindows[ObjectIdentifier(board)]?.controller
     }
 
@@ -599,13 +611,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func closeTarget(_ id: BoardID) throws -> CloseTarget {
         if let board = registry.board(id: id) { return .local(board, window(drawing: board)) }
-        let matches = remoteControllers.filter { $0.value.board.id == id }
-        guard matches.count <= 1 else {
-            let easls = matches.values.compactMap { $0.remote.map { "\($0.host.sshTarget) \($0.host.socketPath)" } }.sorted().joined(separator: ", ")
-            throw ApiRouter.Failure("ambiguous", "board \(id) is viewed from more than one remote easl: \(easls)")
-        }
-        guard let (key, controller) = matches.first else { throw ApiRouter.Failure("not_found", "board \(id)") }
-        return .remote(key, controller)
+        guard let tab = try router.remoteTab(id: id, includingClosed: true),
+              let controller = remoteControllers[tab.id] else { throw ApiRouter.Failure("not_found", "board \(id)") }
+        return .remote(tab.id, controller)
     }
 
     private func closeBoard(_ id: BoardID, endSessions: Bool?) async throws -> BoardCloseResult {
@@ -1463,9 +1471,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// What `board.open_remote` answers for a remote board's window.
-    private func opened(_ controller: CanvasWindowController, alreadyOpen: Bool) throws -> OpenedRemoteBoard {
+    private func opened(_ controller: CanvasWindowController, alreadyOpen: Bool, includingClosed: Bool = false) throws -> OpenedRemoteBoard {
         guard let remote = controller.remote else { throw ApiRouter.Failure("internal", "\(controller.board.id)'s window mirrors no host") }
-        guard controller.isBoardOpen, remoteControllers[Self.remoteKey(remote.host, controller.board.id)] === controller else { throw CancellationError() }
+        guard (includingClosed || controller.isBoardOpen), remoteControllers[Self.remoteKey(remote.host, controller.board.id)] === controller else { throw CancellationError() }
         return OpenedRemoteBoard(host: remote.host.name, sshTarget: remote.host.sshTarget, board: controller.board.id, root: controller.board.root.path,
                                  title: remote.title(of: controller.board), window: controller.window?.windowNumber ?? 0, alreadyOpen: alreadyOpen)
     }

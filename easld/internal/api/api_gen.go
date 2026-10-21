@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "837470a7f4063015"
+const SchemaHash = "f160166c77ed6010"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -1209,6 +1209,24 @@ type BoardInfo struct {
 	Repo *string `json:"repo,omitempty"`
 	// a repository board's worktrees: its repository's live ones (main checkout first) and every one the board has seen (opened from, a terminal started in, a merged per-branch board's), one entry per worktree and branch
 	Worktrees []WorktreeInfo `json:"worktrees,omitempty"`
+}
+
+// RemoteBoardInfo: An open remote tab in the Mac app's board.list. The host owns its board id and root. Local-only metadata is absent.
+type RemoteBoardInfo struct {
+	Remote bool `json:"remote"`
+	// the host as the tab names it
+	Host string `json:"host"`
+	// what ssh connects to
+	SshTarget string `json:"sshTarget"`
+	// the board's id on the host, not a local mirror id
+	Board Id `json:"board"`
+	// the board's root on the host, not a local filesystem path
+	Root string `json:"root"`
+	// the tab's title, as board.open_remote returns it
+	Title string `json:"title"`
+	// the tab's window number, as board.open_remote returns it
+	Window int  `json:"window"`
+	Open   bool `json:"open"`
 }
 
 type WorktreeInfo struct {

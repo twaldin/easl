@@ -539,7 +539,7 @@ public struct RemoteBoard: Equatable, Sendable {
             if let board = agent["board"]?.string { counts[board, default: 0] += 1 }
         }
         let rows = (boards["boards"]?.array ?? []).compactMap { info -> RemoteBoard? in
-            guard let id = info["board"]?.string else { return nil }
+            guard info["remote"]?.bool != true, let id = info["board"]?.string else { return nil }
             let root = info["root"]?.string ?? ""
             let name = (root as NSString).lastPathComponent
             return RemoteBoard(id: id, name: name.isEmpty ? id : name, root: root, open: info["open"]?.bool ?? false,
@@ -609,6 +609,14 @@ public struct OpenedRemoteBoard: Equatable, Sendable {
         .object([
             "host": .string(host), "sshTarget": .string(sshTarget), "board": .string(board), "root": .string(root),
             "title": .string(title), "window": .number(Double(window)), "alreadyOpen": .bool(alreadyOpen),
+        ])
+    }
+
+    var listJSON: JSONValue {
+        .object([
+            "remote": .bool(true), "host": .string(host), "sshTarget": .string(sshTarget),
+            "board": .string(board), "root": .string(root), "title": .string(title),
+            "window": .number(Double(window)), "open": .bool(true),
         ])
     }
 }

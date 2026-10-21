@@ -992,6 +992,24 @@ export type BoardInfo = {
   worktrees?: WorktreeInfo[];
 };
 
+/** An open remote tab in the Mac app's board.list. The host owns its board id and root. Local-only metadata is absent. */
+export type RemoteBoardInfo = {
+  remote: true;
+  /** the host as the tab names it */
+  host: string;
+  /** what ssh connects to */
+  sshTarget: string;
+  /** the board's id on the host, not a local mirror id */
+  board: Id;
+  /** the board's root on the host, not a local filesystem path */
+  root: string;
+  /** the tab's title, as board.open_remote returns it */
+  title: string;
+  /** the tab's window number, as board.open_remote returns it */
+  window: number;
+  open: true;
+};
+
 export type WorktreeInfo = {
   /** the worktree's top level */
   path: string;
@@ -1207,6 +1225,7 @@ export type AppUpdateResult = {
 };
 
 export type BoardGetParams = {
+  /** an open local board id or the host board id of an open remote tab. The Mac app forwards remote board.get to its host; a local board wins an id collision, and several matching remote tabs are ambiguous */
   board?: Id;
   /** Include only this remote window's retained composer outcome receipts; omitted otherwise. */
   viewer?: ViewerId;
@@ -1272,7 +1291,7 @@ export type BoardHistoryResult = {
 
 export type BoardListParams = Record<string, unknown>;
 export type BoardListResult = {
-  boards: BoardInfo[];
+  boards: (BoardInfo | RemoteBoardInfo)[];
 };
 
 export type BoardStaleParams = {
@@ -2048,6 +2067,7 @@ export type ViewAttentionResult = {
 };
 
 export type ViewGetParams = {
+  /** an open local board id or the host board id from a remote board.list row. Remote tabs return this app's viewer state, not the host's window state. A local board wins an id collision; several matching remote tabs are ambiguous */
   board?: Id;
 };
 export type ViewGetResult = {
@@ -2080,6 +2100,7 @@ export type ViewOpenUrlResult = {
 };
 
 export type ViewRenderParams = {
+  /** an open local board id or the host board id of an open remote tab. Remote tabs render this app's viewer content and require inline:true without out, so host content is not written locally. A local board wins an id collision; several matching remote tabs are ambiguous */
   board?: Id;
   target: Id | Id[] | Frame;
   /** pixels per board point; lowered to keep the image under 32 megapixels (the result says what was used) */
@@ -2118,6 +2139,7 @@ export type ViewRenderResult = {
 };
 
 export type ViewSnapshotParams = {
+  /** an open local board id. An app-local remote tab target is unsupported because snapshots would persist host content locally; use view.render with inline:true instead */
   board?: Id;
   /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo) */
   out?: string;
@@ -2204,12 +2226,14 @@ export type RelayOpenResult = {
 };
 
 export type EventsSubscribeParams = {
+  /** a board owned by this server; an app-local remote tab target is unsupported. Subscribe on the board host instead */
   board?: Id;
   events?: string[];
 };
 export type EventsSubscribeResult = Record<string, unknown>;
 
 export type ViewerActivityParams = {
+  /** a board owned by this server; an app-local remote tab target is unsupported. Report on the board host's subscribed connection instead */
   board: Id;
   input: boolean;
   terminal?: Id;
@@ -2371,7 +2395,7 @@ export interface CanvasApi {
     redo(params: BoardRedoParams): Promise<BoardRedoResult>;
     /** Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, app starts, and peer messages that bounced (`message`: its receiver's agent ended before taking it, and the sender was a script or takes no messages; the entry's `id` is the receiver). Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry. */
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
-    /** Every stored board, open or not, including archived boards whose root directory is gone. */
+    /** Every stored local board, open or not, including archived boards whose root directory is gone. The Mac app appends its open remote tabs with remote:true, host, sshTarget, the host's board id and root, title, window and open:true; closing a remote tab removes its row. Local rows are unchanged and have no remote field. Remote rows have no archived, objects, updatedAt, repo or worktrees metadata; root is on the host. easld lists only its own stored boards, unchanged. */
     list(params?: BoardListParams): Promise<BoardListResult>;
     /** Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events. */
     stale(params?: BoardStaleParams): Promise<BoardStaleResult>;
