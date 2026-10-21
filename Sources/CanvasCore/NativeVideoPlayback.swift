@@ -10,12 +10,12 @@ public struct PreparedVideoPlayback: Sendable {
 @MainActor
 public enum NativeVideoPlayback {
     public static func prepare(_ source: AVAsset) async throws -> PreparedVideoPlayback {
-        guard let composition = try await composition(source, mediaType: .video) else {
+        guard let prepared = try await composition(source, mediaType: .video) else {
             throw HostFileError.unavailable("video has no playable video track")
         }
+        let composition = prepared.asset
+        let transform = prepared.transform
         let duration = try await composition.load(.duration).seconds
-        let track = try await composition.loadTracks(withMediaType: .video).first
-        let transform = try await track?.load(.preferredTransform) ?? .identity
         _ = try await composition.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
         try Task.checkCancellation()
         let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
@@ -26,13 +26,13 @@ public enum NativeVideoPlayback {
         }
     }
 
-    static func composition(_ source: AVAsset, mediaType: AVMediaType) async throws -> AVComposition? {
+    static func composition(_ source: AVAsset, mediaType: AVMediaType) async throws -> (asset: AVComposition, transform: CGAffineTransform)? {
         guard let track = try await source.loadTracks(withMediaType: mediaType).first else { return nil }
         let range = try await track.load(.timeRange)
         let transform = mediaType == .video ? try await track.load(.preferredTransform) : .identity
         try Task.checkCancellation()
         let sourceTrack = UncheckedBox(track)
-        return try await offPool {
+        let composition = try await offPool {
             Result<UncheckedBox<AVComposition>, Error> {
                 let composition = AVMutableComposition()
                 guard let target = composition.addMutableTrack(withMediaType: mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -43,6 +43,7 @@ public enum NativeVideoPlayback {
                 return UncheckedBox(composition)
             }
         }.get().value
+        return (composition, transform)
     }
 }
 
@@ -91,7 +92,7 @@ public final class IsolatedVideoAudio: Sendable {
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
                 guard let composition else { self.notify(.silent); return }
-                let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+                let item = AVPlayerItem(asset: composition.asset, automaticallyLoadedAssetKeys: [String]())
                 guard !self.cancelled else { return }
                 self.control.withLock { $0.item = item }
                 self.schedule()
