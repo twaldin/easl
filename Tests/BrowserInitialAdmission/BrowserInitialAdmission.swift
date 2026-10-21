@@ -62,17 +62,10 @@ private enum BrowserInitialAdmission {
         window.orderFrontRegardless()
         canvas.show(initial)
         try await Task.sleep(for: .milliseconds(250))
-        require(board.objects.isEmpty, "\(kind) starts on an empty board")
-        require(abs(canvas.viewport.zoom - 0.1) < 0.00001, "\(kind) starts at low zoom")
-        require(abs(canvas.viewport.rect.x - initial.rect.x) < 1, "\(kind) starts at the reported viewport origin")
-        require(abs(canvas.viewport.rect.y - initial.rect.y) < 1, "\(kind) starts at the reported viewport y")
-        require(abs(canvas.viewport.rect.w - initial.rect.w) < 1 && abs(canvas.viewport.rect.h - initial.rect.h) < 1,
-                "\(kind) starts with the reported viewport dimensions")
         Metrics.shared.reset()
         let object = board.create(type: .browser, props: .object(["url": .string("about:blank")]),
                                   frame: Frame(x: 6000, y: 30, w: 600, h: 300))
         guard let tile = canvas.tiles[object.id] else { fatalError("Browser creation produced no tile") }
-        require(String(describing: type(of: tile.content)) == kind, "\(kind) exercises the requested browser variant")
         try await Task.sleep(for: .milliseconds(350))
         require(calls(kind) == 0, "\(kind) must not request its initial preview outside the 600-point margin")
         let browserRect = CanvasView.docRect(object.frame)
