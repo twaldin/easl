@@ -1639,8 +1639,6 @@ final class CanvasWindow: NSWindow {
         }
     }
 
-    /// Drops a middle-button press or pan whose release won't reach this window (the app or window
-    /// stopped taking input, another press began), and the hand cursor it showed.
     @objc private func cancelMiddlePan() {
         guard let ended = middlePan else { return }
         middlePan = nil
