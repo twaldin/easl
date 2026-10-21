@@ -209,6 +209,44 @@ struct OldHostCompatibilityTests {
         #expect(deliveries.isEmpty)
     }
 
+    @Test func confirmedLegacyDeliveryAfterBoardClosureKeepsTheNextDraft() async throws {
+        let host = Board(id: "brd_compat", root: URL(fileURLWithPath: "/board"))
+        let terminal = host.create(type: .terminal, props: .object([:]))
+        let objects = try JSONValue.encode([terminal])
+        let peer = try CompatibilityPeer { request, _ in
+            switch request["method"]?.string {
+            case "agent.prompt_epoch":
+                return CompatibilityPeer.failure(request, message: "unknown method agent.prompt_epoch")
+            case "agent.prompt":
+                return nil
+            case "board.get":
+                return CompatibilityPeer.success(request, .object(["board": "brd_compat", "root": "/board", "objects": objects]))
+            default:
+                return Self.baseReply(request)
+            }
+        }
+        let mirror = try await mirror(peer)
+        defer { mirror.close() }
+        let view = try #require(mirror.board)
+        let outgoing = try #require(ComposerSend.begin(ComposerDraft(text: "confirmed prompt"), targets: [terminal.id], on: view)).send
+        let send = Task {
+            do {
+                try await mirror.prompt(outgoing.draft.prompt, to: terminal.id, mentions: [], answer: false)
+                return true
+            } catch { return false }
+        }
+        try await eventually { peer.requests("agent.prompt").count == 1 }
+        let request = try #require(peer.requests("agent.prompt").first)
+        #expect(request.connection.send(.object(["event": .string("board.closed"), "board": .string("brd_compat"), "data": .object([:])])))
+        try await eventually { mirror.availability == .closed }
+        #expect(request.connection.send(CompatibilityPeer.success(request.request, .object(["delivery": "typed"]))))
+        let reached: Set<ObjectID> = await send.value ? [terminal.id] : []
+        let settled = outgoing.settle(reached: reached, into: ComposerDraft(text: "next draft"), on: view)
+        #expect(settled.sent && settled.draft.text == "next draft")
+        #expect(peer.requests("agent.prompt").count == 1)
+        #expect(peer.requests("agent.prompt").first?.request["params"]?["reconcile"] == nil)
+    }
+
     @Test func upgradedPromptConnectionUsesModernDeliveryAgain() async throws {
         let upgraded = Locked(false)
         let peer = try CompatibilityPeer { request, _ in
