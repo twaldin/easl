@@ -11,7 +11,7 @@ Users browse in native WebKit tiles, automate page controls through the CLI, and
 
 ## How to get to it (user POV)
 
-Choose File > New Browser Tile… or press Shift-Command-B. Type an address in the tile's address bar. Use the same native page controls on a scratch remote board. Agents use `easl browser` against the selected instance's cmux socket.
+Choose File > New Browser Tile… or use the default Shift-Command-B binding. Type an address in the tile's address bar. Use the same native page controls on a scratch remote board. Agents use `easl browser` against the selected instance's cmux socket.
 
 ## Driving it with dev.sh
 
@@ -23,6 +23,7 @@ Preconditions: a guest-local HTTP fixture with unique text, a labelled input, a 
 - In B, use native `input click` on the fixture button, not `browser click` or page JavaScript. Keep separate before, immediate/intermediate, and settled Cua captures by B's exact PID/window. Require exactly one source counter increment, the changed marker in B, and preserved input focus. Repeat native typing and scrolling. Capture A independently as source control. Missing stream identity means the relay precondition is unproven.
 - For response timing, launch with `EASL_DEV_SURFACE_TRACE=1` and use `scripts/perf-browser-gates.py` as [performance](../performance.md) specifies. Gate A ends at the first valid own-NSWindow SCStream marker display with exactly one source increment. Gate B ends at the first `refresh:true` assignment covering the last queued input on the same stream. Keep first input-covering decoded assignment as a third, separate diagnostic. Native presentation, decoded assignment, and RGB quality are not interchangeable.
 - Park and restore the browser, then require new page state and native input. A saved card is allowed while parked; the restored live page must not remain a stale picture. Whole-board `view.render` coverage, including unseen browsers assigned to both drawing clients, is a separate contract in `docs/testing.md` and does not replace native relay proof.
+- On a fresh board, place a cold browser far outside the viewport. Confirm preview work is deferred until it approaches the viewport. Separately move a previously live browser out of view and require its departure snapshot, then restore it and require advancing page content. These are distinct deferred-preview cases.
 
 ## Gotchas
 

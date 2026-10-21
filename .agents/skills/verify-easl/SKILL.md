@@ -234,6 +234,8 @@ scripts/dev.sh input menu "$X" "$Y" "Content Zoom/150%"
 
 `--window` is supported for click, text, key, and shortcut. Other input kinds use the instance's selected board; confirm it with `input state` first. Do not use internal setters, direct draft mutation, or `agent.prompt` to stand in for a composer gesture. API calls may seed fixtures and inspect side effects, but cannot prove a different native entry point.
 
+`input state` queues a request and prints no state to stdout. Read the newest `DevInput.state` JSON line in that home's `app.log` after the request. Use its `selected`, `window`, `board`, and `responder` fields to identify the selected tab and focus. Do not treat an empty helper response as an empty board or a failed request.
+
 ## Evidence
 
 Create a new run directory for every attempt. Never overwrite before, intermediate, failed, or settled captures. Record the claim, feature ID, entry point, head SHA, guest, build log, frozen bundle hash, signed launched executable hash, PID, window ID, socket, action transcript, and capture receipt. Record app logs and the board or terminal readback needed to prove side effects. Tie every result to the exact tested SHA, not whichever branch later merges.

@@ -9,6 +9,7 @@ Agents post question tiles through the CLI. Users choose an option or write a no
 - `question-expire` closes an unanswered question at its expiry.
 - `question-archive` hides a closed tile while retaining its answer for CLI reads.
 - `object-expiry` deletes an ordinary transient object at the host deadline.
+- `question-archive-layout` excludes archived questions from geometry while retaining their answers.
 
 ## How to get to it (user POV)
 
@@ -22,8 +23,10 @@ Preconditions: an isolated local or scratch remote board with a live viewer. Set
 - Reach it with `scripts/dev.sh input shortcut j --mods cmd --window "$WINDOW"`. Press `input shortcut 2`, then `input key tab` to reach the note field. Enter a distinct note and press Return. Require the waiter to return exit 0 with option `b`, label `Beta`, and that exact note. Inspect the answered tile in native pixels and read `EASL_SOCKET="$API_SOCKET" bun "$R/cli/easl.ts" ask get "$QUESTION"`. Repeat by clicking the option's fresh AX-labelled control when qualifying pointer access too.
 - Create another question. Start `EASL_SOCKET="$API_SOCKET" bun "$R/cli/easl.ts" ask wait "$QUESTION"` as an owned job before running `EASL_SOCKET="$API_SOCKET" bun "$R/cli/easl.ts" ask cancel "$QUESTION"`. The waiter must end with exit 2 and a cancellation reason, not an answer. Capture the closed state.
 - Create a distinct question with `--expires 5s --keep --wait`. Retain the open capture, expiry capture, and waiter exit 2 with the expiry reason. Do not answer it. Use unique capture paths so waiting cannot overwrite the open state.
-- Create a question without `--keep`, answer it, and capture its disappearance after the default 10-second close-to-archive delay. `ask get` and `ask list` must still return the answer. Also use the tile's native **Archive** control on a kept closed question and check retained answer readback. A custom `archiveAfter` changes the delay; record it.
+- Create a question without `--keep`, record its effective `archiveAfter`, answer it, and capture disappearance after that interval. The default is ten seconds unless host settings override it. `ask get` and `ask list` must still return the answer. Also use the tile's native **Archive** control on a kept closed question and check retained answer readback.
 - Separately create an ordinary scratch note with `object.create --board "$BOARD" --type note --expires 5s --json '{"props":{"markdown":"Transient verification note"}}'`. Capture it before expiry, then require its disappearance and failed `object.get` after the host deadline. This is deletion, unlike question expiry and archive.
+- After archiving, overlap a note with the question's former frame. Require no archived-question overlap or graph relationship, then exercise placement, group collapse, and arrow avoidance using `conformance/scenarios/archived-layout.json` as the fixture recipe. Run both hosts; disappearance alone does not qualify layout exclusion.
+- For an in-place upgrade, create a note under v0.3.0 with a deadline long enough to finish the upgrade. Record its absolute expiry, ID, and content. Restart the candidate on the same isolated home. Require unchanged data before the original deadline and deletion afterward, without extending expiry.
 
 ## Gotchas
 

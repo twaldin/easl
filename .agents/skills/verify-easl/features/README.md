@@ -4,11 +4,15 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 
 ## Features
 
-- [Local board basics](local-board.md) covers creation, selection, moving, undo, the Move tool, and drawing.
+- [Local board basics](local-board.md) covers creation, selection, title-bar movement, undo, and drawing.
+- [Move tool](move-tool.md) covers body drags, groups, cancellation, and input isolation.
+- [Unreadable boards](unreadable-boards.md) covers refusal, recovery copies, restore, and migration.
 - [Terminals](terminals.md) covers native creation, typing, persistent sessions, and remote ownership.
 - [Composer](composer.md) covers focus, targets, sending, mentions, text editing, history, and delivery receipts.
+- [Prompt delivery](prompt-delivery.md) covers lost replies, non-delivery, uncertainty, and unsupported hosts.
 - [Browser tiles](browser-tiles.md) covers native navigation, browser automation, and a relay between two instances.
 - [Remote boards](remote-boards.md) covers scratch easld over guest-loopback SSH, synchronization, and closure.
+- [Remote image previews](image-previews.md) covers display-sized reads, zoom detail, original selection, and old hosts.
 - [Keyboard shortcuts](keyboard-shortcuts.md) covers native key routing and editable bindings.
 - [HTML and video tiles](html-video.md) covers live HTML, native playback, seeking, and remote controls.
 - [Questions and expiry](questions-expiry.md) covers CLI creation, native answers, cancellation, expiry, and archive retention.

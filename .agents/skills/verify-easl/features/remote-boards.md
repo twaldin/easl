@@ -23,6 +23,7 @@ Preconditions: follow the skill's loopback-SSH setup, keep forwarding alive, sta
 - Select the seeded terminal in A, type and submit distinct markers, and capture both viewers. Check host terminal readback and an actual receipt file. A relayed browser requires [the browser journey](browser-tiles.md), not this terminal check.
 - For closed-board behavior, close the host board through its socket with `board.close --board "$BOARD" --endSessions true`. Keep the viewer tab. Capture retained content, pan and zoom it, then attempt a native mutation. Host object data and revision must stay unchanged. Reopen the host board and verify ordinary edits work again. Do not claim full closure safety from one note; delayed LSP, terminal links, HTML links, and Changes reads have separate races documented in `docs/testing.md` under the remote-closed-board regression.
 - End all scratch board sessions before stopping the daemon. Stop both viewers before the SSH forward. Export native captures and both app logs.
+- Run [remote image previews](image-previews.md) for image tiles. Treat old-host method errors separately from explicit original selection.
 
 ## Gotchas
 
