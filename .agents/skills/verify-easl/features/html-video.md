@@ -30,6 +30,6 @@ Preconditions: the claimed guest is muted, scratch files are guest-local, and th
 
 - An HTML decoder passing does not qualify native AVKit. A spinner disappearing or `object.get` reporting autoplay does not prove playback.
 - Guest audio pipelines have hung in CoreAudio. Retain `sample "$PID" 5 -file "$G/proof/native-video-sample.txt"` and `system_profiler SPAudioDataType -json` on failure, using a fresh filename for each attempt. Do not label it guest-only without a permitted physical-Mac control. Home's display is never that control.
-- AVKit's AX timeline can remain stale while decoded pictures advance. Hover the native controls with the real guest pointer and take a fresh exact-PID/window snapshot. Use native scrubber input and read a burned-in frame timecode from captured pixels when the AX timeline is unavailable; never substitute API seeks for a claimed native-control journey.
+- Require enabled native timeline actions and read the burned-in frame timecode from captured pixels after a seek. Advancing pictures alone do not prove usable controls; a stale or absent AX timeline can expose incomplete player-item metadata loading. Do not substitute API seeks for a claimed native-control journey.
 - Video and browser capture can throttle when hidden. Native pictures must actually advance.
 - A sandboxed HTML page, browser page, and native video are separate paths. Report each tested path by name.

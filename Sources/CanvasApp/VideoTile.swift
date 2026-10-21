@@ -284,7 +284,6 @@ final class VideoTile: NSView, TileContent {
         statusObservation = nil
         if let endedObserver { NotificationCenter.default.removeObserver(endedObserver) }
         endedObserver = nil
-        playerView.player = nil
         player.replaceCurrentItem(with: nil)
         videoOutput = nil
         videoTransform = nil

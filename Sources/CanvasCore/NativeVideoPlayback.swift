@@ -108,7 +108,7 @@ public final class IsolatedVideoAudio: Sendable {
                     self?.notify(.silent)
                     return
                 }
-                _ = try await source.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
+                _ = try await source.load(.duration, .tracks, .isPlayable, .hasProtectedContent, .availableMediaCharacteristicsWithMediaSelectionOptions)
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
                 let item = AVPlayerItem(asset: source, automaticallyLoadedAssetKeys: [String]())
@@ -193,7 +193,6 @@ public final class IsolatedVideoAudio: Sendable {
     }
 
     private func install(_ item: AVPlayerItem, into state: inout Playback) {
-        _ = item.currentMediaSelection
         guard !cancelled else { return }
         let player = AVPlayer()
         player.allowsExternalPlayback = false
