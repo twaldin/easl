@@ -57,6 +57,9 @@ private enum VideoPlaybackRegression {
         marker("VIDEO_CREATE_MUTED")
         let tile = VideoTile(object: object, board: board)
         defer { tile.setLive(false) }
+        var revealed = false
+        tile.whenLiveReady { revealed = true }
+        try require(!revealed, "preparation status must not reveal a black player before its first decoded frame")
         guard let view = tile.subviews.compactMap({ $0 as? AVPlayerView }).first else {
             throw Failure(message: "video tile has no playback view")
         }

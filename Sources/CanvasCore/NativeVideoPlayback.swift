@@ -10,7 +10,7 @@ public struct PreparedVideoPlayback: Sendable {
 @MainActor
 public enum NativeVideoPlayback {
     public static func prepare(_ source: AVAsset) async throws -> PreparedVideoPlayback {
-        guard let prepared = try await composition(source, mediaType: .video) else {
+        guard let prepared = try await composition(source) else {
             throw HostFileError.unavailable("video has no playable video track")
         }
         let composition = prepared.asset
@@ -26,18 +26,12 @@ public enum NativeVideoPlayback {
         }
     }
 
-    static func composition(_ source: AVAsset, mediaType: AVMediaType) async throws -> (asset: AVComposition, transform: CGAffineTransform)? {
-        let tracks: [AVAssetTrack]
-        if mediaType == .video {
-            tracks = try await source.load(.tracks).filter {
-                let type = $0.mediaType
-                return type == .video || type == .text || type == .subtitle || type == .closedCaption
-            }
-            guard tracks.contains(where: { $0.mediaType == .video }) else { return nil }
-        } else {
-            guard let track = try await source.loadTracks(withMediaType: mediaType).first else { return nil }
-            tracks = [track]
+    private static func composition(_ source: AVAsset) async throws -> (asset: AVComposition, transform: CGAffineTransform)? {
+        let tracks = try await source.load(.tracks).filter {
+            let type = $0.mediaType
+            return type == .video || type == .text || type == .subtitle || type == .closedCaption
         }
+        guard tracks.contains(where: { $0.mediaType == .video }) else { return nil }
         var prepared: [(track: UncheckedBox<AVAssetTrack>, mediaType: AVMediaType, range: CMTimeRange, transform: CGAffineTransform)] = []
         for track in tracks {
             let range = try await track.load(.timeRange)
@@ -106,11 +100,14 @@ public final class IsolatedVideoAudio: Sendable {
         self.changed = changed
         let preparation = Task { @MainActor [weak self] in
             do {
-                let composition = try await NativeVideoPlayback.composition(source, mediaType: .audio)
+                guard !(try await source.loadTracks(withMediaType: .audio)).isEmpty else {
+                    self?.notify(.silent)
+                    return
+                }
+                _ = try await source.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
-                guard let composition else { self.notify(.silent); return }
-                let item = AVPlayerItem(asset: composition.asset, automaticallyLoadedAssetKeys: [String]())
+                let item = AVPlayerItem(asset: source, automaticallyLoadedAssetKeys: [String]())
                 guard !self.cancelled else { return }
                 self.control.withLock { $0.item = item }
                 self.schedule()
@@ -191,6 +188,9 @@ public final class IsolatedVideoAudio: Sendable {
     }
 
     private func install(_ item: AVPlayerItem, into state: inout Playback) {
+        for track in item.tracks where track.assetTrack?.mediaType != .audio {
+            track.isEnabled = false
+        }
         _ = item.currentMediaSelection
         guard !cancelled else { return }
         let player = AVPlayer()

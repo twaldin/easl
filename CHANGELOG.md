@@ -6,7 +6,7 @@ Each version's section is its GitHub release's notes.
 
 - Escape leaves Move and cancels a held drag without moving objects or changing the board revision, including through the active canvas responder.
 - Cold offscreen browsers defer their first card preview until they enter the viewport margin.
-
+- Native muted videos prepare without audio output; audio-bearing videos no longer block the app on media selection or a stalled audio stack, and unavailable audio is shown on the tile.
 - Respect native app activity for terminal redraws and automatic update idleness when the HID clock is stale; add per-stage remote echo measurements.
 - Open saved boards with attached arrow previews while obstacle routing finishes in the background; edits and explicit exports still settle their final routes.
 - Remote PNG and JPEG tiles request display-sized previews and load more detail on zoom; older easld hosts use original image bytes and legacy composer prompts. CI checks the app's remote Core paths against the previous release.
