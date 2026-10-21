@@ -30,7 +30,7 @@ private enum MoveEscape {
         }
     }
 
-    static func main() throws {
+    static func main() async throws {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
         app.finishLaunching()
@@ -61,6 +61,7 @@ private enum MoveEscape {
             window.close()
         }
         window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(200))
         canvas.contentView.scroll(to: NSPoint(x: CanvasDocumentView.origin.x - 504.5,
                                               y: CanvasDocumentView.origin.y - 76))
         canvas.reflectScrolledClipView(canvas.contentView)
