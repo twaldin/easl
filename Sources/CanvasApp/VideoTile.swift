@@ -99,8 +99,10 @@ final class VideoTile: NSView, TileContent {
         self.source = source
         pendingSeek = true
         showPlaybackStatus("Preparing video…")
-        let asset = source.asset
-        preparation.start({ try await NativeVideoPlayback.prepare(asset) }) { [weak self, weak source] result in
+        let prepare: @MainActor @Sendable () async throws -> PreparedVideoPlayback = {
+            try await NativeVideoPlayback.prepare(source.asset)
+        }
+        preparation.start({ try await prepare() }) { [weak self, weak source] result in
             guard let self, let source, self.source === source, self.live, !self.hostBoardClosed else { return }
             switch result {
             case .success(let prepared):

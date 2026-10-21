@@ -7,6 +7,7 @@ public struct PreparedVideoPlayback: Sendable {
     public let duration: Double
 }
 
+@MainActor
 public enum NativeVideoPlayback {
     public static func prepare(_ source: AVAsset) async throws -> PreparedVideoPlayback {
         guard let composition = try await composition(source, mediaType: .video) else {
@@ -17,7 +18,7 @@ public enum NativeVideoPlayback {
         let transform = try await track?.load(.preferredTransform) ?? .identity
         _ = try await composition.load(.isPlayable, .availableMediaCharacteristicsWithMediaSelectionOptions)
         try Task.checkCancellation()
-        let item = await AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+        let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
         return await offPool {
             // AVKit reads this synchronously when a player is attached. Never give it an audio track.
             _ = item.currentMediaSelection
@@ -81,15 +82,16 @@ public final class IsolatedVideoAudio: Sendable {
     }
     private let playback = Locked(Playback())
 
+    @MainActor
     public init(source: AVAsset, changed: @escaping @MainActor @Sendable (State) -> Void) {
         self.changed = changed
-        let preparation = Task.detached { [weak self] in
+        let preparation = Task { @MainActor [weak self] in
             do {
                 let composition = try await NativeVideoPlayback.composition(source, mediaType: .audio)
                 try Task.checkCancellation()
                 guard let self, !self.cancelled else { return }
                 guard let composition else { self.notify(.silent); return }
-                let item = await AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
+                let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
                 guard !self.cancelled else { return }
                 self.control.withLock { $0.item = item }
                 self.schedule()
