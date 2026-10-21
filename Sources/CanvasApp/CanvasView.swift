@@ -602,8 +602,6 @@ final class CanvasView: NSScrollView {
             return self?.objectMenu(for: id, at: point.flatMap { point in tile?.content.bounds.contains(point) == true ? point : nil })
         }
         tile.setHostBoardClosed(remote?.mirror.availability == .closed)
-        // Fresh tiles start cold before attachment, so offscreen browsers do not build a page
-        // or request a preview. Reused browsers keep their session; terminals always start live.
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
         if preserved == nil, !(content is TerminalTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         tile.updateProximity(to: documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin), admitColdCards: !magnifying)

@@ -1,5 +1,5 @@
 import AppKit
-@preconcurrency import AVFoundation
+import AVFoundation
 import AVKit
 import CanvasCore
 import Darwin

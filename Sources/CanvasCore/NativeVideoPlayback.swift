@@ -1,7 +1,7 @@
-@preconcurrency import AVFoundation
+import AVFoundation
 import Foundation
 
-public struct PreparedVideoPlayback: @unchecked Sendable {
+public struct PreparedVideoPlayback: Sendable {
     public let item: AVPlayerItem
     public let transform: CGAffineTransform
     public let duration: Double
@@ -46,7 +46,7 @@ public enum NativeVideoPlayback {
     }
 }
 
-public final class IsolatedVideoAudio: @unchecked Sendable {
+public final class IsolatedVideoAudio: Sendable {
     public enum State: Equatable, Sendable {
         case preparing
         case ready
@@ -67,21 +67,24 @@ public final class IsolatedVideoAudio: @unchecked Sendable {
         var prerollResult: Bool?
         var reported: State?
         var position = Position()
+        var preparation: Task<Void, Never>?
     }
 
     private static let work = VideoAudioWorkQueue()
     private let id = UUID()
     private let control = Locked(Control())
     private let changed: @MainActor @Sendable (State) -> Void
-    private var preparation: Task<Void, Never>?
-    private var player: AVPlayer?
-    private var observation: NSKeyValueObservation?
-    private var prerolling = false
-    private var ready = false
+    private struct Playback {
+        var player: AVPlayer?
+        var observation: NSKeyValueObservation?
+        var prerolling = false
+        var ready = false
+    }
+    private let playback = Locked(Playback())
 
     public init(source: AVAsset, changed: @escaping @MainActor @Sendable (State) -> Void) {
         self.changed = changed
-        preparation = Task.detached { [weak self] in
+        let preparation = Task.detached { [weak self] in
             do {
                 let composition = try await NativeVideoPlayback.composition(source, mediaType: .audio)
                 try Task.checkCancellation()
@@ -94,9 +97,10 @@ public final class IsolatedVideoAudio: @unchecked Sendable {
                 self.notify(.failed(error.localizedDescription))
             }
         }
+        control.withLock { $0.preparation = preparation }
     }
 
-    deinit { preparation?.cancel() }
+    deinit { control.withLock { $0.preparation?.cancel() } }
 
     private var cancelled: Bool { control.withLock { $0.cancelled } }
 
@@ -110,10 +114,10 @@ public final class IsolatedVideoAudio: @unchecked Sendable {
     }
 
     public func cancel() {
-        let started = control.withLock { control in
+        let (started, preparation) = control.withLock { control in
             control.cancelled = true
             control.composition = nil
-            return control.started
+            return (control.started, control.preparation)
         }
         preparation?.cancel()
         if started { schedule() }
@@ -128,67 +132,69 @@ public final class IsolatedVideoAudio: @unchecked Sendable {
     }
 
     private func process() {
-        let next = control.withLock { control -> (AVComposition?, Bool?, Position)? in
-            guard !control.cancelled else { return nil }
-            control.started = true
-            defer {
-                control.composition = nil
-                control.prerollResult = nil
+        playback.withLock { state in
+            let next = control.withLock { control -> (AVComposition?, Bool?, Position)? in
+                guard !control.cancelled else { return nil }
+                control.started = true
+                defer {
+                    control.composition = nil
+                    control.prerollResult = nil
+                }
+                return (control.composition, control.prerollResult, control.position)
             }
-            return (control.composition, control.prerollResult, control.position)
-        }
-        guard let (composition, prerollResult, position) = next else {
-            observation = nil
-            player?.cancelPendingPrerolls()
-            player?.pause()
-            player?.replaceCurrentItem(with: nil)
-            player = nil
-            return
-        }
-        if let composition { install(composition) }
-        guard !cancelled else { schedule(); return }
-        if let finished = prerollResult {
-            if finished {
-                ready = true
-            } else {
-                ready = false
-                notify(.failed(player?.currentItem?.error?.localizedDescription ?? "audio output could not start"))
+            guard let (composition, prerollResult, position) = next else {
+                state.observation = nil
+                state.player?.cancelPendingPrerolls()
+                state.player?.pause()
+                state.player?.replaceCurrentItem(with: nil)
+                state.player = nil
+                return
             }
+            if let composition { install(composition, into: &state) }
+            guard !cancelled else { schedule(); return }
+            if let finished = prerollResult {
+                if finished {
+                    state.ready = true
+                } else {
+                    state.ready = false
+                    notify(.failed(state.player?.currentItem?.error?.localizedDescription ?? "audio output could not start"))
+                }
+            }
+            checkStatus(&state)
+            guard state.ready, let player = state.player else { return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - position.hostTime
+            let seconds = max(0, position.seconds + elapsed * Double(position.rate))
+            let current = player.currentTime().seconds
+            if !current.isFinite || abs(current - seconds) > 0.1 || player.rate != position.rate {
+                notify(.preparing)
+                player.setRate(position.rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
+            }
+            notify(.ready)
         }
-        checkStatus()
-        guard ready, let player else { return }
-        let elapsed = ProcessInfo.processInfo.systemUptime - position.hostTime
-        let seconds = max(0, position.seconds + elapsed * Double(position.rate))
-        let current = player.currentTime().seconds
-        if !current.isFinite || abs(current - seconds) > 0.1 || player.rate != position.rate {
-            notify(.preparing)
-            player.setRate(position.rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
-        }
-        notify(.ready)
     }
 
-    private func install(_ composition: AVComposition) {
+    private func install(_ composition: AVComposition, into state: inout Playback) {
         let item = AVPlayerItem(asset: composition, automaticallyLoadedAssetKeys: [String]())
         _ = item.currentMediaSelection
         guard !cancelled else { return }
         let player = AVPlayer()
         player.allowsExternalPlayback = false
-        self.player = player
-        observation = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+        state.player = player
+        state.observation = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             self?.schedule()
         }
         player.replaceCurrentItem(with: item)
     }
 
-    private func checkStatus() {
-        guard let player, let item = player.currentItem else { return }
+    private func checkStatus(_ state: inout Playback) {
+        guard let player = state.player, let item = player.currentItem else { return }
         switch item.status {
         case .failed:
-            ready = false
+            state.ready = false
             notify(.failed(item.error?.localizedDescription ?? "audio could not load"))
         case .readyToPlay:
-            guard !prerolling else { return }
-            prerolling = true
+            guard !state.prerolling else { return }
+            state.prerolling = true
             player.preroll(atRate: 1) { [weak self] finished in
                 guard let self, !self.cancelled else { return }
                 self.control.withLock { $0.prerollResult = finished }

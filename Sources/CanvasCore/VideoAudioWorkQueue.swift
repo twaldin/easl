@@ -1,6 +1,6 @@
 import Foundation
 
-final class VideoAudioWorkQueue: @unchecked Sendable {
+final class VideoAudioWorkQueue: Sendable {
     private struct Pending {
         var order: [UUID] = []
         var work: [UUID: @Sendable () -> Void] = [:]
