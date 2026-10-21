@@ -271,16 +271,16 @@ struct VideoAudioPlayback<Player: VideoAudioClockPlayer> {
 }
 
 extension AVPlayer: VideoAudioClockPlayer {
-    var isReady: Bool { status == .readyToPlay }
-    var itemIsReady: Bool { currentItem?.status == .readyToPlay }
+    nonisolated var isReady: Bool { status == .readyToPlay }
+    nonisolated var itemIsReady: Bool { currentItem?.status == .readyToPlay }
 
-    var currentSeconds: Double { currentTime().seconds }
+    nonisolated var currentSeconds: Double { currentTime().seconds }
 
-    func prepareAudio(completion: @escaping @Sendable (Bool) -> Void) {
+    nonisolated func prepareAudio(completion: @escaping @Sendable (Bool) -> Void) {
         preroll(atRate: 1, completionHandler: completion)
     }
 
-    func synchronize(rate: Float, seconds: Double) {
+    nonisolated func synchronize(rate: Float, seconds: Double) {
         setRate(rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
     }
 }
