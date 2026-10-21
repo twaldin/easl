@@ -92,6 +92,15 @@ private enum VideoPlaybackRegression {
         let resumedAudio = try await resumedItem.asset.loadTracks(withMediaType: .audio)
         try require(resumedAudio.isEmpty, "parking must not restore the original audio tracks")
         try require(try board.object(object.id).props == paused.props, "playback must preserve all persisted video properties")
+        tile.setHostBoardClosed(true)
+        tile.setHostBoardClosed(false)
+        try await wait("video restart after host reopen") {
+            guard let reopened = view.player, let item = reopened.currentItem else { return false }
+            return item.status == .readyToPlay && reopened.rate == 0 && abs(reopened.currentTime().seconds - 1.25) < 0.03
+        }
+        guard let reopened = view.player?.currentItem else { throw Failure(message: "host reopen lost the video item") }
+        let reopenedAudio = try await reopened.asset.loadTracks(withMediaType: .audio)
+        try require(reopenedAudio.isEmpty, "host reopen must keep muted playback free of audio tracks")
         marker("VIDEO_MUTED_PLAY_SEEK_PARK_COMPLETE")
         marker("VIDEO_PLAYBACK_COMPLETE")
     }

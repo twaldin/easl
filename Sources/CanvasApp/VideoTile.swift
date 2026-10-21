@@ -16,9 +16,14 @@ final class VideoTile: NSView, TileContent {
     private var source: HostVideoAsset?
     private let preparation = VideoPreparation<PreparedVideoPlayback>()
     private var audio: IsolatedVideoAudio?
+    private lazy var audioWork = VideoAudioWorkQueue()
+    private var audioDeadline: Task<Void, Never>?
     private var audioGeneration = 0
     private var audioTimeObserver: Any?
     private var rateObservation: NSKeyValueObservation?
+    private var mutedObservation: NSKeyValueObservation?
+    private var volumeObservation: NSKeyValueObservation?
+    private var timeControlObservation: NSKeyValueObservation?
     private var playbackLabel: NSTextField?
     private var videoDuration: Double = 0
     private var videoOutput: AVPlayerItemVideoOutput?
@@ -64,8 +69,8 @@ final class VideoTile: NSView, TileContent {
                 self.reveal()
             }
         }
-        rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.synchronizeAudio() }
+        mutedObservation = player.observe(\.isMuted, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.updateAudio() }
         }
         start()
     }
@@ -78,6 +83,7 @@ final class VideoTile: NSView, TileContent {
         posterTask?.cancel()
         MainActor.assumeIsolated {
             preparation.cancel()
+            audioDeadline?.cancel()
             audio?.cancel()
             if let audioTimeObserver { player.removeTimeObserver(audioTimeObserver) }
             source?.cancel()
@@ -123,7 +129,7 @@ final class VideoTile: NSView, TileContent {
         videoTransform = prepared.transform
         videoDuration = prepared.duration
         item.preferredForwardBufferDuration = 2
-        player.isMuted = true
+        player.isMuted = object.props["muted"] == .bool(true)
         player.replaceCurrentItem(with: item)
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor [weak self, weak item] in
@@ -145,47 +151,86 @@ final class VideoTile: NSView, TileContent {
                 self.seek()
             }
         }
-        audioTimeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.2, preferredTimescale: 600), queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.synchronizeAudio() }
-        }
         updateAudio()
     }
 
     private func updateAudio() {
         stopAudio()
         guard live, !hostBoardClosed, player.currentItem != nil, let source else { return }
-        guard object.props["muted"] != .bool(true) else {
+        guard !player.isMuted else {
             showPlaybackStatus(nil)
             return
         }
         let generation = audioGeneration
         showPlaybackStatus("Preparing audio… Video is silent until audio is ready.")
-        audio = IsolatedVideoAudio(source: source.asset) { [weak self] state in
+        audio = IsolatedVideoAudio(source: source.asset, work: audioWork) { [weak self] state in
             guard let self, self.audioGeneration == generation, self.live, !self.hostBoardClosed else { return }
             switch state {
-            case .preparing: self.showPlaybackStatus("Preparing audio… Video is silent until audio is ready.")
-            case .ready, .silent: self.showPlaybackStatus(nil)
-            case .failed(let message): self.showPlaybackStatus("Audio unavailable: \(message). Video is silent.")
+            case .preparing:
+                break
+            case .ready:
+                self.audioDeadline?.cancel()
+                self.audioDeadline = nil
+                self.showPlaybackStatus(nil)
+            case .silent:
+                self.stopAudio()
+                self.showPlaybackStatus(nil)
+            case .failed(let message):
+                self.stopAudio()
+                self.showPlaybackStatus("Audio unavailable: \(message). Video is silent.")
             }
+        }
+        rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.synchronizeAudio() }
+        }
+        volumeObservation = player.observe(\.volume, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.synchronizeAudio() }
+        }
+        timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.synchronizeAudio() }
+        }
+        audioTimeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.2, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.synchronizeAudio() }
+        }
+        audioDeadline = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(8)) }
+            catch { return }
+            guard let self, self.audioGeneration == generation, !Task.isCancelled else { return }
+            self.stopAudio()
+            self.showPlaybackStatus("Audio unavailable: audio output did not start. Video remains playable.")
         }
         synchronizeAudio()
     }
 
     private func synchronizeAudio() {
         guard live, !hostBoardClosed else { return }
-        audio?.synchronize(seconds: currentPosition, rate: pendingSeek || playTask != nil ? 0 : player.rate)
+        let rate: Float = pendingSeek || playTask != nil || player.timeControlStatus != .playing ? 0 : player.rate
+        audio?.synchronize(seconds: currentPosition, rate: rate, volume: player.volume)
     }
 
     private func stopAudio() {
         audioGeneration &+= 1
+        audioDeadline?.cancel()
+        audioDeadline = nil
+        rateObservation = nil
+        volumeObservation = nil
+        timeControlObservation = nil
+        if let audioTimeObserver { player.removeTimeObserver(audioTimeObserver) }
+        audioTimeObserver = nil
         audio?.cancel()
         audio = nil
     }
 
     private func showPlaybackStatus(_ message: String?) {
-        playbackLabel?.removeFromSuperview()
-        playbackLabel = nil
-        guard let message else { return }
+        guard let message else {
+            playbackLabel?.removeFromSuperview()
+            playbackLabel = nil
+            return
+        }
+        if let playbackLabel {
+            playbackLabel.stringValue = message
+            return
+        }
         let label = NSTextField(wrappingLabelWithString: message)
         label.font = .systemFont(ofSize: 12)
         label.textColor = .white
@@ -195,7 +240,6 @@ final class VideoTile: NSView, TileContent {
         label.autoresizingMask = [.width]
         addSubview(label)
         playbackLabel = label
-        reveal()
     }
 
     private func seek() {
@@ -206,7 +250,7 @@ final class VideoTile: NSView, TileContent {
         playTask?.cancel()
         item.cancelPendingSeeks()
         let time = CMTime(seconds: max(0, position), preferredTimescale: 600)
-        audio?.synchronize(seconds: position, rate: 0)
+        audio?.synchronize(seconds: position, rate: 0, volume: player.volume)
         playTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -232,8 +276,6 @@ final class VideoTile: NSView, TileContent {
         preparation.cancel()
         stopAudio()
         showPlaybackStatus(nil)
-        if let audioTimeObserver { player.removeTimeObserver(audioTimeObserver) }
-        audioTimeObserver = nil
         playTask?.cancel()
         playTask = nil
         posterTask?.cancel()
@@ -351,6 +393,7 @@ final class VideoTile: NSView, TileContent {
             cancelThumbnails()
         }
         hostBoardClosed = closed
+        if !closed, live { start() }
     }
 
     private func cancelThumbnails() {
@@ -426,7 +469,7 @@ final class VideoTile: NSView, TileContent {
                 if shouldPlay { player.play() } else { player.pause() }
             }
         }
-        if previous.props["muted"] != object.props["muted"] { updateAudio() }
+        if previous.props["muted"] != object.props["muted"] { player.isMuted = object.props["muted"] == .bool(true) }
         if live {
             seek()
             if previous.props["poster"] != object.props["poster"] { loadPoster() }
@@ -473,7 +516,7 @@ final class VideoTile: NSView, TileContent {
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
         guard live, !hostBoardClosed else { return }
-        if frameReady || playbackLabel != nil || (failureLabel != nil && !posterFailed) { ready() }
+        if frameReady || (failureLabel != nil && !posterFailed) { ready() }
         else { readyWaiters.append(ready) }
     }
 

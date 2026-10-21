@@ -27,19 +27,36 @@ public enum NativeVideoPlayback {
     }
 
     static func composition(_ source: AVAsset, mediaType: AVMediaType) async throws -> (asset: AVComposition, transform: CGAffineTransform)? {
-        guard let track = try await source.loadTracks(withMediaType: mediaType).first else { return nil }
-        let range = try await track.load(.timeRange)
-        let transform = mediaType == .video ? try await track.load(.preferredTransform) : .identity
+        let tracks: [AVAssetTrack]
+        if mediaType == .video {
+            tracks = try await source.load(.tracks).filter {
+                let type = $0.mediaType
+                return type == .video || type == .text || type == .subtitle || type == .closedCaption
+            }
+            guard tracks.contains(where: { $0.mediaType == .video }) else { return nil }
+        } else {
+            guard let track = try await source.loadTracks(withMediaType: mediaType).first else { return nil }
+            tracks = [track]
+        }
+        var prepared: [(track: UncheckedBox<AVAssetTrack>, mediaType: AVMediaType, range: CMTimeRange, transform: CGAffineTransform)] = []
+        for track in tracks {
+            let range = try await track.load(.timeRange)
+            let transform = track.mediaType == .video ? try await track.load(.preferredTransform) : .identity
+            prepared.append((UncheckedBox(track), track.mediaType, range, transform))
+        }
         try Task.checkCancellation()
-        let sourceTrack = UncheckedBox(track)
+        let transform = prepared.first(where: { $0.mediaType == .video })?.transform ?? .identity
+        let sourceTracks = prepared
         let composition = try await offPool {
             Result<UncheckedBox<AVComposition>, Error> {
                 let composition = AVMutableComposition()
-                guard let target = composition.addMutableTrack(withMediaType: mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-                    throw HostFileError.unavailable("video track could not be prepared")
+                for source in sourceTracks {
+                    guard let target = composition.addMutableTrack(withMediaType: source.mediaType, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                        throw HostFileError.unavailable("video track could not be prepared")
+                    }
+                    try target.insertTimeRange(source.range, of: source.track.value, at: source.range.start)
+                    target.preferredTransform = source.transform
                 }
-                try target.insertTimeRange(range, of: sourceTrack.value, at: range.start)
-                target.preferredTransform = transform
                 return UncheckedBox(composition)
             }
         }.get().value
@@ -58,6 +75,7 @@ public final class IsolatedVideoAudio: Sendable {
     private struct Position: Sendable {
         var seconds: Double = 0
         var rate: Float = 0
+        var volume: Float = 1
         var hostTime = ProcessInfo.processInfo.systemUptime
     }
 
@@ -71,20 +89,20 @@ public final class IsolatedVideoAudio: Sendable {
         var preparation: Task<Void, Never>?
     }
 
-    private static let work = VideoAudioWorkQueue()
+    private let work: VideoAudioWorkQueue
     private let id = UUID()
     private let control = Locked(Control())
     private let changed: @MainActor @Sendable (State) -> Void
     private struct Playback {
-        var player: AVPlayer?
-        var observation: NSKeyValueObservation?
-        var prerolling = false
-        var ready = false
+        var audio: VideoAudioPlayback<AVPlayer>?
+        var itemObservation: NSKeyValueObservation?
+        var playerObservation: NSKeyValueObservation?
     }
     private let playback = Locked(Playback())
 
     @MainActor
-    public init(source: AVAsset, changed: @escaping @MainActor @Sendable (State) -> Void) {
+    public init(source: AVAsset, work: VideoAudioWorkQueue, changed: @escaping @MainActor @Sendable (State) -> Void) {
+        self.work = work
         self.changed = changed
         let preparation = Task { @MainActor [weak self] in
             do {
@@ -108,10 +126,10 @@ public final class IsolatedVideoAudio: Sendable {
 
     private var cancelled: Bool { control.withLock { $0.cancelled } }
 
-    public func synchronize(seconds: Double, rate: Float) {
+    public func synchronize(seconds: Double, rate: Float, volume: Float) {
         let active = control.withLock { control in
             guard !control.cancelled else { return false }
-            control.position = Position(seconds: seconds, rate: rate, hostTime: ProcessInfo.processInfo.systemUptime)
+            control.position = Position(seconds: seconds, rate: rate, volume: volume, hostTime: ProcessInfo.processInfo.systemUptime)
             return true
         }
         if active { schedule() }
@@ -125,13 +143,13 @@ public final class IsolatedVideoAudio: Sendable {
         }
         preparation?.cancel()
         if started { schedule() }
-        else { Self.work.cancel(id) }
+        else { work.cancel(id) }
     }
 
     private func schedule() {
         control.withLock { control in
             guard !control.cancelled || control.started else { return }
-            Self.work.schedule(id) { [self] in process() }
+            work.schedule(id) { [self] in process() }
         }
     }
 
@@ -147,32 +165,27 @@ public final class IsolatedVideoAudio: Sendable {
                 return (control.item, control.prerollResult, control.position)
             }
             guard let (item, prerollResult, position) = next else {
-                state.observation = nil
-                state.player?.cancelPendingPrerolls()
-                state.player?.pause()
-                state.player?.replaceCurrentItem(with: nil)
-                state.player = nil
+                state.itemObservation = nil
+                state.playerObservation = nil
+                state.audio?.player.cancelPendingPrerolls()
+                state.audio?.player.pause()
+                state.audio?.player.replaceCurrentItem(with: nil)
+                state.audio = nil
                 return
             }
             if let item { install(item, into: &state) }
             guard !cancelled else { schedule(); return }
             if let finished = prerollResult {
-                if finished {
-                    state.ready = true
-                } else {
-                    state.ready = false
-                    notify(.failed(state.player?.currentItem?.error?.localizedDescription ?? "audio output could not start"))
+                state.audio?.ready = finished
+                if !finished {
+                    notify(.failed(state.audio?.player.currentItem?.error?.localizedDescription ?? "audio output could not start"))
                 }
             }
             checkStatus(&state)
-            guard state.ready, let player = state.player else { return }
+            guard let audio = state.audio, audio.ready else { return }
             let elapsed = ProcessInfo.processInfo.systemUptime - position.hostTime
             let seconds = max(0, position.seconds + elapsed * Double(position.rate))
-            let current = player.currentTime().seconds
-            if !current.isFinite || abs(current - seconds) > 0.1 || player.rate != position.rate {
-                notify(.preparing)
-                player.setRate(position.rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
-            }
+            audio.synchronize(seconds: seconds, rate: position.rate, volume: position.volume)
             notify(.ready)
         }
     }
@@ -182,28 +195,27 @@ public final class IsolatedVideoAudio: Sendable {
         guard !cancelled else { return }
         let player = AVPlayer()
         player.allowsExternalPlayback = false
-        state.player = player
-        state.observation = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+        state.audio = VideoAudioPlayback(player: player)
+        state.itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
+            self?.schedule()
+        }
+        state.playerObservation = player.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             self?.schedule()
         }
         player.replaceCurrentItem(with: item)
     }
 
     private func checkStatus(_ state: inout Playback) {
-        guard let player = state.player, let item = player.currentItem else { return }
-        switch item.status {
-        case .failed:
-            state.ready = false
-            notify(.failed(item.error?.localizedDescription ?? "audio could not load"))
-        case .readyToPlay:
-            guard !state.prerolling else { return }
-            state.prerolling = true
-            player.preroll(atRate: 1) { [weak self] finished in
-                guard let self, !self.cancelled else { return }
-                self.control.withLock { $0.prerollResult = finished }
-                self.schedule()
-            }
-        default: break
+        guard let audio = state.audio, let item = audio.player.currentItem else { return }
+        if item.status == .failed || audio.player.status == .failed {
+            state.audio?.ready = false
+            notify(.failed(item.error?.localizedDescription ?? audio.player.error?.localizedDescription ?? "audio could not load"))
+            return
+        }
+        state.audio?.preroll { [weak self] finished in
+            guard let self, !self.cancelled else { return }
+            self.control.withLock { $0.prerollResult = finished }
+            self.schedule()
         }
     }
 
@@ -218,5 +230,57 @@ public final class IsolatedVideoAudio: Sendable {
             guard let self, !self.cancelled else { return }
             self.changed(state)
         }
+    }
+}
+
+protocol VideoAudioClockPlayer: AnyObject {
+    var automaticallyWaitsToMinimizeStalling: Bool { get set }
+    var isReady: Bool { get }
+    var itemIsReady: Bool { get }
+    var currentSeconds: Double { get }
+    var rate: Float { get }
+    var volume: Float { get set }
+    func prepareAudio(completion: @escaping @Sendable (Bool) -> Void)
+    func synchronize(rate: Float, seconds: Double)
+}
+
+struct VideoAudioPlayback<Player: VideoAudioClockPlayer> {
+    let player: Player
+    var ready = false
+    private var prerolling = false
+
+    init(player: Player) {
+        self.player = player
+        player.automaticallyWaitsToMinimizeStalling = false
+    }
+
+    mutating func preroll(completion: @escaping @Sendable (Bool) -> Void) {
+        guard player.isReady, player.itemIsReady, !prerolling else { return }
+        prerolling = true
+        player.prepareAudio(completion: completion)
+    }
+
+    func synchronize(seconds: Double, rate: Float, volume: Float) {
+        guard ready, player.isReady, player.itemIsReady else { return }
+        if player.volume != volume { player.volume = volume }
+        let current = player.currentSeconds
+        if !current.isFinite || abs(current - seconds) > 0.1 || player.rate != rate {
+            player.synchronize(rate: rate, seconds: seconds)
+        }
+    }
+}
+
+extension AVPlayer: VideoAudioClockPlayer {
+    var isReady: Bool { status == .readyToPlay }
+    var itemIsReady: Bool { currentItem?.status == .readyToPlay }
+
+    var currentSeconds: Double { currentTime().seconds }
+
+    func prepareAudio(completion: @escaping @Sendable (Bool) -> Void) {
+        preroll(atRate: 1, completionHandler: completion)
+    }
+
+    func synchronize(rate: Float, seconds: Double) {
+        setRate(rate, time: CMTime(seconds: seconds, preferredTimescale: 600), atHostTime: .invalid)
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-final class VideoAudioWorkQueue: Sendable {
+public final class VideoAudioWorkQueue: Sendable {
     private struct Pending {
         var order: [UUID] = []
         var work: [UUID: @Sendable () -> Void] = [:]
@@ -9,6 +9,8 @@ final class VideoAudioWorkQueue: Sendable {
 
     private let pending = Locked(Pending())
     private let queue = DispatchQueue(label: "easl.video.audio", qos: .userInitiated)
+
+    public init() {}
 
     func schedule(_ id: UUID, _ work: @escaping @Sendable () -> Void) {
         let start = pending.withLock { pending in
