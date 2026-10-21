@@ -191,7 +191,14 @@ final class VideoTile: NSView, TileContent {
             MainActor.assumeIsolated { self?.synchronizeAudio() }
         }
         audioDeadline = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(8)) }
+            let deadline = ContinuousClock.now + .seconds(8)
+            do {
+                while ContinuousClock.now < deadline {
+                    try await Task.sleep(until: min(deadline, ContinuousClock.now + .milliseconds(200)), clock: .continuous)
+                    guard let self, self.audioGeneration == generation, !Task.isCancelled else { return }
+                    self.synchronizeAudio()
+                }
+            }
             catch { return }
             guard let self, self.audioGeneration == generation, !Task.isCancelled else { return }
             self.stopAudio()
