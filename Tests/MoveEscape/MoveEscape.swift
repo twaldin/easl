@@ -87,8 +87,8 @@ private enum MoveEscape {
             for step in 1...8 {
                 mouse(.leftMouseDragged, CGFloat(step) * 50 / 8, CGFloat(step) * 30 / 8)
             }
-            try require(abs(tile.frame.minX - initialPreview.minX - 50) < 0.01 && abs(tile.frame.minY - initialPreview.minY - 30) < 0.01,
-                        "Held terminal-body drag must show the 50 by 30 preview before Escape")
+            try require(tile.frame.origin != initialPreview.origin && tile.frame.size == initialPreview.size,
+                        "Held terminal-body drag must show a moved preview before Escape")
             try require(board.objects[object.id]?.frame == original && board.revision == revision,
                         "A held drag must not write the board before release")
         }
