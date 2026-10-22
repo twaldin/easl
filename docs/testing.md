@@ -36,6 +36,8 @@ The following named tests use isolated child processes while the rest of Core st
 
 `LineClient` scans only newly received bytes while a line is incomplete, so large replies do not repeatedly rescan their prefixes. The note-recovery reconnection fixture waits until the host observes the refresh request before waiting for the mirror's read to finish.
 
+`HostReferencesTests` uses the runner's `list` fixture mode to return the listing stored under its private `TMPDIR`. It creates no executable script during the suite, so a cold script cannot consume the unchanged two-second zmx subprocess deadline.
+
 Use Bun 1.4.3 or later for the host-file suites and on board hosts. Bun 1.3.14 can return successful but empty subprocess output before draining stdout. In the HostNotes stress probe this discarded Git output and transiently made a valid fixture appear outside a repository. [Bun's synchronous EOF fix](https://github.com/oven-sh/bun/pull/33832) drains stdout and stderr before returning. Upgrade Bun rather than weakening the assertions, serializing the suite, or retrying empty output. CI pins the qualified 1.4.3 runtime and prints its version.
 
 `IsolatedVideoAudioTests` is an opt-in, headless check of the production audio reader, renderer, and synchronizer. On a Mac with a working audio device, run it separately:

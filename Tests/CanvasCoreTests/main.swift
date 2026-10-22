@@ -3,6 +3,19 @@ import Foundation
 import Testing
 import CanvasCore
 
+// The reference fixture reuses this executable so its two-second zmx bound excludes a new script's startup.
+if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "list" {
+    do {
+        guard let temporary = getenv("TMPDIR") else { exit(2) }
+        let listing = URL(fileURLWithPath: String(cString: temporary)).appendingPathComponent("zmx-listing")
+        FileHandle.standardOutput.write(try Data(contentsOf: listing))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+
 if CommandLine.arguments.dropFirst().first == "--update-swap" {
     guard CommandLine.arguments.count == 4 else { exit(2) }
     do {

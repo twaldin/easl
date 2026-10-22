@@ -11,21 +11,10 @@ struct HostReferencesTests {
         return String(cString: path)
     }
 
-    private static let zmx = Result<URL, Error> {
-        let url = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-            .appendingPathComponent("CanvasCoreTests-host-references-zmx")
-        let script = "#!/bin/sh\nexec /bin/cat \"$TMPDIR/zmx-listing\"\n"
-        if (try? String(contentsOf: url, encoding: .utf8)) != script {
-            try script.write(to: url, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-        }
-        return url
-    }
-
     private func host(_ fixture: HostFileFixture, listing: String = "") throws -> RemoteHost {
         try listing.write(to: fixture.temp.appendingPathComponent("zmx-listing"), atomically: true, encoding: .utf8)
         return RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: fixture.directory.appendingPathComponent("api.sock").path,
-                          tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: try Self.zmx.get().path)
+                          tmpdir: fixture.temp.path, easlBin: "easl", zmxBin: URL(fileURLWithPath: CommandLine.arguments[0]).path)
     }
 
     private func candidates(_ paths: [String], pytest: [String]? = nil) -> [TerminalReferences.Candidate] {
