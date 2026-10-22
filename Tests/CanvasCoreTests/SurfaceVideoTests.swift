@@ -51,6 +51,8 @@ struct SurfaceVideoTests {
     }
 
     @Test func nativeSharpFrameStartsTheContinuingPredictionChain() throws {
+        // This fixture requires a predicted sharp successor, which VideoToolbox does not guarantee.
+        if try runIsolatedTestIfParallelNow("nativeSharpFrameStartsTheContinuingPredictionChain") { return }
         let encoder = SurfaceVideoEncoder()
         let decoder = SurfaceVideoDecoder()
         let initial = try #require(try encoder.encode(image(width: 65, height: 67), width: 65, height: 67))
