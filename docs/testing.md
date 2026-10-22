@@ -33,6 +33,10 @@ The following named tests use isolated child processes while the rest of Core st
 - `anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld` checks immediate lease release without concurrent process launches.
 - `rejectedRefreshBoundariesLeavePublishedReferenceUsable` and `acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes` keep prediction-only fixtures independent of the full runner's codec lifetime.
 - `persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters` measures its three-second file-read bound without unrelated main-actor fixture work.
+- `filesRequestedTogetherShareOneGitDiff` admits its three requests without unrelated executor work splitting the 20 ms batch window.
+- `theFirstSocketHandshakeGoesOnlineWhileGlobalWorkersAreBlocked` deliberately blocks the global worker pool.
+- `pollingContinuesWhileTheMainActorIsBusyAndCancellationDropsChanges` deliberately blocks the main actor.
+- `programsTheHolderStartsDontInheritTheLock` owns its descriptor-inheritance probe.
 
 `LineClient` scans only newly received bytes while a line is incomplete, so large replies do not repeatedly rescan their prefixes. The note-recovery reconnection fixture waits until the host observes the refresh request before waiting for the mirror's read to finish.
 

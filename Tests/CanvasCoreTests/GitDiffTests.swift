@@ -341,6 +341,9 @@ struct GitDiffTests {
     }
 
     @Test func filesRequestedTogetherShareOneGitDiff() async throws {
+        // The 20 ms admission window must not include unrelated suites' executor backlog.
+        let isolated = try await runIsolatedTestIfParallel("filesRequestedTogetherShareOneGitDiff")
+        if isolated { return }
         let repo = try await TempRepo()
         for name in ["a", "b", "c"] { try await repo.write("\(name) file.txt", numbered(1...3)) }
         try await repo.commit("base")
