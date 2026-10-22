@@ -63,14 +63,13 @@ private enum ApplicationIcon {
         _ = app.setActivationPolicy(.regular)
         app.finishLaunching()
         let original = pixels(app.applicationIconImage, scale: 1)
-        defer { app.applicationIconImage = nil }
 
         app.applicationIconImage = icon(.red, .blue)
         check(app.applicationIconImage, one: .red, two: .blue, stage: "initial icon")
         app.applicationIconImage = icon(.green, .yellow)
         check(app.applicationIconImage, one: .green, two: .yellow, stage: "replacement icon")
         app.applicationIconImage = nil
-        require(pixels(app.applicationIconImage, scale: 1) == original, "reset kept the custom icon instead of the bundle icon")
+        require(pixels(app.applicationIconImage, scale: 1) == original, "reset kept the custom icon instead of the default application icon")
         print("APPLICATION_ICON_COMPLETE")
     }
 }

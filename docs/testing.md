@@ -549,8 +549,7 @@ swift build --build-system native -j 2 --product Easl
 python3 Tests/ApplicationIcon/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 ```
 
-The regression renders distinct 1x and 2x icon artwork through `applicationIconImage`, replaces the icon, and resets it to the bundle icon. Pair it with a separately sampled board open to check the native-tab CoreUI readback path. The image regression does not measure main-thread stalls.
-
+The regression renders distinct 1x and 2x icon artwork through `applicationIconImage`, replaces the icon, and resets it to the default application icon. Pair it with a separately sampled board open to check the native-tab CoreUI readback path. The image regression does not measure main-thread stalls.
 
 ### Remote boards
 
