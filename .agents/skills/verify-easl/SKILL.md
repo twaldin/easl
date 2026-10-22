@@ -16,6 +16,7 @@ This repo keeps project skills in `.agents/skills/`, not `.cursor/skills/`. Read
 - Kill only recorded, verified owned PIDs. Never use `pkill`, `killall`, names, bundle IDs, or a port alone. Never delete shared lock inodes or preempt another holder.
 - Build with at most two jobs. Keep each frozen bundle until the run ends. Do not delete a binary while Gatekeeper may still scan it.
 - Keep small records under `/home/tim/agents/projects/easl/state/lanes/$LANE/`. Keep bulk evidence under `/home/tim/lane-evidence/easl/$LANE/`. No gists or uploads. Never read secret or authentication-file contents.
+- Require Bun 1.4.3 or later on the viewer and board hosts. Older synchronous subprocess capture can discard successful Git or file-reader output. Record `bun --version` before proof.
 
 ## Launch
 

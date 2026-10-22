@@ -35,7 +35,7 @@ Requires macOS 14 or later on Apple silicon. easl is signed with a Developer ID 
    curl -fsSL https://easl.sh/install | sh
    ```
 3. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's notarized, so it opens like any downloaded app.
-4. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI and every agent integration need [bun](https://bun.sh).
+4. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI, agent integrations, and host-file helpers need [Bun](https://bun.sh) 1.4.3 or later on each host.
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun
    ```
@@ -85,7 +85,7 @@ End the terminal sessions first, or they keep running: `zmx list`, then `zmx kil
 
 ## build from source
 
-The Command Line Tools are enough; Xcode is not required. Client generation and the omp extension need [bun](https://bun.sh), and the Python SDK's tests need Python 3.11 or later.
+The Command Line Tools are enough; Xcode is not required. Client generation, the omp extension, and host-file tests need [Bun](https://bun.sh) 1.4.3 or later. The Python SDK's tests need Python 3.11 or later.
 
 ```sh
 swift build                    # debug build

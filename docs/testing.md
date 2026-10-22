@@ -21,6 +21,8 @@ The CI `easld` job installs real zmx 0.8.1 for two regressions. `TestSpawnFirstA
 
 `CanvasCoreTests` is an executable target, not a test target. `main.swift` calls the swift-testing entry point because `swift test` does not discover these suites with the Command Line Tools. Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. CI uses the Command Line Tools, as local development does. `Package.swift` resolves swift-testing's framework, runtime, and macro plugin paths for the selected toolchain. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
+Use Bun 1.4.3 or later for the host-file suites and on board hosts. Bun 1.3.14 can return successful but empty subprocess output before draining stdout. In the HostNotes stress probe this discarded Git output and transiently made a valid fixture appear outside a repository. [Bun's synchronous EOF fix](https://github.com/oven-sh/bun/pull/33832) drains stdout and stderr before returning. Upgrade Bun rather than weakening the assertions, serializing the suite, or retrying empty output. CI pins the qualified 1.4.3 runtime and prints its version.
+
 `IsolatedVideoAudioTests` is an opt-in, headless check of the production audio reader, renderer, and synchronizer. On a Mac with a working audio device, run it separately:
 
 ```sh
