@@ -21,7 +21,7 @@ The CI `easld` job installs real zmx 0.8.1 for two regressions. `TestSpawnFirstA
 
 `CanvasCoreTests` is an executable target, not a test target. `main.swift` calls the swift-testing entry point because `swift test` does not discover these suites with the Command Line Tools. Select the Apple toolchain with `xcode-select` or `DEVELOPER_DIR` before building. CI uses the Command Line Tools, as local development does. `Package.swift` resolves swift-testing's framework, runtime, and macro plugin paths for the selected toolchain. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
 
-Core suites run in parallel by default. `SurfaceVideoTests`, `SurfaceImageEncoderTests`, `SurfaceImageDecoderTests`, and `SurfaceVideoQualityTests` share the `SurfaceHardwareCodec` actor to cap synchronous hardware-codec work. Concurrent VideoToolbox session creation can occupy every cooperative worker. Quality scoring still checks every RGB and RGBA byte of every frame.
+Core suites run in parallel by default, including CI; `-j 2` caps the CI build, not test execution. `SurfaceVideoTests`, `SurfaceImageEncoderTests`, `SurfaceImageDecoderTests`, and `SurfaceVideoQualityTests` share the `SurfaceHardwareCodec` actor to cap synchronous hardware-codec work. Concurrent VideoToolbox session creation can occupy every cooperative worker. Quality scoring still checks every RGB and RGBA byte of every frame.
 
 The following named tests use isolated child processes while the rest of Core stays parallel:
 

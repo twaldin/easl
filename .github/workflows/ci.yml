@@ -25,7 +25,7 @@ jobs:
         run: |
           swift --version
           bun --version
-          swift run -j 2 CanvasCoreTests --no-parallel
+          swift run -j 2 CanvasCoreTests
       - name: Native composer editing regression
         run: |
           swift build --build-system native -j 2 --product Easl

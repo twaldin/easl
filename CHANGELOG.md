@@ -8,7 +8,7 @@ Each version's section is its GitHub release's notes.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.
 - Host-file helpers require Bun 1.4.3 or later. Older Bun can discard successful subprocess output; CI pins the qualified runtime.
-- Development: cap hardware-codec Core suites, isolate real-clock and descriptor-reuse fixtures, scan large test-client lines once, and reuse the test runner for zmx fixtures. Existing assertions and deadlines are unchanged.
+- Development: restore parallel Core CI with capped hardware-codec suites, isolated prediction, real-clock and descriptor-reuse fixtures, linear large-line reads, and a retained-runner zmx fixture. Existing assertions and deadlines are unchanged.
 - The Mac app's `board.list` includes open remote tabs with their host details, and board-scoped calls resolve their host board IDs while preserving private viewer trays and closed-local ownership, including tab-close requests.
 
 ## 0.3.1
