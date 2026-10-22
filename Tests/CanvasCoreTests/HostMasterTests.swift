@@ -393,6 +393,9 @@ struct HostMasterTests {
     }
 
     @Test func persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters() async throws {
+        // The three-second starvation probe must not include unrelated main-actor fixture work.
+        let isolated = try await runIsolatedTestIfParallel("persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters")
+        if isolated { return }
         let host = try Host()
         defer { host.close() }
         let remote = RemoteHost(name: "fixture", sshTarget: "fixture", socketPath: "/unused",

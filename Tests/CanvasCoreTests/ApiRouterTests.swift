@@ -999,12 +999,14 @@ final class LineClient: @unchecked Sendable {
 
     private func readLine(timeout: Double) throws -> Data {
         let deadline = Date().addingTimeInterval(timeout)
+        var search = buffer.startIndex
         while true {
-            if let newline = buffer.firstIndex(of: 0x0A) {
+            if let newline = buffer[search...].firstIndex(of: 0x0A) {
                 let line = Data(buffer[buffer.startIndex..<newline])
                 buffer.removeSubrange(buffer.startIndex...newline)
                 return line
             }
+            search = buffer.endIndex
             var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             let remaining = Int32(max(0, deadline.timeIntervalSinceNow) * 1000)
             guard remaining > 0, poll(&poller, 1, remaining) > 0 else { throw POSIXError(.ETIMEDOUT) }

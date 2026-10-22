@@ -3,8 +3,16 @@ import CoreGraphics
 import Testing
 import CanvasCore
 
+// VideoToolbox session creation can occupy every cooperative worker. These hardware-codec
+// suites share one actor so unrelated Core tests can keep making progress.
+@globalActor
+actor SurfaceHardwareCodec {
+    static let shared = SurfaceHardwareCodec()
+}
+
+@SurfaceHardwareCodec
 struct SurfaceVideoTests {
-    private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
+    nonisolated private func image(width: Int = 64, height: Int = 64, red: Bool = false) throws -> CGImage {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))

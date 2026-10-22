@@ -42,7 +42,15 @@ struct RemoteHostTests {
         #expect(host?.tmpdir == "/tmp/easl-dev-host/tmp")
     }
 
-    @Test(arguments: ["invalid_params", "internal", "malformed", "silent"])
+    @Test func identifyingAMacDoesNotHideProtocolFailures() async throws {
+        // Keep the 200 ms protocol deadline independent of other suites' executor backlog.
+        let isolated = try await runIsolatedTestIfParallel("identifyingAMacDoesNotHideProtocolFailures")
+        if isolated { return }
+        for response in ["invalid_params", "internal", "malformed", "silent"] {
+            try await identifyingAMacDoesNotHideProtocolFailures(response)
+        }
+    }
+
     func identifyingAMacDoesNotHideProtocolFailures(_ response: String) async throws {
         let fixture = try EaslConnectionTests()
         let server = SocketServer(path: fixture.path) { request, _ in

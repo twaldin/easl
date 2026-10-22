@@ -344,6 +344,8 @@ struct UpdateStagingLeaseTests {
     }
 
     @Test func anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld() throws {
+        // Probe immediate lease release without concurrent launches holding pre-exec descriptor copies.
+        if try runIsolatedTestIfParallelNow("anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld") { return }
         defer { try? FileManager.default.removeItem(at: root) }
         let files = FileManager.default
         try files.createDirectory(at: root, withIntermediateDirectories: true)

@@ -97,14 +97,22 @@ private enum BrowserQuality {
         let pixels = try raster(actual, width: width, height: height)
         try check(pixels.count == expected.count, "Raster size mismatch")
         var maximum = 0, total: UInt64 = 0, rgbaMaximum = 0, rgbaTotal: UInt64 = 0
-        for offset in stride(from: 0, to: pixels.count, by: 4) {
-            for channel in 0..<4 {
-                let error = abs(Int(pixels[offset + channel]) - Int(expected[offset + channel]))
-                rgbaMaximum = max(rgbaMaximum, error)
-                rgbaTotal += UInt64(error)
-                if channel < 3 {
-                    maximum = max(maximum, error)
-                    total += UInt64(error)
+        pixels.withUnsafeBufferPointer { actualBytes in
+            expected.withUnsafeBufferPointer { expectedBytes in
+                var offset = 0
+                while offset < actualBytes.count {
+                    var channel = 0
+                    while channel < 4 {
+                        let error = abs(Int(actualBytes[offset + channel]) - Int(expectedBytes[offset + channel]))
+                        rgbaMaximum = max(rgbaMaximum, error)
+                        rgbaTotal += UInt64(error)
+                        if channel < 3 {
+                            maximum = max(maximum, error)
+                            total += UInt64(error)
+                        }
+                        channel += 1
+                    }
+                    offset += 4
                 }
             }
         }
@@ -252,7 +260,7 @@ private enum BrowserQuality {
 }
 
 #if !SURFACE_QUALITY_PROBE
-@Suite(.serialized)
+@SurfaceHardwareCodec
 struct SurfaceVideoQualityTests {
     @Test func realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/browser-quality")

@@ -57,6 +57,9 @@ final class ObjectExpiryTests {
     }
 
     @Test func nullAndMovedDeadlineCancelOldTimerAndOmissionPreservesDeadline() async throws {
+        // These 200 ms objects must be updated before unrelated suites delay the main actor.
+        let isolated = try await runIsolatedTestIfParallel("nullAndMovedDeadlineCancelOldTimerAndOmissionPreservesDeadline")
+        if isolated { return }
         let cleared = try await create(["expiresIn": "0.2s"])
         let moved = try await create(["expiresIn": "0.2s"])
         let clearReply = try await call("object.update", ["id": .string(cleared.id), "expires": .null])
@@ -133,6 +136,9 @@ final class ObjectExpiryTests {
     }
 
     @Test func futurePersistedDeadlineFiresAfterRegistryAndStoreRestartWithSystemAttribution() async throws {
+        // Restart must finish before this real two-second deadline, without other suites' backlog.
+        let isolated = try await runIsolatedTestIfParallel("futurePersistedDeadlineFiresAfterRegistryAndStoreRestartWithSystemAttribution")
+        if isolated { return }
         let object = try await create(["expiresIn": "2s"])
         let deadline = try #require(object.expires?.date)
         try registry.close(board.id)

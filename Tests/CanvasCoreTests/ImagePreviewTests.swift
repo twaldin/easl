@@ -4,7 +4,6 @@ import ImageIO
 import Testing
 @testable import CanvasCore
 
-@MainActor
 private enum PreviewRaster {
     static func image(width: Int, height: Int) throws -> CGImage {
         let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
@@ -26,23 +25,27 @@ private enum PreviewRaster {
     }
 
     static func data(width: Int, height: Int, type: String = "public.png", orientation: Int = 1,
-                     frames: Int = 1, quality: Double = 1) throws -> Data {
-        let image = try image(width: width, height: height)
-        let data = NSMutableData()
-        let destination = try #require(CGImageDestinationCreateWithData(data as CFMutableData, type as CFString, frames, nil))
-        for _ in 0..<frames {
-            CGImageDestinationAddImage(destination, image, [
-                kCGImagePropertyOrientation: orientation,
-                kCGImageDestinationLossyCompressionQuality: quality,
-                kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGDelayTime: 0.1],
-            ] as CFDictionary)
-        }
-        try #require(CGImageDestinationFinalize(destination))
-        return data as Data
+                     frames: Int = 1, quality: Double = 1) async throws -> Data {
+        try await offPool {
+            Result {
+                let image = try image(width: width, height: height)
+                let data = NSMutableData()
+                let destination = try #require(CGImageDestinationCreateWithData(data as CFMutableData, type as CFString, frames, nil))
+                for _ in 0..<frames {
+                    CGImageDestinationAddImage(destination, image, [
+                        kCGImagePropertyOrientation: orientation,
+                        kCGImageDestinationLossyCompressionQuality: quality,
+                        kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGDelayTime: 0.1],
+                    ] as CFDictionary)
+                }
+                try #require(CGImageDestinationFinalize(destination))
+                return data as Data
+            }
+        }.get()
     }
 
-    static func reply() throws -> JSONValue {
-        HostImagePreview(data: try data(width: 64, height: 32), image: try image(width: 64, height: 32), naturalWidth: 640, naturalHeight: 320,
+    static func reply() async throws -> JSONValue {
+        HostImagePreview(data: try await data(width: 64, height: 32), image: try image(width: 64, height: 32), naturalWidth: 640, naturalHeight: 320,
             width: 64, height: 32, version: HostFileVersion(root: "/board", path: "/board/chart.png", stamp: "1:2:100000:4:5")).json
     }
 }
@@ -50,7 +53,7 @@ private enum PreviewRaster {
 extension ApiRouterTests {
     @Test func imagePreviewDownsamplesAspectRatioAndPreservesTransparencyAndVersion() async throws {
         let path = board.root.appendingPathComponent("preview.png")
-        let original = try PreviewRaster.data(width: 640, height: 321)
+        let original = try await PreviewRaster.data(width: 640, height: 321)
         try original.write(to: path)
         let tile = board.create(type: .image, props: .object(["path": "preview.png"]))
         let response = try await call(connect(), "image.preview", ["id": .string(tile.id), "maxPixels": 64])
@@ -76,7 +79,7 @@ extension ApiRouterTests {
     }
 
     @Test func imagePreviewPortraitRoundsItsShortEdgeAndNeverUpscales() async throws {
-        try PreviewRaster.data(width: 201, height: 640).write(to: board.root.appendingPathComponent("portrait.png"))
+        try await PreviewRaster.data(width: 201, height: 640).write(to: board.root.appendingPathComponent("portrait.png"))
         let tile = board.create(type: .image, props: .object(["path": "portrait.png"]))
         let client = try connect()
         let preview = try await call(client, "image.preview", ["id": .string(tile.id), "maxPixels": 64])
@@ -87,7 +90,7 @@ extension ApiRouterTests {
     }
 
     @Test func imagePreviewEncodesJPEGThumbnailsAsPNG() async throws {
-        try PreviewRaster.data(width: 640, height: 320, type: "public.jpeg").write(to: board.root.appendingPathComponent("photo.jpg"))
+        try await PreviewRaster.data(width: 640, height: 320, type: "public.jpeg").write(to: board.root.appendingPathComponent("photo.jpg"))
         let tile = board.create(type: .image, props: .object(["path": "photo.jpg"]))
         let response = try await call(connect(), "image.preview", ["id": .string(tile.id), "maxPixels": 64])
         let result = try #require(response["result"])
@@ -100,11 +103,11 @@ extension ApiRouterTests {
 
     @Test func imagePreviewVersionChangesWithTheSource() async throws {
         let path = board.root.appendingPathComponent("changing.png")
-        try PreviewRaster.data(width: 640, height: 320).write(to: path)
+        try await PreviewRaster.data(width: 640, height: 320).write(to: path)
         let tile = board.create(type: .image, props: .object(["path": "changing.png"]))
         let client = try connect()
         let first = try await call(client, "image.preview", ["id": .string(tile.id), "maxPixels": 64])
-        try PreviewRaster.data(width: 800, height: 400).write(to: path, options: .atomic)
+        try await PreviewRaster.data(width: 800, height: 400).write(to: path, options: .atomic)
         let second = try await call(client, "image.preview", ["id": .string(tile.id), "maxPixels": 64])
         #expect(first["result"]?["kind"] == "preview")
         #expect(second["result"]?["kind"] == "preview")
@@ -116,11 +119,11 @@ extension ApiRouterTests {
 
     @Test func imagePreviewKeepsAnimationOrientationAndUnsupportedFormatsOnOriginalTransport() async throws {
         let fixtures: [(String, Data)] = [
-            ("animated.png", try PreviewRaster.data(width: 640, height: 320, frames: 2)),
-            ("rotated.jpg", try PreviewRaster.data(width: 640, height: 320, type: "public.jpeg", orientation: 6)),
-            ("small.png", try PreviewRaster.data(width: 32, height: 16)),
+            ("animated.png", try await PreviewRaster.data(width: 640, height: 320, frames: 2)),
+            ("rotated.jpg", try await PreviewRaster.data(width: 640, height: 320, type: "public.jpeg", orientation: 6)),
+            ("small.png", try await PreviewRaster.data(width: 32, height: 16)),
             ("vector.svg", Data(#"<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320"/>"#.utf8)),
-            ("compressed.jpg", try PreviewRaster.data(width: 640, height: 320, type: "public.jpeg", quality: 0.01)),
+            ("compressed.jpg", try await PreviewRaster.data(width: 640, height: 320, type: "public.jpeg", quality: 0.01)),
         ]
         let client = try connect()
         for (name, bytes) in fixtures {
@@ -151,7 +154,7 @@ extension ApiRouterTests {
 
     @Test func imagePreviewUsesBoardImageAuthorizationAndByteLimit() async throws {
         let outside = dir.appendingPathComponent("outside.png")
-        try PreviewRaster.data(width: 640, height: 320).write(to: outside)
+        try await PreviewRaster.data(width: 640, height: 320).write(to: outside)
         try FileManager.default.createSymbolicLink(at: board.root.appendingPathComponent("escape.png"), withDestinationURL: outside)
         let client = try connect()
         for path in [outside.path, "../outside.png", "escape.png", "https://example.com/image.png"] {
@@ -212,7 +215,7 @@ private final class ImagePreviewPeer: Sendable {
 @MainActor
 struct HostImagePreviewTests {
     @Test func dedicatedConnectionIsLazySharedByPrioritiesAndClosedWithItsOwner() async throws {
-        let peer = try ImagePreviewPeer(reply: PreviewRaster.reply())
+        let peer = try await ImagePreviewPeer(reply: PreviewRaster.reply())
         let made = Locked(0)
         let retained = Locked<EaslConnection?>(nil)
         let path = peer.path
@@ -244,7 +247,7 @@ struct HostImagePreviewTests {
     }
 
     @Test func explicitOriginalIsTheOnlyNilAndMalformedResponsesNeverFallBack() async throws {
-        let valid = try PreviewRaster.reply()
+        let valid = try await PreviewRaster.reply()
         let peer = try ImagePreviewPeer(reply: valid)
         let files = peer.files()
         #expect(try await files.imagePreview(object: "obj_valid", maxPixels: 64)?.height == 32)
@@ -255,7 +258,7 @@ struct HostImagePreviewTests {
             .object(["naturalWidth": .number(640.5)]), .object(["naturalHeight": 0]), .object(["naturalWidth": 16_000_001]),
             .object(["width": 63]), .object(["height": 33]), .object(["data": "not base64"]),
             .object(["data": .string(Data("not PNG".utf8).base64EncodedString())]),
-            .object(["data": .string(try PreviewRaster.data(width: 32, height: 16).base64EncodedString())]),
+            .object(["data": .string(try await PreviewRaster.data(width: 32, height: 16).base64EncodedString())]),
             .object(["version": .object(["root": "relative", "path": "/board/chart.png", "stamp": "1:2:3:4:5"]) ]),
             .object(["version": .object(["root": "/board", "path": "/board/../chart.png", "stamp": "1:2:3:4:5"]) ]),
             .object(["version": .object(["root": "/board", "path": "/board/chart.png", "stamp": "stale"]) ]),
@@ -270,7 +273,7 @@ struct HostImagePreviewTests {
     }
 
     @Test func serverAndTransportErrorsAreNotOriginalResponses() async throws {
-        let peer = try ImagePreviewPeer(reply: PreviewRaster.reply())
+        let peer = try await ImagePreviewPeer(reply: PreviewRaster.reply())
         let files = peer.files()
         for (code, expected) in [("refused", HostFileError.refused), ("not_found", .notFound(commit: nil)),
                                  ("too_large", .tooLarge(limit: SourceExcerpt.maxFileBytes)), ("unreadable", .unreadable),

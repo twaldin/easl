@@ -111,6 +111,9 @@ final class SocketServerTests {
     }
 
     @Test func timedSendWaitsForEarlierBytesAndItsEntireJSONLine() async throws {
+        // The bounded descriptor-reuse probe needs a process-local fd table without other suites.
+        let isolated = try await runIsolatedTestIfParallel("timedSendWaitsForEarlierBytesAndItsEntireJSONLine")
+        if isolated { return }
         let body = String(repeating: "a", count: 1 << 20)
         let (server, prepared, results) = try backpressured(timeout: 5, reply: .string(body))
         defer { server.stop() }

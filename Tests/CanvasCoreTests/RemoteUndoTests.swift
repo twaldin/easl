@@ -517,8 +517,14 @@ extension BoardMirrorTests {
         #expect(refusal?.hasPrefix("Couldn't") == true)
         #expect(view.nextUndo?.id == recovery && !view.history.canRedo)
         #expect(host.objects[edited.id]?.props["markdown"] == "theirs")
-        server = Self.serve(router, at: socket)
+        let rereadRequested = Locked(false)
+        let router = router
+        server = SocketServer(path: socket) { request, connection in
+            if request["method"]?.string == "board.get" { rereadRequested.withLock { $0 = true } }
+            return await router.handle(request, connection: connection)
+        }
         try server.start()
+        try await eventually { rereadRequested.withLock { $0 } }
         try await eventually { mirror.state == .online && mirror.reading == nil }
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[edited.id]?.props["markdown"] == "mine")

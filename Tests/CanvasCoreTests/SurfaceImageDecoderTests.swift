@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import Testing
 import CanvasCore
 
-@Suite(.serialized)
+@SurfaceHardwareCodec
 struct SurfaceImageDecoderTests {
     private func image(redLeftHalf: Bool = false, width: Int = 65, height: Int = 67,
                        noise: Bool = false) throws -> CGImage {
@@ -116,6 +116,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func rejectedRefreshBoundariesLeavePublishedReferenceUsable() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("rejectedRefreshBoundariesLeavePublishedReferenceUsable") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let sharp = try #require(try encoder.encode(image(), width: 65, height: 67, refresh: true))

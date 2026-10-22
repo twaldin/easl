@@ -4,7 +4,7 @@ import ImageIO
 import Testing
 @testable import CanvasCore
 
-@Suite(.serialized)
+@SurfaceHardwareCodec
 struct SurfaceImageEncoderTests {
     private final class RefreshQueue {
         let queue = DispatchQueue(label: "easl.tests.surface.refresh")
@@ -317,6 +317,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()

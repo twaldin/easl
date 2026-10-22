@@ -263,6 +263,9 @@ struct HostImagePreviewSchedulingTests {
     }
 
     @Test func wireTimeoutUsesOnlyTheDeadlineRemainingAfterQueueing() async throws {
+        // Preserve the two-second wire deadline without sharing other suites' main-actor backlog.
+        let isolated = try await runIsolatedTestIfParallel("wireTimeoutUsesOnlyTheDeadlineRemainingAfterQueueing")
+        if isolated { return }
         let peer = try PreviewQueuePeer()
         let pool = peer.pool()
         let active = await start("active", pool: pool)
