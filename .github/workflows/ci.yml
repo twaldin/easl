@@ -7,6 +7,12 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.multiplier }}x cores)
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        multiplier: [1, 2, 4]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
@@ -25,7 +31,10 @@ jobs:
         run: |
           swift --version
           bun --version
-          swift run -j 2 CanvasCoreTests
+          cores=$(sysctl -n hw.ncpu)
+          width=$((cores * ${{ matrix.multiplier }}))
+          printf 'hw.ncpu: %s\nCore parallelization width: %s\n' "$cores" "$width"
+          swift run -j 2 CanvasCoreTests --experimental-maximum-parallelization-width "$width"
       - name: Native composer editing regression
         run: |
           swift build --build-system native -j 2 --product Easl
