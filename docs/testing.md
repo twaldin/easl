@@ -540,6 +540,18 @@ It also checks parallel first previews, cancelled and zero-delta drags, unchange
 Held shapes and unfilled group members route at their displayed geometry; group flow responds to membership changes without a frame change.
 It creates disposable boards without terminal workers. Pair it with a displayed 1,000-object opening trace to verify that immediate `board.get` polling does not run obstacle routing on the main thread.
 
+#### Native application icon regression
+
+In a claimed GUI guest, link the icon regression against the real testing-enabled app:
+
+```sh
+swift build --build-system native -j 2 --product Easl
+python3 Tests/ApplicationIcon/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The regression renders distinct 1x and 2x icon artwork through `applicationIconImage`, replaces the icon, and resets it to the bundle icon. Pair it with a separately sampled board open to check the native-tab CoreUI readback path. The image regression does not measure main-thread stalls.
+
+
 ### Remote boards
 
 To test File › Open Remote… against another development instance on this Mac, run a private sshd in a scratch directory without changing `~/.ssh`.

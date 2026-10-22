@@ -39,6 +39,8 @@ jobs:
         run: python3 Tests/TerminalEcho/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native initial arrow routing regression
         run: python3 Tests/InitialRouting/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native application icon rendering regression
+        run: python3 Tests/ApplicationIcon/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native Move Escape regression
         run: python3 Tests/MoveEscape/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native browser initial admission regression

@@ -6,6 +6,17 @@ final class CanvasApplication: NSApplication {
     static let neverActivate = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] == "1"
     private(set) static var replayWindow: NSWindow?
 
+    // Native tabs need the decoded representations, not the superclass getter's Dock snapshot.
+    private var installedIcon: NSImage?
+
+    override var applicationIconImage: NSImage! {
+        get { installedIcon ?? super.applicationIconImage }
+        set {
+            super.applicationIconImage = newValue
+            installedIcon = newValue
+        }
+    }
+
     override func activate(ignoringOtherApps flag: Bool) {
         if !Self.neverActivate { super.activate(ignoringOtherApps: flag) }
     }

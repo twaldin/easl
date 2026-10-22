@@ -124,7 +124,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
                     representation.size = pixels.size
                     image.addRepresentation(representation)
                 }
-                // Native tabs use this public application image; pixel-equal 1x/2x reps keep their point sizes.
+                // CanvasApplication retains these representations for native tabs; AppKit still sets the Dock image.
                 NSApp.applicationIconImage = image
             }
         case let .failure(error):

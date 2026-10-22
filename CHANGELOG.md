@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Keep the decoded application icon for native tabs instead of reading back a large Dock snapshot when a board opens.
 - Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.
