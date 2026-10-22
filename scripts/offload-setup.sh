@@ -14,7 +14,7 @@
 #
 # easld then has to run as a system unit in the host's capped slice (easld/packaging/linux/
 # easld@.service), so the tiles' sessions it starts stay there: the script prints that unit for
-# the host's administrator and never installs it. Needs on the host: bun and nc (OpenBSD's, for
+# the host's administrator and never installs it. Needs on the host: Bun 1.4.3+ and nc (OpenBSD's, for
 # `nc -U`); on this Mac: go, curl, ssh.
 #
 #   EASL_RESOURCES=<dir>   take easl's files from <dir> (an app's Contents/Resources) instead of

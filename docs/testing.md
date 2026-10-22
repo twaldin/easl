@@ -210,7 +210,7 @@ On `twaldin-home`, run every development or test GUI step inside `agent-gui`, in
 Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md` for the tested claim, guest setup, proof, export, and cleanup commands. If that recipe is absent, GUI proof is not ready. Do not substitute a host launch.
 Use the project-local [verify-easl skill](../.agents/skills/verify-easl/SKILL.md) for guest launch, ownership checks, native feature journeys, retained evidence, and cleanup.
 
-The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, bun, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
+The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, Bun 1.4.3 or later, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
 
 In `agent-gui`, use the already-authorized CuaDriver with both the dev process PID and its window ID, as the recipe shows. Capture before and after a visible change, then inspect both PNGs for changed terminal output and advancing HTML or browser content. A new file or in-process `view.snapshot` is not GUI proof. Do not pursue a native SSH Screen Recording grant.
 

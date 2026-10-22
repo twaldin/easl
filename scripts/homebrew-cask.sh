@@ -57,7 +57,7 @@ cask "easl" do
   ]
 
   caveats <<~CAVEATS
-    Terminal tiles need zmx; the easl CLI and agent integrations need bun:
+    Terminal tiles need zmx; the easl CLI, agent integrations, and host-file helpers need Bun 1.4.3 or later:
       brew install neurosnap/tap/zmx oven-sh/bun/bun
 
     For omp, link easl's extension:

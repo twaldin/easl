@@ -175,7 +175,7 @@ scripts/dev.sh input state
 EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"
 ```
 
-Require the remote tab's expected root, real shell output, and advancing HTML and browser counters in native pixels. The guest account must have macOS 14+, CLT, Python, Bun, Go, and zmx 0.8.1. A missing tool or failed loopback check is a failed prerequisite, not a reason to use a production host.
+Require the remote tab's expected root, real shell output, and advancing HTML and browser counters in native pixels. The guest account must have macOS 14+, CLT, Python, Bun 1.4.3+, Go, and zmx 0.8.1. A missing tool or failed loopback check is a failed prerequisite, not a reason to use a production host.
 
 After any restart, remote open, or tab switch, refresh the PID, signed hash, and selected window identity before more input. Read the selected tab from `input state` and run Doctor for that window. Each native tab has its own window ID; an old background tab can still accept explicitly targeted input.
 
