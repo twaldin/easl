@@ -176,6 +176,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("settledRefreshReplacesTheOddCanvasOnceAndBecomesTheLiveReference") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()

@@ -56,6 +56,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func refreshBecomesTheReferenceForNativeSizePredictedFrames() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("refreshBecomesTheReferenceForNativeSizePredictedFrames") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let source = try image()
@@ -151,6 +153,8 @@ struct SurfaceImageDecoderTests {
     }
 
     @Test func malformedRefreshInvalidatesPredictionUntilIndependentKeyframe() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("malformedRefreshInvalidatesPredictionUntilIndependentKeyframe") { return }
         let encoder = SurfaceVideoEncoder()
         let video = SurfaceVideoDecoder()
         let sharp = try #require(try encoder.encode(image(), width: 65, height: 67, refresh: true))
