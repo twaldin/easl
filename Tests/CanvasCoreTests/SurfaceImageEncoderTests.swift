@@ -448,6 +448,8 @@ struct SurfaceImageEncoderTests {
     }
 
     @Test func changesConfinedToOnePercentDoNotRepeatedlyRefresh() throws {
+        // Keep the prediction-only fixture independent of the full runner's codec lifetime.
+        if try runIsolatedTestIfParallelNow("changesConfinedToOnePercentDoNotRepeatedlyRefresh") { return }
         let work = RefreshQueue()
         let encoder = SurfaceImageEncoder(refreshQueue: work.queue)
         let revision = SurfaceInputRevision()

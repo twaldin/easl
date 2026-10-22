@@ -31,7 +31,7 @@ The following named tests use isolated child processes while the rest of Core st
 - `wireTimeoutUsesOnlyTheDeadlineRemainingAfterQueueing` retains its two-second wire deadline and 500 ms completion bound.
 - `timedSendWaitsForEarlierBytesAndItsEntireJSONLine` owns the descriptor table for its bounded descriptor-reuse probe.
 - `anotherHomesStartupKeepsAReadyCopyForAsLongAsItsLeaseIsHeld` checks immediate lease release without concurrent process launches.
-- `rejectedRefreshBoundariesLeavePublishedReferenceUsable` and `acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes` keep prediction-only fixtures independent of the full runner's codec lifetime.
+- `rejectedRefreshBoundariesLeavePublishedReferenceUsable`, `acknowledgedSharpReferenceRemainsPredictiveWhenInputResumes`, and `changesConfinedToOnePercentDoNotRepeatedlyRefresh` keep prediction-only fixtures independent of the full runner's codec lifetime.
 - `persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters` measures its three-second file-read bound without unrelated main-actor fixture work.
 - `filesRequestedTogetherShareOneGitDiff` admits its three requests without unrelated executor work splitting the 20 ms batch window.
 - `theFirstSocketHandshakeGoesOnlineWhileGlobalWorkersAreBlocked` deliberately blocks the global worker pool.
