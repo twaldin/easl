@@ -682,6 +682,19 @@ struct RemoteHtmlChannelTests {
         #expect(unknownCode.props == .object(["path": "file.txt", "ref": "unknown"]))
     }
 
+    @Test func sendsAreUnsupportedOnRemoteBoards() async throws {
+        let fixture = try HostFileFixture()
+        let host = HtmlTestHost()
+        let board = Board(remote: "brd_remote", root: fixture.root, host: host)
+        let html = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]))
+        host.writes.removeAll()
+
+        await #expect(throws: HtmlError.unavailable("canvasKit.send is unsupported on remote boards")) {
+            try await HtmlChannel.handle(.send(payload: .string("x")), tile: html.id, board: board)
+        }
+        #expect(host.writes.isEmpty)
+    }
+
     /// A page measured before its tile exists (`Board.measuring`) reads the host's files as its
     /// tile will, under its own root, and nothing it does reaches the board's host.
     @Test func aPageMeasuredBeforeItsTileExistsReadsUnderItsOwnRoot() async throws {

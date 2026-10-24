@@ -992,8 +992,8 @@ export type AgentMessage = {
   /** as the sender wrote it */
   text: string;
   from: MessageSender;
-  /** agent: a terminal sent it (`caller`); user: a script with no tile (its `from` label), on the user's behalf */
-  attribution: "agent" | "user";
+  /** agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`); user: a script with no tile (its `from` label), on the user's behalf */
+  attribution: "agent" | "user" | "html";
   /** now: into the running turn (a steer) or a new turn when idle; next-turn: never into a running turn, only once it has ended */
   when: "now" | "next-turn";
   queuedAt: string;
@@ -1005,13 +1005,15 @@ export type AgentMessage = {
 
 /** Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name */
 export type MessageSender = {
-  /** the sending terminal; absent for a script */
+  /** the sending terminal; absent for a script or an HTML tile */
   tile?: Id;
-  /** the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), or the script's `from` label (default `script`) */
+  /** the sending HTML tile (canvasKit.send); its `name` is the tile's title and it has no `address`: its agent updates the tile through object.update with this id */
+  html?: Id;
+  /** the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), the HTML tile's title (else `HTML`), or the script's `from` label (default `script`) */
   name: string;
-  /** where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script (nothing to reply to) */
+  /** where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script or an HTML tile (nothing to address a prompt to) */
   address?: string;
-  /** the sending terminal's board */
+  /** the sending terminal's or HTML tile's board */
   board?: Id;
 };
 

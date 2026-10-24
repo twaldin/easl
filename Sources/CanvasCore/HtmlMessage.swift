@@ -14,6 +14,8 @@ public enum HtmlMessage: Equatable, Sendable {
     case setState(key: String, value: JSONValue)
     /// The page finished (re)rendering or scrolling; the tile refreshes its snapshot.
     case rendered(scrollY: Double?)
+    /// `canvasKit.send(payload)`: hand a JSON value to the agent terminal that created the tile.
+    case send(payload: JSONValue)
 
     public static let maxMessageBytes = 64 * 1024
     public static let maxStateValueBytes = 16 * 1024
@@ -27,6 +29,7 @@ public enum HtmlMessage: Equatable, Sendable {
         "state.get": ["key"],
         "state.set": ["key", "value"],
         "view.rendered": ["scrollY"],
+        "send": ["payload"],
     ]
 
     /// Parses the serialized message body. The size cap applies before any decoding.
@@ -55,6 +58,10 @@ public enum HtmlMessage: Equatable, Sendable {
             let size = (try? JSONEncoder().encode(value).count) ?? Int.max
             guard size <= maxStateValueBytes else { throw HtmlError.tooLarge(size, limit: maxStateValueBytes) }
             return .setState(key: try key(object), value: value)
+        case "send":
+            guard let payload = object["payload"] else { throw HtmlError.invalidField("payload", "required") }
+            try checkPayload(payload)
+            return .send(payload: payload)
         default:
             guard let raw = object["scrollY"] else { return .rendered(scrollY: nil) }
             guard let y = raw.number, y.isFinite, y >= 0, y <= 10_000_000 else { throw HtmlError.invalidField("scrollY", "must be a number between 0 and 10000000") }
@@ -101,6 +108,13 @@ public enum HtmlMessage: Equatable, Sendable {
             throw HtmlError.invalidField("key", "must be 1-128 characters of [A-Za-z0-9_.:-]")
         }
         return key
+    }
+
+    /// A send payload is any JSON value, bounded by the message cap: the transport already caps
+    /// the body a page builds, and a message constructed in code is checked here.
+    static func checkPayload(_ payload: JSONValue) throws {
+        let size = (try? JSONEncoder().encode(payload).count) ?? Int.max
+        guard size <= maxMessageBytes else { throw HtmlError.tooLarge(size, limit: maxMessageBytes) }
     }
 }
 

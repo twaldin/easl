@@ -97,6 +97,13 @@
       if (symbol) message.symbol = symbol;
       return post(message);
     },
+    // Hands `payload` (any JSON value, at most 64 KiB) to the agent terminal that created this
+    // tile: it arrives as a message naming the tile (id, title), out of band. Resolves with
+    // {terminal, message} once queued, else rejects with the refusal (the tile's creator was the
+    // user, is gone, or takes no messages).
+    send(payload) {
+      return post({ type: 'send', payload: payload === undefined ? null : payload });
+    },
     async getState(key) {
       const all = await loadState();
       return key === undefined ? all : all[key];
