@@ -343,7 +343,7 @@ final class HtmlTile: NSView, TileContent {
             case .getState(let key):
                 // The page being rendered or measured is this object's (which may not be on the board yet).
                 return HtmlChannel.state(object.props, key: key)
-            case .openCode, .setState:
+            case .openCode, .setState, .send:
                 throw HtmlError.malformed("not available while the page renders offscreen")
             default:
                 break

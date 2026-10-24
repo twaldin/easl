@@ -96,6 +96,23 @@ final class AgentMessageTests {
         #expect(typed.isEmpty)
     }
 
+    @Test func anHtmlPagesSendReachesItsCreatingTerminalsInboxAsThePagesMessage() async throws {
+        let host = terminal("page-host")
+        try omp(host, .idle, seq: 1)
+        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: host)
+        let integration = try connect()
+        integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(host)","waitMs":5000}}"#)
+        integration.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await integration.next()["id"] == .string("ping"), "nothing waits yet")
+
+        _ = try await HtmlChannel.handle(.send(payload: .object(["answer": .string("b")])), tile: page.id, board: board)
+        let polled = try await integration.next()
+        let message = try #require(polled["result"]?["messages"]?.array?.first, "\(polled)")
+        #expect(message["attribution"] == .string("html") && message["when"] == .string("now"))
+        #expect(message["from"] == .object(["html": .string(page.id), "name": .string("Quiz"), "board": .string(board.id)]))
+        #expect(message["text"] == .string("HTML tile \(page.id) \"Quiz\" sent:\n{\"answer\":\"b\"}"))
+    }
+
     @Test func aScriptsMessageIsTheUsersAndALongPollTakesItAsItArrives() async throws {
         let reviewer = terminal("reviewer"), lead = terminal("lead")
         try omp(reviewer, .working, seq: 1)

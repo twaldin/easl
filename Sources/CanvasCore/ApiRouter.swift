@@ -18,6 +18,8 @@ public final class BoardRegistry {
     var routerHook: ((Board, BoardEvent) -> Void)?
     /// The router's handler of messages that bounced on any open board (`Board.onMessagesBounced`).
     var messagesBounced: ((Board, MessageBounce) -> Void)?
+    /// The router's handler of messages queued for a terminal on any open board (`Board.onMessageQueued`).
+    var messageQueued: ((Board, ObjectID) -> Void)?
     var didClose: ((Board) -> Void)?
     var terminalsEnded: (([CanvasObject]) -> Void)?
     /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`), as they last
@@ -93,6 +95,10 @@ public final class BoardRegistry {
         board.onMessagesBounced = { [weak self, weak board] bounce in
             guard let self, let board else { return }
             self.messagesBounced?(board, bounce)
+        }
+        board.onMessageQueued = { [weak self, weak board] tile in
+            guard let self, let board else { return }
+            self.messageQueued?(board, tile)
         }
         board.hostMachine = drawingMachine
         board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter
@@ -388,6 +394,7 @@ public final class ApiRouter {
         self.registry = registry
         registry.routerHook = { [weak self] board, event in self?.observe(event, on: board) }
         registry.messagesBounced = { [weak self] board, bounce in self?.bounce(bounce, on: board) }
+        registry.messageQueued = { [weak self] board, tile in self?.serveInbox(tile, on: board) }
         registry.didClose = { [weak self] board in self?.closed(board) }
         registry.terminalsEnded = { [weak self] ended in self?.terminalsEnded(ended) }
     }
@@ -1065,7 +1072,6 @@ public final class ApiRouter {
         let message = AgentMessage(id: id ?? IDs.make("msg"), text: text, from: sender, label: label, when: when, mentions: attached)
         try board.queueMessage(message, to: terminal.id)
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
-        serveInbox(terminal.id, on: board)
         return try messageResult(message, to: current, on: board, duplicate: false)
     }
 
