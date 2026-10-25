@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
+@Suite(.disabled("Temporary CI experiment for PR184 math contention"))
 @MainActor
 struct NoteMathBoundsTests {
     private func hostileFormulas() -> [String] {

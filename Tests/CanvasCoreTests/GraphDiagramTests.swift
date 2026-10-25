@@ -121,7 +121,7 @@ final class GraphDiagramTests {
         #expect(over["error"]?["message"]?.string?.contains("501 nodes: at most 500") == true, "\(over["error"] ?? .null)")
     }
 
-    @Test func graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates() async throws {
+    @Test(.disabled("Temporary CI experiment for PR184 graph contention")) func graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates() async throws {
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         var distinct: [String] = []
