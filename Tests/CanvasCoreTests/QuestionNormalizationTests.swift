@@ -27,6 +27,8 @@ struct QuestionNormalizationTests {
     }
 
     @Test func snapshotAndRemoteAnswersAreNormalized() throws {
+        Run6Trace.event("body.enter", "selector=QuestionNormalizationTests/snapshotAndRemoteAnswersAreNormalized")
+        defer { Run6Trace.event("body.exit", "selector=QuestionNormalizationTests/snapshotAndRemoteAnswersAreNormalized") }
         for value in [1e100, Double.nan, -1, Double.infinity, -Double.infinity, 0.8] {
             let snapshot = fixture(value)
             let expected: Double? = value == 0.8 ? 0.8 : nil
@@ -52,6 +54,8 @@ struct QuestionNormalizationTests {
     }
 
     @Test func boardFileAnswersAreNormalizedAndNaNIsRejected() throws {
+        Run6Trace.event("body.enter", "selector=QuestionNormalizationTests/boardFileAnswersAreNormalizedAndNaNIsRejected")
+        defer { Run6Trace.event("body.exit", "selector=QuestionNormalizationTests/boardFileAnswersAreNormalizedAndNaNIsRejected") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -69,6 +73,8 @@ struct QuestionNormalizationTests {
     }
 
     @Test func percentNeverConvertsInvalidConfidenceToAnInteger() {
+        Run6Trace.event("body.enter", "selector=QuestionNormalizationTests/percentNeverConvertsInvalidConfidenceToAnInteger")
+        defer { Run6Trace.event("body.exit", "selector=QuestionNormalizationTests/percentNeverConvertsInvalidConfidenceToAnInteger") }
         for value in [1e100, Double.nan, -1, Double.infinity, -Double.infinity, Double.greatestFiniteMagnitude] {
             #expect(QuestionSpec.percent(value) == "—")
         }

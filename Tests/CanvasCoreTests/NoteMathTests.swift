@@ -19,6 +19,8 @@ struct NoteMathTests {
     }
 
     @Test func inlineMathTypesetsAsMath() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/inlineMathTypesetsAsMath")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/inlineMathTypesetsAsMath") }
         let text = render(#"The identity $e^{i\pi} + 1 = 0$ holds."#)
         let pictures = math(text)
         #expect(pictures.count == 1)
@@ -29,6 +31,8 @@ struct NoteMathTests {
     }
 
     @Test func currencyAndEscapedDollarsStayProse() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/currencyAndEscapedDollarsStayProse")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/currencyAndEscapedDollarsStayProse") }
         let text = render(#"Costs $5 and $10; a literal \$ and $x$ after it."#)
         #expect(math(text).count == 1)
         #expect(text.string.contains("$5 and $10"))
@@ -36,6 +40,8 @@ struct NoteMathTests {
     }
 
     @Test func displayMathStandsOnItsOwnCenteredLine() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/displayMathStandsOnItsOwnCenteredLine")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/displayMathStandsOnItsOwnCenteredLine") }
         let text = render(#"""
         Before.
 
@@ -55,6 +61,8 @@ struct NoteMathTests {
     }
 
     @Test func blockquoteDisplayMathDoesNotTypesetContainerMarkers() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/blockquoteDisplayMathDoesNotTypesetContainerMarkers")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/blockquoteDisplayMathDoesNotTypesetContainerMarkers") }
         let latex = #"\frac{x}{y} > \sqrt{2}"#
         let expected = try #require(math(render("$$\n" + latex + "\n$$")).first)
         for prefix in ["> ", "> > "] {
@@ -71,6 +79,8 @@ struct NoteMathTests {
     }
 
     @Test func blockquoteDisplayFallbackRetainsFormulaWithoutQuoteMarkers() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/blockquoteDisplayFallbackRetainsFormulaWithoutQuoteMarkers")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/blockquoteDisplayFallbackRetainsFormulaWithoutQuoteMarkers") }
         let formula = #"\notarealcommand{x > y}"#
         let text = render("> $$\n> " + formula + "\n> $$")
         #expect(math(text).isEmpty)
@@ -78,6 +88,8 @@ struct NoteMathTests {
     }
 
     @Test func codeSpansAndFencesAreNeverMath() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/codeSpansAndFencesAreNeverMath")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/codeSpansAndFencesAreNeverMath") }
         let text = render(#"""
         Use `$x^2$` and `$$y$$`.
 
@@ -92,6 +104,8 @@ struct NoteMathTests {
     }
 
     @Test func unparsableLatexKeepsItsSourceInMonospace() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/unparsableLatexKeepsItsSourceInMonospace")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/unparsableLatexKeepsItsSourceInMonospace") }
         let markdown = #"Broken $\notarealcommand{x}$ here."#
         let text = render(markdown)
         #expect(math(text).isEmpty)
@@ -103,6 +117,8 @@ struct NoteMathTests {
     }
 
     @Test func measuredNoteFitsTheMathItDraws() {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/measuredNoteFitsTheMathItDraws")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/measuredNoteFitsTheMathItDraws") }
         let markdown = #"""
         $$
         \frac{a}{b}
@@ -114,6 +130,8 @@ struct NoteMathTests {
     }
 
     @Test func ampersandHeavyProsePreservesEveryCharacter() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/ampersandHeavyProsePreservesEveryCharacter")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/ampersandHeavyProsePreservesEveryCharacter") }
         let raw = String(repeating: "&", count: 2_000_000)
         let text = try #require(NoteMath.text(raw: raw, decoded: raw))
         #expect(String(text.characters) == raw)
@@ -122,6 +140,8 @@ struct NoteMathTests {
     }
 
     @Test func boundedEntitiesKeepTheirDecodedTextAndMathSource() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathTests/boundedEntitiesKeepTheirDecodedTextAndMathSource")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathTests/boundedEntitiesKeepTheirDecodedTextAndMathSource") }
         let raw = #"&amp; &lt; &gt; &quot; &apos; &#36;x&#x24; \$"#
         let text = try #require(NoteMath.text(raw: raw, decoded: "& < > \" ' $x$ $"))
         #expect(String(text.characters) == "& < > \" ' $x$ $")

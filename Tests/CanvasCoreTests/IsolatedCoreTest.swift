@@ -27,8 +27,16 @@ private func isolatedCoreTest(_ name: String) throws -> (Int32, String) {
     let output = Pipe()
     process.standardOutput = output
     process.standardError = output
+    Run6Trace.event("child.spawn.begin", "selector=\(name)")
     try process.run()
+    Run6Trace.event("child.spawned", "selector=\(name) child_pid=\(process.processIdentifier)")
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    Run6Trace.event("child.exited", "selector=\(name) child_pid=\(process.processIdentifier) status=\(process.terminationStatus) reason=\(process.terminationReason.rawValue)")
+    let text = String(decoding: data, as: UTF8.self)
+    // Child output stays captured for the existing assertion. Replay only bounded trace records.
+    for line in text.split(separator: "\n") where line.hasPrefix("RUN6_TRACE ") && line.utf8.count < 1024 {
+        Run6Trace.emit(String(line))
+    }
+    return (process.terminationStatus, text)
 }

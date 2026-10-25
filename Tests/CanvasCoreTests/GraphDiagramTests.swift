@@ -38,6 +38,8 @@ final class GraphDiagramTests {
     static let reasoningProps = #" {"kind":"graph","title":"Why the cache lies","knowledge":{ "nodes":[ {"id":"cold","label":"Tests fail on a cold start","detail":"The first read after launch returns an empty cache.","sources":[{"session":"sess-1"}],"status":"weak"}, {"id":"stale","label":"The cache keeps a stale stamp","detail":"**Root cause**: the stamp is written before the read.","sources":[{"message":"m-9"}],"status":"taught"}, {"id":"fix","label":"Write the stamp after the read","sources":[{"tile":"obj_term"}],"status":"practiced"}, {"id":"verify","label":"Cold-start tests pass","status":"retained"} ], "edges":[ {"from":"cold","to":"stale","label":"observed by"}, {"from":"stale","to":"fix","label":"fixed by"}, {"from":"fix","to":"verify","label":"verified by"} ] }}"#
 
     @Test func callerGraphsGetReasoningLevelsAndKeepDetailSourcesAndStatus() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/callerGraphsGetReasoningLevelsAndKeepDetailSourcesAndStatus")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/callerGraphsGetReasoningLevelsAndKeepDetailSourcesAndStatus") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let created = try await call(client, "1", "object.create", #"{"type":"diagram","props":\#(Self.reasoningProps)}"#)
@@ -63,6 +65,8 @@ final class GraphDiagramTests {
 
     /// Each rule a caller's graph must keep is named by the refusal, in the caller's own terms.
     @Test func invalidGraphsAreRefusedWithTheRuleTheyBreak() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/invalidGraphsAreRefusedWithTheRuleTheyBreak")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/invalidGraphsAreRefusedWithTheRuleTheyBreak") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let cases: [(props: String, rule: String)] = [
@@ -87,6 +91,8 @@ final class GraphDiagramTests {
     /// Levels are only required where they would have to be computed: a cycle drawn on purpose is
     /// accepted when every node says its level.
     @Test func anExplicitlyLevelledCycleIsAccepted() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/anExplicitlyLevelledCycleIsAccepted")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/anExplicitlyLevelledCycleIsAccepted") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let props = #"{"kind":"graph","knowledge":{"nodes":[{"id":"a","label":"A","level":0},{"id":"b","label":"B","level":1}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}}"#
@@ -106,6 +112,8 @@ final class GraphDiagramTests {
     /// A knowledge graph is authored on purpose, so it may be far larger than a calls graph: up to
     /// 500 nodes, and not one more.
     @Test func theNodeCapIsFiveHundred() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/theNodeCapIsFiveHundred")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/theNodeCapIsFiveHundred") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let atCap = try await call(client, "1", "object.create",
@@ -122,6 +130,8 @@ final class GraphDiagramTests {
     }
 
     @Test func graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/graphEdgeLimitsRejectTenThousandDuplicatesAndPreserveRefusedUpdates") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         var distinct: [String] = []
@@ -159,6 +169,8 @@ final class GraphDiagramTests {
     }
 
     @Test func graphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/graphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/graphDuplicateEdgesUseDirectedEndpointsRegardlessOfLabel") }
         let nodes: [JSONValue] = [
             .object(["id": "a", "label": "A", "level": 0]),
             .object(["id": "b", "label": "B", "level": 1]),
@@ -203,6 +215,8 @@ final class GraphDiagramTests {
     }
 
     @Test func graphTextLimitsCountUTF8BytesAndKeepBoundaryText() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/graphTextLimitsCountUTF8BytesAndKeepBoundaryText")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/graphTextLimitsCountUTF8BytesAndKeepBoundaryText") }
         let fields: [(String, Int, String)] = [
             ("id", 256, "props.knowledge.nodes[0].id"),
             ("label", 512, "props.knowledge.nodes[0].label"),
@@ -238,6 +252,8 @@ final class GraphDiagramTests {
     }
 
     @Test func graphSourceCountsAndValidationOrderAreBounded() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/graphSourceCountsAndValidationOrderAreBounded")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/graphSourceCountsAndValidationOrderAreBounded") }
         let source: JSONValue = .object(["session": "s", "message": "m", "board": "b", "tile": "t"])
         let node: JSONValue = .object(["id": "a", "label": "A", "sources": .array(Array(repeating: source, count: 8))])
         let accepted = DiagramSpec.graph(Self.boundedGraphProps(nodes: [node]))
@@ -258,6 +274,8 @@ final class GraphDiagramTests {
     /// What practice shows feeds back as a node's status through `object.update`; a reload is a
     /// no-op success that neither recomputes nor overwrites the caller's graph.
     @Test func practiceStatusFeedsBackThroughObjectUpdateAndReloadKeepsTheGraph() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/practiceStatusFeedsBackThroughObjectUpdateAndReloadKeepsTheGraph")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/practiceStatusFeedsBackThroughObjectUpdateAndReloadKeepsTheGraph") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let created = try await call(client, "1", "object.create", #"{"type":"diagram","props":\#(Self.reasoningProps)}"#)
@@ -283,6 +301,8 @@ final class GraphDiagramTests {
     /// A fitted graph grows to its reasoning levels: four levels are four columns, whatever the
     /// code-measuring path would say about a graph with no symbols.
     @Test func aFittedGraphDiagramSizesToItsDeepestLevel() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/aFittedGraphDiagramSizesToItsDeepestLevel")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/aFittedGraphDiagramSizesToItsDeepestLevel") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let created = try await call(client, "1", "object.create", #"{"type":"diagram","size":"fit","props":\#(Self.reasoningProps)}"#)
@@ -293,6 +313,8 @@ final class GraphDiagramTests {
     }
 
     @Test func measurementKeepsDiagramKindsAndValidationErrorsSeparate() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/measurementKeepsDiagramKindsAndValidationErrorsSeparate")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/measurementKeepsDiagramKindsAndValidationErrorsSeparate") }
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         let cases = [
@@ -308,6 +330,8 @@ final class GraphDiagramTests {
     }
 
     @Test func graphLevelsRejectUnsafeNumbersAndKeepExactBoundaries() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/graphLevelsRejectUnsafeNumbersAndKeepExactBoundaries")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/graphLevelsRejectUnsafeNumbersAndKeepExactBoundaries") }
         let upper = Double(Int.max).nextDown
         for raw in [1e300, -1e300, 1.5, Double.nan, Double.infinity, -1, Double(Int.max)] {
             let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: [
@@ -326,6 +350,8 @@ final class GraphDiagramTests {
     }
 
     @Test func sparseExtremeLevelsUseOnlyOccupiedColumnsAndSafeArrowArithmetic() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/sparseExtremeLevelsUseOnlyOccupiedColumnsAndSafeArrowArithmetic")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/sparseExtremeLevelsUseOnlyOccupiedColumnsAndSafeArrowArithmetic") }
         for raw in [1e18, Double(Int.max).nextDown] {
             let result = DiagramSpec.graph(Self.boundedGraphProps(nodes: [
                 .object(["id": "a", "label": "A", "level": 0]),
@@ -341,6 +367,8 @@ final class GraphDiagramTests {
     }
 
     @Test func oldRefreshKeepsKnowledgeThroughSaveAndHeadReload() async throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/oldRefreshKeepsKnowledgeThroughSaveAndHeadReload")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/oldRefreshKeepsKnowledgeThroughSaveAndHeadReload") }
         let (board, _, server, client) = try await api()
         defer { server.stop() }
         let created = try await call(client, "create", "object.create", #"{"type":"diagram","props":\#(Self.reasoningProps)}"#)
@@ -372,6 +400,8 @@ final class GraphDiagramTests {
     }
 
     @Test func corruptedKnowledgeNeverFallsBackToLegacyGraph() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/corruptedKnowledgeNeverFallsBackToLegacyGraph")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/corruptedKnowledgeNeverFallsBackToLegacyGraph") }
         let graph = try #require(DiagramSpec.graph(Self.boundedGraphProps(nodes: [
             .object(["id": "a", "label": "A"]),
         ])).graph)
@@ -387,6 +417,8 @@ final class GraphDiagramTests {
     }
 
     @Test func repositoryRerootKeepsAuthoredIDsAndBoundArrows() throws {
+        Run6Trace.event("body.enter", "selector=GraphDiagramTests/repositoryRerootKeepsAuthoredIDsAndBoundArrows")
+        defer { Run6Trace.event("body.exit", "selector=GraphDiagramTests/repositoryRerootKeepsAuthoredIDsAndBoundArrows") }
         let board = Board(id: "brd_graph", root: dir)
         let graph = try #require(DiagramSpec.graph(Self.boundedGraphProps(nodes: [
             .object(["id": "claim#one", "label": "A", "detail": "Keep me", "status": "weak",

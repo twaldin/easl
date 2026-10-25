@@ -152,6 +152,8 @@ final class QuestionTests {
     }
 
     @Test func answeringStampsWhetherThePickIsTheCorrectOption() async throws {
+        Run6Trace.event("body.enter", "selector=QuestionTests/answeringStampsWhetherThePickIsTheCorrectOption")
+        defer { Run6Trace.event("body.exit", "selector=QuestionTests/answeringStampsWhetherThePickIsTheCorrectOption") }
         let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
         let right = try await question(["asker": .null, "correct": "now"], caller: asker)
         try board.answerQuestion(right.id, option: "now", note: nil)
@@ -162,6 +164,8 @@ final class QuestionTests {
     }
 
     @Test func anAnswerRecordsHowSureTheUserWasWhenTheQuestionAsks() async throws {
+        Run6Trace.event("body.enter", "selector=QuestionTests/anAnswerRecordsHowSureTheUserWasWhenTheQuestionAsks")
+        defer { Run6Trace.event("body.exit", "selector=QuestionTests/anAnswerRecordsHowSureTheUserWasWhenTheQuestionAsks") }
         let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
         let asked = try await question(["asker": .null, "askConfidence": .bool(true)], caller: asker)
         try board.answerQuestion(asked.id, option: "now", note: nil, confidence: 0.8)
@@ -180,6 +184,8 @@ final class QuestionTests {
     }
 
     @Test func gradingPropsAreValidatedByTheirOwnRulesAndSizeTheTile() async throws {
+        Run6Trace.event("body.enter", "selector=QuestionTests/gradingPropsAreValidatedByTheirOwnRulesAndSizeTheTile")
+        defer { Run6Trace.event("body.exit", "selector=QuestionTests/gradingPropsAreValidatedByTheirOwnRulesAndSizeTheTile") }
         let base: [String: JSONValue] = ["question": "Q?", "options": Self.options, "asker": .object(["name": "cos"])]
         func refused(_ change: [String: JSONValue]) async throws -> String? {
             var props = base
@@ -198,6 +204,8 @@ final class QuestionTests {
     }
 
     @Test func theAnswersMentionSaysWhetherThePickWasRightAndHowSureTheUserWas() async throws {
+        Run6Trace.event("body.enter", "selector=QuestionTests/theAnswersMentionSaysWhetherThePickWasRightAndHowSureTheUserWas")
+        defer { Run6Trace.event("body.exit", "selector=QuestionTests/theAnswersMentionSaysWhetherThePickWasRightAndHowSureTheUserWas") }
         let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
         let asked = try await question(["asker": .null, "correct": "now", "askConfidence": .bool(true)], caller: asker)
         try board.answerQuestion(asked.id, option: "later", note: "after the perf PR", confidence: 0.8)
@@ -208,6 +216,8 @@ final class QuestionTests {
     }
 
     @Test func aCallerCannotStampTheAnswerAsCorrect() async throws {
+        Run6Trace.event("body.enter", "selector=QuestionTests/aCallerCannotStampTheAnswerAsCorrect")
+        defer { Run6Trace.event("body.exit", "selector=QuestionTests/aCallerCannotStampTheAnswerAsCorrect") }
         let asker = board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
         let asked = try await question(["asker": .null, "correct": "now"], caller: asker)
         #expect(message(try await update(asked.id, .object(["status": "answered", "answer": .object(["option": "later", "correct": .bool(true)])])))

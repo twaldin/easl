@@ -10,7 +10,10 @@ private enum SurfaceVideoError: Error {
 }
 
 private func videoCheck(_ status: OSStatus) throws {
-    guard status == noErr else { throw SurfaceVideoError.status(status) }
+    guard status == noErr else {
+        Run6Trace.event("codec.api.error", "status=\(status)")
+        throw SurfaceVideoError.status(status)
+    }
 }
 
 private func videoDimensions(_ width: Int, _ height: Int) throws {
@@ -27,8 +30,16 @@ private final class VideoOutput<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private let ready = DispatchSemaphore(value: 0)
     private var result: Result<Value?, Error>?
+    private let traceKind: String
+    private let traceSession: String
+
+    init(kind: String, session: AnyObject) {
+        traceKind = kind
+        traceSession = Run6Trace.id(session)
+    }
 
     func finish(status: OSStatus, dropped: Bool, value: Value?) {
+        let callbackEntered = Run6Trace.now()
         lock.lock()
         if status != noErr { result = .failure(SurfaceVideoError.status(status)) }
         else if dropped { result = .success(nil) }
@@ -36,10 +47,16 @@ private final class VideoOutput<Value>: @unchecked Sendable {
         else { result = .failure(SurfaceVideoError.missingOutput) }
         lock.unlock()
         ready.signal()
+        Run6Trace.event("codec.callback", "kind=\(traceKind) session=\(traceSession) output=\(Run6Trace.id(self)) entered_ns=\(callbackEntered) status=\(status) dropped=\(dropped) has_value=\(value != nil)")
     }
 
     func wait() throws -> Value? {
-        guard ready.wait(timeout: .now() + 2) == .success else { throw SurfaceVideoError.timeout }
+        Run6Trace.event("codec.wait.begin", "kind=\(traceKind) session=\(traceSession) output=\(Run6Trace.id(self))")
+        guard ready.wait(timeout: .now() + 2) == .success else {
+            Run6Trace.event("codec.wait.timeout", "kind=\(traceKind) session=\(traceSession) output=\(Run6Trace.id(self))")
+            throw SurfaceVideoError.timeout
+        }
+        Run6Trace.event("codec.wait.ready", "kind=\(traceKind) session=\(traceSession) output=\(Run6Trace.id(self))")
         lock.lock()
         defer { lock.unlock() }
         guard let result else { throw SurfaceVideoError.missingOutput }
@@ -124,10 +141,14 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
     let session: VTCompressionSession
 
     func invalidate() {
+        Run6Trace.event("compression.retire.scheduled", "session=\(Run6Trace.id(session))")
         DispatchQueue.global(qos: .utility).async { [self] in
+            Run6Trace.event("compression.retire.begin", "session=\(Run6Trace.id(session))")
             // Drain callbacks before invalidation, without retaining the encoder or blocking its caller.
-            _ = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            let status = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            Run6Trace.event("compression.retire.drained", "session=\(Run6Trace.id(session)) status=\(status)")
             VTCompressionSessionInvalidate(session)
+            Run6Trace.event("compression.invalidate.complete", "session=\(Run6Trace.id(session))")
         }
     }
 }
@@ -173,6 +194,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     }
 
     private func clearActive() {
+        Run6Trace.event("compression.clear.active", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session))")
         if let session { RetiredVideoCompressionSession(session: session).invalidate() }
         session = nil
         pool = nil
@@ -182,6 +204,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
     }
 
     private func clear() {
+        Run6Trace.event("compression.clear.all", "owner=\(Run6Trace.id(self)) cached=\(Run6Trace.id(motionSession?.session))")
         clearActive()
         if let motionSession { RetiredVideoCompressionSession(session: motionSession.session).invalidate() }
         motionSession = nil
@@ -189,6 +212,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
 
     private func cacheMotion() {
         guard let session, let pool else { return }
+        Run6Trace.event("compression.cache.motion", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) replaced=\(Run6Trace.id(motionSession?.session))")
         if let motionSession { RetiredVideoCompressionSession(session: motionSession.session).invalidate() }
         motionSession = MotionSession(session: session, pool: pool, width: width, height: height,
                                       requestedWidth: requestedWidth, requestedHeight: requestedHeight, epoch: epoch,
@@ -202,6 +226,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         guard let motionSession, motionSession.requestedWidth == width,
               motionSession.requestedHeight == height else { return }
         clearActive()
+        Run6Trace.event("compression.restore.motion", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(motionSession.session))")
         session = motionSession.session
         pool = motionSession.pool
         self.width = motionSession.width
@@ -316,15 +341,18 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             }
         }
         guard !isCancelled() else { return nil }
-        let output = VideoOutput<CMSampleBuffer>()
-        try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
+        let output = VideoOutput<CMSampleBuffer>(kind: "compression", session: session)
+        Run6Trace.event("compression.submit.begin", "session=\(Run6Trace.id(session)) output=\(Run6Trace.id(output))")
+        let encodeStatus = VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
             presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - epoch, preferredTimescale: 1_000_000),
             duration: .invalid,
             frameProperties: forceKeyframe ?
                 [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
             infoFlagsOut: nil, outputHandler: { status, flags, sample in
                 output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
-            }))
+            })
+        Run6Trace.event("compression.submit.end", "session=\(Run6Trace.id(session)) output=\(Run6Trace.id(output)) status=\(encodeStatus)")
+        try videoCheck(encodeStatus)
         return try output.wait()
     }
 
@@ -337,10 +365,13 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_EnableLowLatencyRateControl: profile == .motion]
         if profile == .sharp { specification[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] = true }
-        try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
+        Run6Trace.event("compression.create.begin", "owner=\(Run6Trace.id(self)) width=\(width) height=\(height) sharp=\(profile == .sharp)")
+        let createStatus = VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
-            outputCallback: nil, refcon: nil, compressionSessionOut: &session))
+            outputCallback: nil, refcon: nil, compressionSessionOut: &session)
+        Run6Trace.event("compression.create.end", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) status=\(createStatus)")
+        try videoCheck(createStatus)
         guard let session else { throw SurfaceVideoError.missingOutput }
         let settings: [(CFString, CFTypeRef)] = profile == .sharp ? [
             (kVTCompressionPropertyKey_ProfileLevel, "H264_High444Predictive_AutoLevel" as CFString),
@@ -363,13 +394,17 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                                             value: NSNumber(value: Int32.max)))
         try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
                                             value: NSNumber(value: 0)))
-        try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session))
+        Run6Trace.event("compression.prepare.begin", "session=\(Run6Trace.id(session))")
+        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(session)
+        Run6Trace.event("compression.prepare.end", "session=\(Run6Trace.id(session)) status=\(prepareStatus)")
+        try videoCheck(prepareStatus)
         try videoCheck(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary,
                                              attributes as CFDictionary, &pool))
         self.width = width
         self.height = height
         self.profile = profile
         epoch = ProcessInfo.processInfo.systemUptime
+        Run6Trace.event("compression.start.ready", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session))")
     }
 
     private func packetFromSample(_ sample: CMSampleBuffer, maximumBytes: Int, keyframe: Bool) throws -> Data? {
@@ -420,10 +455,20 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
     private var pps = Data()
 
     public init() {}
-    deinit { if let session { VTDecompressionSessionInvalidate(session) } }
+    deinit {
+        if let session {
+            Run6Trace.event("decompression.invalidate.begin", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) reason=deinit")
+            VTDecompressionSessionInvalidate(session)
+            Run6Trace.event("decompression.invalidate.complete", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) reason=deinit")
+        }
+    }
 
     private func clear() {
-        if let session { VTDecompressionSessionInvalidate(session) }
+        if let session {
+            Run6Trace.event("decompression.invalidate.begin", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) reason=clear")
+            VTDecompressionSessionInvalidate(session)
+            Run6Trace.event("decompression.invalidate.complete", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) reason=clear")
+        }
         session = nil
         format = nil
         sps = Data()
@@ -441,11 +486,14 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
             if changed || session == nil || packet.keyframe {
                 let nextFormat = try packet.format(width: width, height: height)
                 clear()
-                try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
+                Run6Trace.event("decompression.create.begin", "owner=\(Run6Trace.id(self)) width=\(width) height=\(height)")
+                let createStatus = VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
                     decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
                     imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                         kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
-                    outputCallback: nil, decompressionSessionOut: &session))
+                    outputCallback: nil, decompressionSessionOut: &session)
+                Run6Trace.event("decompression.create.end", "owner=\(Run6Trace.id(self)) session=\(Run6Trace.id(session)) status=\(createStatus)")
+                try videoCheck(createStatus)
                 format = nextFormat
                 sps = packet.sps
                 pps = packet.pps
@@ -470,12 +518,15 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
                 sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 1,
                 sampleSizeArray: &size, sampleBufferOut: &sample))
             guard let sample else { throw SurfaceVideoError.missingOutput }
-            let output = VideoOutput<CVImageBuffer>()
-            try videoCheck(VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample,
+            let output = VideoOutput<CVImageBuffer>(kind: "decompression", session: session)
+            Run6Trace.event("decompression.submit.begin", "session=\(Run6Trace.id(session)) output=\(Run6Trace.id(output))")
+            let decodeStatus = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample,
                 flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil,
                 outputHandler: { status, flags, image, _, _ in
                     output.finish(status: status, dropped: flags.contains(.frameDropped), value: image)
-                }))
+                })
+            Run6Trace.event("decompression.submit.end", "session=\(Run6Trace.id(session)) output=\(Run6Trace.id(output)) status=\(decodeStatus)")
+            try videoCheck(decodeStatus)
             guard let pixel = try output.wait() else { throw SurfaceVideoError.missingOutput }
             guard CVPixelBufferGetWidth(pixel) == width, CVPixelBufferGetHeight(pixel) == height,
                   CVPixelBufferGetPixelFormatType(pixel) == kCVPixelFormatType_32BGRA else {

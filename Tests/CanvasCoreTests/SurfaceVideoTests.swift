@@ -76,6 +76,8 @@ struct SurfaceVideoTests {
     }
 
     @Test func budgetCappedCaptureRastersProduceVisibleSharpReferences() throws {
+        Run6Trace.event("body.enter", "selector=SurfaceVideoTests/budgetCappedCaptureRastersProduceVisibleSharpReferences")
+        defer { Run6Trace.event("body.exit", "selector=SurfaceVideoTests/budgetCappedCaptureRastersProduceVisibleSharpReferences") }
         for (width, height, expectedWidth, expectedHeight) in [
             (2530, 1581, 2530, 1580),
             (2560, 1600, 2528, 1580),
@@ -156,6 +158,8 @@ struct SurfaceVideoTests {
     }
 
     @Test func malformedPacketsResetTheDecoderAndKeyframesRecover() throws {
+        Run6Trace.event("body.enter", "selector=SurfaceVideoTests/malformedPacketsResetTheDecoderAndKeyframesRecover")
+        defer { Run6Trace.event("body.exit", "selector=SurfaceVideoTests/malformedPacketsResetTheDecoderAndKeyframesRecover") }
         let encoder = SurfaceVideoEncoder()
         let keyframe = try #require(try encoder.encode(image(), width: 64, height: 64)).data
         let predicted = try #require(try encoder.encode(image(), width: 64, height: 64)).data
@@ -280,6 +284,8 @@ struct SurfaceVideoTests {
     }
 
     @Test func anOversizedSharpReferenceIsRefusedAndMotionRestartsIndependently() throws {
+        Run6Trace.event("body.enter", "selector=SurfaceVideoTests/anOversizedSharpReferenceIsRefusedAndMotionRestartsIndependently")
+        defer { Run6Trace.event("body.exit", "selector=SurfaceVideoTests/anOversizedSharpReferenceIsRefusedAndMotionRestartsIndependently") }
         let encoder = SurfaceVideoEncoder()
         let rejected = try encoder.encode(noise(width: 1024, height: 1024, seed: 0x123456789abcdef),
                                           width: 1024, height: 1024, refresh: true)

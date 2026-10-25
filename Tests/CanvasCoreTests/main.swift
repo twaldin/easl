@@ -83,4 +83,11 @@ if CommandLine.arguments.dropFirst().first == "--update-lease-owner" {
 }
 
 // See Package.swift: run with `swift run CanvasCoreTests [--filter <name>]`.
-exit(await Testing.__swiftPMEntryPoint() as CInt)
+let run6FilterIndex = CommandLine.arguments.firstIndex(of: "--filter")
+let run6Selector = run6FilterIndex.flatMap { index in
+    CommandLine.arguments.indices.contains(index + 1) ? CommandLine.arguments[index + 1] : nil
+} ?? "all"
+Run6Trace.event("runner.enter", "selector=\(run6Selector) no_parallel=\(CommandLine.arguments.contains("--no-parallel"))")
+let run6Status = await Testing.__swiftPMEntryPoint() as CInt
+Run6Trace.event("runner.exit", "selector=\(run6Selector) status=\(run6Status)")
+exit(run6Status)

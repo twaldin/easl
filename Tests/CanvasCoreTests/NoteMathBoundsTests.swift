@@ -25,6 +25,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func hostileFormulasNeverEnterNativeTypesetting() {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/hostileFormulasNeverEnterNativeTypesetting")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/hostileFormulasNeverEnterNativeTypesetting") }
         for latex in hostileFormulas() {
             #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: true) == nil)
             #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: false) == nil)
@@ -32,6 +34,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func rejectedFormulasKeepTheirLiteralSourceInMonospace() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/rejectedFormulasKeepTheirLiteralSourceInMonospace")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/rejectedFormulasKeepTheirLiteralSourceInMonospace") }
         for latex in hostileFormulas() {
             let markdown = "$$\n" + latex + "\n$$"
             let text = NoteRenderer(excerpts: [:], source: markdown, width: 400).render(NoteMarkdown.parse(markdown), placeholder: "")
@@ -47,6 +51,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func sizeFitMeasuresTheRejectedFormulaAsSource() async throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/sizeFitMeasuresTheRejectedFormulaAsSource")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/sizeFitMeasuresTheRejectedFormulaAsSource") }
         let latex = String(repeating: #"\frac{1}{"#, count: 1000) + "1" + String(repeating: "}", count: 1000)
         let markdown = "$$\n" + latex + "\n$$"
         let text = NoteRenderer(excerpts: [:], source: markdown, width: 384).render(NoteMarkdown.parse(markdown), placeholder: "")
@@ -56,11 +62,15 @@ struct NoteMathBoundsTests {
     }
 
     @Test func smallFormulasAndEscapedSymbolsStillTypeset() {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/smallFormulasAndEscapedSymbolsStillTypeset")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/smallFormulasAndEscapedSymbolsStillTypeset") }
         for latex in [#"\frac{a}{b}"#, #"\sqrt[3]{x^2}"#, #"\left(\frac{a}{b}\right)"#, #"\begin{matrix}a&b\\c&d\end{matrix}"#, #"\{x\}"#] {
             #expect(NoteMath.attachment(latex: latex, fontSize: 13, display: true) != nil)
         }
     }
     @Test func byteAndRecursionBoundariesPreserveAcceptedMath() {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/byteAndRecursionBoundariesPreserveAcceptedMath")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/byteAndRecursionBoundariesPreserveAcceptedMath") }
         #expect(NoteMath.attachment(latex: String(repeating: "x", count: 2048), fontSize: 13, display: true) != nil)
         #expect(NoteMath.attachment(latex: String(repeating: "x", count: 2049), fontSize: 13, display: true) == nil)
         let accepted = String(repeating: "{", count: 16) + "x" + String(repeating: "}", count: 16)
@@ -72,6 +82,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func prefixedTextColorsRenderWithoutTrapping() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/prefixedTextColorsRenderWithoutTrapping")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/prefixedTextColorsRenderWithoutTrapping") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/prefixedTextColorsRenderWithoutTrapping") { return }
         let inputs = [
             #"$x\textcolor{red}{\frac12}$"#,
@@ -92,6 +104,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func prefixedColorAccentAndScriptFuzzRunsInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/prefixedColorAccentAndScriptFuzzRunsInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/prefixedColorAccentAndScriptFuzzRunsInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/prefixedColorAccentAndScriptFuzzRunsInChild") { return }
         let arguments = [
             "", "x", #"\frac12"#, #"\sqrt{2}"#, #"\left(x\right)"#,
@@ -122,6 +136,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func malformedRadicalDegreesUseLiteralFallbackInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/malformedRadicalDegreesUseLiteralFallbackInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/malformedRadicalDegreesUseLiteralFallbackInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/malformedRadicalDegreesUseLiteralFallbackInChild") { return }
         for latex in [#"\sqrt[}]{x}"#, #"\sqrt[2}]{x}"#, #"\sqrt[{x}}]{x}"#, #"x\sqrt[\frac1}]{x}"#] {
             for display in [false, true] {
@@ -135,6 +151,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func wideMathDoesNotSpendItsDepthAllowance() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/wideMathDoesNotSpendItsDepthAllowance")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/wideMathDoesNotSpendItsDepthAllowance") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/wideMathDoesNotSpendItsDepthAllowance") { return }
         let row = Array(repeating: "x", count: 4).joined(separator: "&")
         let matrix = #"\begin{matrix}"# + Array(repeating: row, count: 4).joined(separator: "\\\\") + #"\end{matrix}"#
@@ -148,6 +166,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func allRecursiveConstructsHaveBoundedDepthInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/allRecursiveConstructsHaveBoundedDepthInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/allRecursiveConstructsHaveBoundedDepthInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/allRecursiveConstructsHaveBoundedDepthInChild") { return }
         let recursive: [(Int) -> String] = [
             { String(repeating: #"\frac1"#, count: $0) + "1" },
@@ -179,6 +199,8 @@ struct NoteMathBoundsTests {
     }
 
     @Test func colorRewriteMatchesWholeCommandsOnlyInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/colorRewriteMatchesWholeCommandsOnlyInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/colorRewriteMatchesWholeCommandsOnlyInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/colorRewriteMatchesWholeCommandsOnlyInChild") { return }
         #expect(NoteMath.attachment(latex: #"x\textcolorful{red}{x}"#, fontSize: 13, display: true) == nil)
         #expect(NoteMath.attachment(latex: #"x\textcoloré{red}{x}"#, fontSize: 13, display: true) == nil)
@@ -186,12 +208,16 @@ struct NoteMathBoundsTests {
     }
 
     @Test func workBoundaryIsIndependentOfDepthInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/workBoundaryIsIndependentOfDepthInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/workBoundaryIsIndependentOfDepthInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/workBoundaryIsIndependentOfDepthInChild") { return }
         #expect(NoteMath.attachment(latex: String(repeating: #"\,x"#, count: 256), fontSize: 13, display: true) != nil)
         #expect(NoteMath.attachment(latex: String(repeating: #"\,x"#, count: 257), fontSize: 13, display: true) == nil)
     }
 
     @Test func repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild() throws {
+        Run6Trace.event("body.enter", "selector=NoteMathBoundsTests/repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild")
+        defer { Run6Trace.event("body.exit", "selector=NoteMathBoundsTests/repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild") }
         if try runIsolatedTestIfParallelNow("NoteMathBoundsTests/repeatedDeepRadicalsAndAccentsUseTheSourceFallbackInChild") { return }
         for command in [#"\sqrt "#, #"\hat "#] {
             let chain = String(repeating: command, count: 16) + "x"
