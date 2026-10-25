@@ -16,6 +16,10 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Keyboard shortcuts](keyboard-shortcuts.md) covers native key routing and editable bindings.
 - [HTML and video tiles](html-video.md) covers live HTML, native playback, seeking, and remote controls.
 - [Questions and expiry](questions-expiry.md) covers CLI creation, native answers, cancellation, expiry, and archive retention.
+- [Note math](note-math.md) covers native inline and display formulas, source fallback, and literal code.
+- [Graph diagrams](graph-diagrams.md) covers authored knowledge, statuses, source badges, and expanded detail.
+- [Graded questions](graded-questions.md) covers correct and wrong answers with optional confidence.
+- [HTML keyboard ownership](html-keyboard.md) covers Return, editable clicks, Escape, autofocus, and document grants.
 
 ## Proof and failure reporting
 

@@ -200,7 +200,7 @@ scripts/dev.sh cli board.get
 
 Require the executable command to name your private bundle, the hash to match the post-launch receipt, the window's PID and ID to match `PID` and `WINDOW`, and the selected root to match the intended board. Verify the guest claim record names your lane and `G`, and its recorded `holderPid` is alive. Home status is the authority for the VM.
 
-For a remote tab, `board.get` on the viewer socket cannot read its host's board. Replace the final `scripts/dev.sh cli board.get` with `scripts/dev.sh input state` to confirm the selected remote tab, then read the host board through `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"`. Keep `system.ping` on the viewer socket to check the viewer.
+For a remote tab, replace the unqualified final `board.get` with `scripts/dev.sh input state` to confirm the selected remote tab. Run `scripts/dev.sh cli board.get --board "$BOARD"` to exercise explicit viewer-socket routing, then retain an independent direct-host read through `EASL_SOCKET="$G/host/easl.sock" bun "$R/cli/easl.ts" board.get --board "$BOARD"`. Keep `system.ping` on the viewer socket to check the viewer.
 
 If using easld, include `cat "$G/host/instance.lock"`, `lsof -t "$G/host/instance.lock"`, `ps -p "$SERVER_PID" -o pid,command`, and a ping against `$G/host/easl.sock`. Require both lock values to equal your recorded `SERVER_PID`, with the command naming `$G/easld --home $G/host`. Do not drive on a mismatch. Doctor inspects only; it never repairs, relaunches, or kills.
 

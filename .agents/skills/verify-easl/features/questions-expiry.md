@@ -15,9 +15,11 @@ Agents post question tiles through the CLI. Users choose an option or write a no
 
 Run `easl ask` against the isolated instance's socket. Use Command-J or the open-question count to reach the tile. Press an option number, add a note, and press Return. There is no manual New Question menu. Archive hides a closed question sooner.
 
+Use [graded questions](graded-questions.md) for `correct`, `askConfidence`, and native confidence entry. Confirm the intended question before answering; Command-J can visit a blocked terminal first.
+
 ## Driving it with dev.sh
 
-Preconditions: an isolated local or scratch remote board with a live viewer. Set `API_SOCKET="$EASL_DEV_HOME/easl.sock"` for a local board, or `API_SOCKET="$G/host/easl.sock"` for the scratch remote board. The viewer socket cannot serve remote board objects. Supply the actual `BOARD` ID. The fixture asks only a test question; never answer a real approval or decision.
+Preconditions: an isolated local or scratch remote board with a live viewer. Set `API_SOCKET="$EASL_DEV_HOME/easl.sock"` for a local board, or `API_SOCKET="$G/host/easl.sock"` for the scratch remote board. An explicit remote `--board "$BOARD"` also routes through its open viewer tab. Use the direct host socket for independent readback. Supply the actual `BOARD` ID. The fixture asks only a test question; never answer a real approval or decision.
 
 - In a separate owned CLI job, run `EASL_SOCKET="$API_SOCKET" bun "$R/cli/easl.ts" ask "Verification choice?" --board "$BOARD" --option a=Alpha --option b=Beta --recommend a --keep --wait`. Retain command, stdout, stderr, exit code, and the new ID from `ask list --open --board "$BOARD"` against that same socket. Capture the open question and recommendation.
 - Reach it with `scripts/dev.sh input shortcut j --mods cmd --window "$WINDOW"`. Press `input shortcut 2`, then `input key tab` to reach the note field. Enter a distinct note and press Return. Require the waiter to return exit 0 with option `b`, label `Beta`, and that exact note. Inspect the answered tile in native pixels and read `EASL_SOCKET="$API_SOCKET" bun "$R/cli/easl.ts" ask get "$QUESTION"`. Repeat by clicking the option's fresh AX-labelled control when qualifying pointer access too.
