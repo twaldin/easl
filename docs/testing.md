@@ -65,6 +65,8 @@ The retained real-page tests check initial settling and autonomous caret transit
 
 `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceVideoTests` covers visible encoded changes, continuing sharp prediction, keyframe recovery after cancellation and resize, malformed-packet rejection, and declared and odd dimensions.
 
+`rapidEncoderRetirementAppliesBackpressureWithoutBlockingDestruction` holds a real compression retirement, verifies that destruction returns while the next creation waits, and opens and retires 42 encoders in total. It checks that sequential churn has at most one live or retiring session and drains its own retirements before returning. Encoder and decoder creation wait for previously queued compression retirements in the product; the shared test actor alone cannot bound asynchronous retirement.
+
 The process relay fixture retains its reply pipe with `exec 3>&1` before redirecting `cat` into the captured-input file. Otherwise the redirect signals stdout EOF, and the client correctly retires that still-running relay after two seconds. Large-reply checks must keep the duplex link open while verifying its captured output.
 
 `swift run -j 2 CanvasCoreTests --no-parallel --filter SurfaceVideoQuality` runs `SurfaceVideoQualityTests.realBrowserPagesRetainSharpReferenceThroughTwoHundredDocsCaretTransitions`. It checks initial settling and autonomous caret transitions, not input-triggered motion return. It requires the manifest and captured image pairs in `Tests/CanvasCoreTests/Fixtures/browser-quality`. Missing fixtures fail rather than skip. The manifest records source URLs, renderer and caret provenance, image hashes, and the required 1800×1324 raster for a 900×662 tile at scale 2.
