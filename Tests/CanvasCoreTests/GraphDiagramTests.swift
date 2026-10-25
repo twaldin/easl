@@ -125,9 +125,10 @@ final class GraphDiagramTests {
         let (_, _, server, client) = try await api()
         defer { server.stop() }
         var distinct: [String] = []
-        for from in 0..<500 {
-            for to in (from + 1)..<500 where distinct.count < 2001 {
+        edgePairs: for from in 0..<500 {
+            for to in (from + 1)..<500 {
                 distinct.append(#"{"from":"n\#(from)","to":"n\#(to)"}"#)
+                if distinct.count == 2001 { break edgePairs }
             }
         }
         let nodes = Self.nodeList(500)
