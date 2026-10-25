@@ -24,11 +24,11 @@ Preconditions: follow Launch and Doctor. Run on a local board and a real remote 
 4. Press Escape. Require `CanvasDocumentView`, the same selected tile, and native M selecting Move without changing either field. Return to Select.
 5. Derive the Notes field's content-point coordinates from a fresh exact-window capture. Click inside it and type `click-path`. Require visible text and `props.state.notes`. Press Escape and verify canvas ownership again.
 6. Independently reacquire the page, then click empty board space while it still has the keyboard. Require release. A board click after Escape does not qualify this transition.
-7. Replace the tile's HTML with a visibly marked new document. Wait for that marker, then type without another Return or field click. Require no replacement-page key receipt. Grant it again and require input. Read saved state after reload.
+7. Replace the tile's HTML with a visibly marked new document. Wait for that marker, then type digits without another Return or field click. Require no replacement-page key receipt. Press V to select the canvas's Select tool before granting the page again. Require new input after that grant and read saved state after reload.
 
 ## Supplemental regression modes
 
-The existing `Tests/HtmlKeyboard/run.py --bin-path "$BIN_PATH"` links and runs the default AppKit regression. It accepts no mode flags. Use the linked `HtmlKeyboard` executable for focused modes, with the disposable home and environment shown in `docs/testing.md`:
+The existing `Tests/HtmlKeyboard/run.py --bin-path "$BIN_PATH"` links and runs the default AppKit regression. It accepts no mode flags. Run focused modes on the linked `HtmlKeyboard` executable in the guest, with the environment `run.py` sets: temporary `EASL_HOME`, `CFFIXED_USER_HOME`, and `XDG_CONFIG_HOME`, `EASL_NO_ACTIVATE=1`, and no `EASL_ROOT`.
 
 - `--hostile-clicks` rejects delayed promises, patched page-world getters, and focus-away-and-back or later-click grants.
 - `--dom-clicks` covers both `--clobbered-click` and `--stale-focus-click` checks against real DOM getters and click containment.
