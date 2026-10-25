@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 import Testing
-import CanvasCore
+@testable import CanvasCore
 
 // VideoToolbox session creation can occupy every cooperative worker. These hardware-codec
 // suites share one actor so unrelated Core tests can keep making progress.
@@ -334,6 +334,7 @@ struct SurfaceVideoTests {
 
     private enum LifecycleError: Error {
         case missingFrame
+        case synchronizationTimeout(String)
     }
 
     private struct LifecycleObservation: Sendable {
@@ -341,19 +342,19 @@ struct SurfaceVideoTests {
         let cancellations: [Bool]
     }
 
-    private final class LifecycleResult: @unchecked Sendable {
+    private final class LifecycleResult<Observation: Sendable>: @unchecked Sendable {
         private let lock = NSLock()
         private let completed = DispatchSemaphore(value: 0)
-        private var result: Result<LifecycleObservation, Error>?
+        private var result: Result<Observation, Error>?
 
-        func finish(_ result: Result<LifecycleObservation, Error>) {
+        func finish(_ result: Result<Observation, Error>) {
             lock.lock()
             self.result = result
             lock.unlock()
             completed.signal()
         }
 
-        func wait() -> Result<LifecycleObservation, Error>? {
+        func wait() -> Result<Observation, Error>? {
             guard completed.wait(timeout: .now() + 20) == .success else { return nil }
             lock.lock()
             defer { lock.unlock() }
@@ -362,7 +363,7 @@ struct SurfaceVideoTests {
     }
 
     @Test func cancellationResizeAndRepeatedDestructionCompleteWithinDeadline() throws {
-        let result = LifecycleResult()
+        let result = LifecycleResult<LifecycleObservation>()
         // A detached worker lets the deadline fail even if a synchronous codec call never returns.
         DispatchQueue.global(qos: .userInitiated).async {
             result.finish(Result {
@@ -409,5 +410,152 @@ struct SurfaceVideoTests {
                 #expect(pixel[0] > 220 && pixel[1] < 30 && pixel[2] < 30)
             }
         }
+    }
+
+    private struct RetirementObservation: Sendable {
+        let releasedEncoder: Bool
+        let afterCreation: (live: Int, retiring: Int)
+        let active: [(live: Int, retiring: Int)]
+        let retired: [(live: Int, retiring: Int)]
+        let keyframes: Int
+        let drained: (live: Int, retiring: Int)
+    }
+
+    nonisolated private func drainCompressionRetirements() -> Bool {
+        let result = LifecycleResult<Void>()
+        DispatchQueue.global(qos: .userInitiated).async {
+            SurfaceVideoCompressionSessions.waitForRetirements()
+            result.finish(.success(()))
+        }
+        return result.wait() != nil
+    }
+
+    @Test func rapidEncoderRetirementAppliesBackpressureWithoutBlockingDestruction() throws {
+        let initialReady = DispatchSemaphore(value: 0)
+        let beginRetirement = DispatchSemaphore(value: 0)
+        let retirementBlocked = DispatchSemaphore(value: 0)
+        let releaseRetirement = DispatchSemaphore(value: 0)
+        let encoderRetired = DispatchSemaphore(value: 0)
+        let creationEntered = DispatchSemaphore(value: 0)
+        let nextCreated = DispatchSemaphore(value: 0)
+        let beginChurn = DispatchSemaphore(value: 0)
+        let result = LifecycleResult<RetirementObservation>()
+        var workerStarted = false
+        var resultAwaited = false
+        defer {
+            beginRetirement.signal()
+            releaseRetirement.signal()
+            beginChurn.signal()
+            if workerStarted && !resultAwaited {
+                if let completion = result.wait() {
+                    if case .failure(let error) = completion { Issue.record(error) }
+                } else {
+                    Issue.record("Encoder retirement worker exceeded 20 seconds during cleanup")
+                }
+            }
+            #expect(drainCompressionRetirements(), "Compression retirement cleanup exceeded 20 seconds")
+            let counts = SurfaceVideoCompressionSessions.counts
+            #expect(counts.live == 0 && counts.retiring == 0)
+        }
+        try #require(drainCompressionRetirements(), "Previous compression retirements exceeded 20 seconds")
+        let baseline = SurfaceVideoCompressionSessions.counts
+        #expect(baseline.live == 0 && baseline.retiring == 0)
+
+        workerStarted = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            result.finish(Result {
+                let source = try image()
+                var encoder: SurfaceVideoEncoder? = SurfaceVideoEncoder()
+                defer { encoder = nil }
+                guard let initial = try encoder?.encode(source, width: 64, height: 64) else {
+                    throw LifecycleError.missingFrame
+                }
+                var active = [SurfaceVideoCompressionSessions.counts]
+                var retired: [(live: Int, retiring: Int)] = []
+                var keyframes = initial.data[4] == 1 ? 1 : 0
+                initialReady.signal()
+                guard beginRetirement.wait(timeout: .now() + 20) == .success else {
+                    throw LifecycleError.synchronizationTimeout("initial encoder retirement")
+                }
+                weak var releasedEncoder = encoder
+                encoder = nil
+                let released = releasedEncoder == nil
+                retired.append(SurfaceVideoCompressionSessions.counts)
+                encoderRetired.signal()
+
+                encoder = SurfaceVideoEncoder()
+                var checks = 0
+                var afterCreation: (live: Int, retiring: Int)?
+                guard let next = try encoder?.encode(source, width: 64, height: 64, isCancelled: {
+                    checks += 1
+                    if checks == 2 { creationEntered.signal() }
+                    if checks == 3 { afterCreation = SurfaceVideoCompressionSessions.counts }
+                    return false
+                }) else {
+                    throw LifecycleError.missingFrame
+                }
+                guard let afterCreation else { throw LifecycleError.missingFrame }
+                active.append(SurfaceVideoCompressionSessions.counts)
+                keyframes += next.data[4] == 1 ? 1 : 0
+                nextCreated.signal()
+                guard beginChurn.wait(timeout: .now() + 20) == .success else {
+                    throw LifecycleError.synchronizationTimeout("rapid encoder churn")
+                }
+                encoder = nil
+                retired.append(SurfaceVideoCompressionSessions.counts)
+                for _ in 0..<40 {
+                    encoder = SurfaceVideoEncoder()
+                    guard let frame = try encoder?.encode(source, width: 64, height: 64) else {
+                        throw LifecycleError.missingFrame
+                    }
+                    active.append(SurfaceVideoCompressionSessions.counts)
+                    keyframes += frame.data[4] == 1 ? 1 : 0
+                    encoder = nil
+                    retired.append(SurfaceVideoCompressionSessions.counts)
+                }
+                SurfaceVideoCompressionSessions.waitForRetirements()
+                return RetirementObservation(releasedEncoder: released, afterCreation: afterCreation,
+                    active: active, retired: retired, keyframes: keyframes,
+                    drained: SurfaceVideoCompressionSessions.counts)
+            })
+        }
+        try #require(initialReady.wait(timeout: .now() + 20) == .success,
+                     "Initial encoder creation exceeded 20 seconds")
+        SurfaceVideoCompressionSessions.retirementQueue.async {
+            retirementBlocked.signal()
+            if releaseRetirement.wait(timeout: .now() + 60) != .success {
+                Issue.record("Controlled compression retirement blocker exceeded 60 seconds")
+            }
+        }
+        try #require(retirementBlocked.wait(timeout: .now() + 20) == .success,
+                     "Controlled retirement blocker did not start within 20 seconds")
+        beginRetirement.signal()
+        try #require(encoderRetired.wait(timeout: .now() + 20) == .success,
+                     "Encoder destruction blocked on the held retirement queue")
+        let held = SurfaceVideoCompressionSessions.counts
+        #expect(held.live == 1 && held.retiring == 1)
+        try #require(creationEntered.wait(timeout: .now() + 20) == .success,
+                     "Next encoder did not enter encode within 20 seconds")
+        let completedWhileBlocked = nextCreated.wait(timeout: .now() + 1)
+        #expect(completedWhileBlocked == .timedOut,
+                "Next encoder completed creation before the held retirement was released")
+        let waiting = SurfaceVideoCompressionSessions.counts
+        #expect(waiting.live == 1 && waiting.retiring == 1)
+        releaseRetirement.signal()
+        if completedWhileBlocked == .timedOut {
+            try #require(nextCreated.wait(timeout: .now() + 20) == .success,
+                         "Next encoder did not complete after releasing retirement")
+        }
+        beginChurn.signal()
+        let completion = result.wait()
+        resultAwaited = true
+        let observation = try #require(completion, "Rapid encoder churn exceeded 20 seconds").get()
+        #expect(observation.releasedEncoder)
+        #expect(observation.afterCreation.live == 1 && observation.afterCreation.retiring == 0)
+        #expect(observation.active.count == 42 && observation.retired.count == 42)
+        #expect(observation.keyframes == 42)
+        #expect(observation.active.allSatisfy { $0.live == 1 && $0.retiring == 0 })
+        #expect(observation.retired.allSatisfy { (0...1).contains($0.live) && $0.live == $0.retiring })
+        #expect(observation.drained.live == 0 && observation.drained.retiring == 0)
     }
 }
