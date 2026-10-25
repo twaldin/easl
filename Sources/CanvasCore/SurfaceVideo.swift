@@ -9,8 +9,149 @@ private enum SurfaceVideoError: Error {
     case status(OSStatus)
 }
 
-private func videoCheck(_ status: OSStatus) throws {
-    guard status == noErr else { throw SurfaceVideoError.status(status) }
+// Process-local logical sessions, not hardware slots. Process exit releases sessions without invalidation events.
+private final class VideoSessionDiagnostics: @unchecked Sendable {
+    static let shared = VideoSessionDiagnostics()
+
+    enum Kind: String { case encoder, decoder }
+    enum Phase: String { case active, queued, executing }
+    private struct Session {
+        let kind: Kind
+        let dimensions: String
+        let profile: String
+        let created: UInt64
+        var phase: Phase = .active
+    }
+    private struct Counts {
+        var created = 0
+        var enqueued = 0
+        var entered = 0
+        var invalidated = 0
+        var live = 0
+        var queued = 0
+        var executing = 0
+        var peakLive = 0
+        var peakQueued = 0
+        var peakExecuting = 0
+
+        mutating func updatePeaks() -> Bool {
+            let increased = live > peakLive || queued > peakQueued || executing > peakExecuting
+            peakLive = max(peakLive, live)
+            peakQueued = max(peakQueued, queued)
+            peakExecuting = max(peakExecuting, executing)
+            return increased
+        }
+
+        var fields: String {
+            "created=\(created),enqueued=\(enqueued),entered=\(entered),invalidated=\(invalidated)"
+                + ",live=\(live),queued=\(queued),executing=\(executing)"
+                + ",peakLive=\(peakLive),peakQueued=\(peakQueued),peakExecuting=\(peakExecuting)"
+        }
+    }
+
+    private let lock = NSLock()
+    private var sessions: [ObjectIdentifier: Session] = [:]
+    private var encoders = Counts()
+    private var decoders = Counts()
+    private var recent: [String] = []
+    private var event: UInt64 = 0
+
+    func created(_ id: ObjectIdentifier, kind: Kind, width: Int, height: Int, profile: String) {
+        lock.lock()
+        sessions[id] = Session(kind: kind, dimensions: "\(width)x\(height)", profile: profile,
+                               created: DispatchTime.now().uptimeNanoseconds)
+        var counts = kind == .encoder ? encoders : decoders
+        counts.created += 1
+        counts.live += 1
+        let peak = record("created", id: id, counts: &counts)
+        if kind == .encoder { encoders = counts } else { decoders = counts }
+        lock.unlock()
+        if let peak { emit(peak) }
+    }
+
+    func transition(_ id: ObjectIdentifier, to phase: Phase?, synchronous: Bool = false) {
+        lock.lock()
+        guard var session = sessions[id] else { lock.unlock(); return }
+        var counts = session.kind == .encoder ? encoders : decoders
+        let name: String
+        switch phase {
+        case .queued:
+            counts.enqueued += 1
+            counts.queued += 1
+            name = "retirement-enqueued"
+        case .executing:
+            if synchronous { counts.enqueued += 1 } else { counts.queued -= 1 }
+            counts.entered += 1
+            counts.executing += 1
+            name = synchronous ? "retirement-enqueued+entered-sync" : "retirement-entered"
+        case nil:
+            counts.executing -= 1
+            counts.live -= 1
+            counts.invalidated += 1
+            name = "invalidated"
+        case .active:
+            lock.unlock()
+            return
+        }
+        if let phase {
+            session.phase = phase
+            sessions[id] = session
+        }
+        let peak = record(name, id: id, counts: &counts)
+        if session.kind == .encoder { encoders = counts } else { decoders = counts }
+        if phase == nil { sessions.removeValue(forKey: id) }
+        lock.unlock()
+        if let peak { emit(peak) }
+    }
+
+    // Only lifecycle events allocate history; the last 32 are retained, never frame successes.
+    private func record(_ name: String, id: ObjectIdentifier, counts: inout Counts) -> String? {
+        event += 1
+        let now = DispatchTime.now().uptimeNanoseconds
+        let session = sessions[id]!
+        if recent.count == 32 { recent.removeFirst() }
+        recent.append("event=\(event),ns=\(now),action=\(name),id=\(id)"
+            + ",kind=\(session.kind.rawValue),dimensions=\(session.dimensions),profile=\(session.profile)"
+            + ",age_ns=\(now - session.created)")
+        if counts.updatePeaks() {
+            // Peaks are sparse and expose backlog even when no codec failure occurs.
+            return "type=peak pid=\(ProcessInfo.processInfo.processIdentifier) ns=\(now)"
+                + " event=\(event) action=\(name) id=\(id) kind=\(session.kind.rawValue)"
+                + " dimensions=\(session.dimensions) profile=\(session.profile) \(counts.fields)"
+        }
+        return nil
+    }
+
+    func failure(_ error: String, operation: String, id: ObjectIdentifier? = nil,
+                 detail: String = "", file: StaticString = #fileID, line: UInt = #line) {
+        lock.lock()
+        let now = DispatchTime.now().uptimeNanoseconds
+        let context = id.flatMap { id in
+            sessions[id].map {
+                "id=\(id),kind=\($0.kind.rawValue),dimensions=\($0.dimensions),profile=\($0.profile),phase=\($0.phase.rawValue)"
+            }
+        } ?? "id=\(String(describing: id))"
+        let message = "type=failure pid=\(ProcessInfo.processInfo.processIdentifier) ns=\(now)"
+            + " operation=\(operation) site=\(file):\(line) error=\(error) detail=\(detail) \(context)"
+            + " encoder={\(encoders.fields)} decoder={\(decoders.fields)}"
+            + " recent=[\(recent.joined(separator: ";"))]"
+        lock.unlock()
+        emit(message)
+    }
+
+    private func emit(_ message: String) {
+        FileHandle.standardError.write(Data(("SurfaceVideoDiagnostics \(message)\n").utf8))
+    }
+}
+
+private func videoCheck(_ status: OSStatus, operation: String = #function,
+                        id: ObjectIdentifier? = nil, detail: @autoclosure () -> String = "",
+                        file: StaticString = #fileID, line: UInt = #line) throws {
+    guard status == noErr else {
+        VideoSessionDiagnostics.shared.failure("status(\(status))", operation: operation, id: id,
+                                               detail: detail(), file: file, line: line)
+        throw SurfaceVideoError.status(status)
+    }
 }
 
 private func videoDimensions(_ width: Int, _ height: Int) throws {
@@ -27,19 +168,31 @@ private final class VideoOutput<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private let ready = DispatchSemaphore(value: 0)
     private var result: Result<Value?, Error>?
+    private let sessionID: ObjectIdentifier
 
-    func finish(status: OSStatus, dropped: Bool, value: Value?) {
+    init(sessionID: ObjectIdentifier) { self.sessionID = sessionID }
+
+    func finish(status: OSStatus, dropped: Bool, value: Value?,
+                file: StaticString = #fileID, line: UInt = #line) {
         lock.lock()
         if status != noErr { result = .failure(SurfaceVideoError.status(status)) }
         else if dropped { result = .success(nil) }
         else if let value { result = .success(value) }
         else { result = .failure(SurfaceVideoError.missingOutput) }
         lock.unlock()
+        if status != noErr || (!dropped && value == nil) {
+            VideoSessionDiagnostics.shared.failure(status != noErr ? "status(\(status))" : "missingOutput",
+                operation: "callback", id: sessionID, file: file, line: line)
+        }
         ready.signal()
     }
 
-    func wait() throws -> Value? {
-        guard ready.wait(timeout: .now() + 2) == .success else { throw SurfaceVideoError.timeout }
+    func wait(file: StaticString = #fileID, line: UInt = #line) throws -> Value? {
+        guard ready.wait(timeout: .now() + 2) == .success else {
+            VideoSessionDiagnostics.shared.failure("timeout", operation: "output-wait", id: sessionID,
+                                                   file: file, line: line)
+            throw SurfaceVideoError.timeout
+        }
         lock.lock()
         defer { lock.unlock() }
         guard let result else { throw SurfaceVideoError.missingOutput }
@@ -124,10 +277,17 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
     let session: VTCompressionSession
 
     func invalidate() {
+        VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: .queued)
         DispatchQueue.global(qos: .utility).async { [self] in
+            VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: .executing)
             // Drain callbacks before invalidation, without retaining the encoder or blocking its caller.
-            _ = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            let status = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            if status != noErr {
+                VideoSessionDiagnostics.shared.failure("status(\(status))", operation: "retirement-complete-frames",
+                                                       id: ObjectIdentifier(session))
+            }
             VTCompressionSessionInvalidate(session)
+            VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: nil)
         }
     }
 }
@@ -316,7 +476,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             }
         }
         guard !isCancelled() else { return nil }
-        let output = VideoOutput<CMSampleBuffer>()
+        let output = VideoOutput<CMSampleBuffer>(sessionID: ObjectIdentifier(session))
         try videoCheck(VTCompressionSessionEncodeFrame(session, imageBuffer: buffer,
             presentationTimeStamp: CMTime(seconds: ProcessInfo.processInfo.systemUptime - epoch, preferredTimescale: 1_000_000),
             duration: .invalid,
@@ -324,7 +484,7 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
                 [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil,
             infoFlagsOut: nil, outputHandler: { status, flags, sample in
                 output.finish(status: status, dropped: flags.contains(.frameDropped), value: sample)
-            }))
+            }), operation: "encoder-encode", id: ObjectIdentifier(session))
         return try output.wait()
     }
 
@@ -340,8 +500,11 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
-            outputCallback: nil, refcon: nil, compressionSessionOut: &session))
+            outputCallback: nil, refcon: nil, compressionSessionOut: &session),
+            operation: "encoder-create", detail: "dimensions=\(width)x\(height),profile=\(profile)")
         guard let session else { throw SurfaceVideoError.missingOutput }
+        VideoSessionDiagnostics.shared.created(ObjectIdentifier(session), kind: .encoder,
+                                               width: width, height: height, profile: "\(profile)")
         let settings: [(CFString, CFTypeRef)] = profile == .sharp ? [
             (kVTCompressionPropertyKey_ProfileLevel, "H264_High444Predictive_AutoLevel" as CFString),
             (kVTCompressionPropertyKey_RealTime, kCFBooleanFalse),
@@ -357,13 +520,17 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             (kVTCompressionPropertyKey_AverageBitRate, NSNumber(value: 2_000_000)),
             (kVTCompressionPropertyKey_MinAllowedFrameQP, NSNumber(value: 35)),
             (kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel)]
-        for (key, value) in settings { try videoCheck(VTSessionSetProperty(session, key: key, value: value)) }
+        for (key, value) in settings {
+            try videoCheck(VTSessionSetProperty(session, key: key, value: value),
+                           operation: "encoder-set-property", id: ObjectIdentifier(session), detail: "\(key)")
+        }
         // Zero lets the encoder choose keyframes; remove periodic scheduling without trusting that default.
         try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
                                             value: NSNumber(value: Int32.max)))
         try videoCheck(VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
                                             value: NSNumber(value: 0)))
-        try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session))
+        try videoCheck(VTCompressionSessionPrepareToEncodeFrames(session),
+                       operation: "encoder-prepare", id: ObjectIdentifier(session))
         try videoCheck(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary,
                                              attributes as CFDictionary, &pool))
         self.width = width
@@ -420,10 +587,14 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
     private var pps = Data()
 
     public init() {}
-    deinit { if let session { VTDecompressionSessionInvalidate(session) } }
+    deinit { clear() }
 
     private func clear() {
-        if let session { VTDecompressionSessionInvalidate(session) }
+        if let session {
+            VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: .executing, synchronous: true)
+            VTDecompressionSessionInvalidate(session)
+            VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: nil)
+        }
         session = nil
         format = nil
         sps = Data()
@@ -445,7 +616,12 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
                     decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
                     imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                         kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
-                    outputCallback: nil, decompressionSessionOut: &session))
+                    outputCallback: nil, decompressionSessionOut: &session),
+                    operation: "decoder-create", detail: "dimensions=\(width)x\(height),profile=H264")
+                if let session {
+                    VideoSessionDiagnostics.shared.created(ObjectIdentifier(session), kind: .decoder,
+                                                           width: width, height: height, profile: "H264")
+                }
                 format = nextFormat
                 sps = packet.sps
                 pps = packet.pps
@@ -470,12 +646,12 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
                 sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 1,
                 sampleSizeArray: &size, sampleBufferOut: &sample))
             guard let sample else { throw SurfaceVideoError.missingOutput }
-            let output = VideoOutput<CVImageBuffer>()
+            let output = VideoOutput<CVImageBuffer>(sessionID: ObjectIdentifier(session))
             try videoCheck(VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample,
                 flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil,
                 outputHandler: { status, flags, image, _, _ in
                     output.finish(status: status, dropped: flags.contains(.frameDropped), value: image)
-                }))
+                }), operation: "decoder-decode", id: ObjectIdentifier(session))
             guard let pixel = try output.wait() else { throw SurfaceVideoError.missingOutput }
             guard CVPixelBufferGetWidth(pixel) == width, CVPixelBufferGetHeight(pixel) == height,
                   CVPixelBufferGetPixelFormatType(pixel) == kCVPixelFormatType_32BGRA else {
