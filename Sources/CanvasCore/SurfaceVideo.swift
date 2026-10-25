@@ -9,8 +9,30 @@ private enum SurfaceVideoError: Error {
     case status(OSStatus)
 }
 
+private let videoPendingRetirements = Locked<[ObjectIdentifier: UInt64]>([:])
+
+private func videoReportFailure(_ error: Error, phase: StaticString) {
+    let pending = videoPendingRetirements.withLock { retirements in
+        let now = DispatchTime.now().uptimeNanoseconds
+        let oldestAge = retirements.values.min().map { Double(now - $0) / 1_000_000_000 } ?? 0
+        return (count: retirements.count, oldestAge: oldestAge, uptime: now)
+    }
+    let stack = Thread.callStackSymbols.prefix(48).map { String($0.prefix(512)) }.joined(separator: "\n")
+    let record = """
+    SurfaceVideoFailure phase=\(phase) error=\(String(describing: error).prefix(512)) pid=\(ProcessInfo.processInfo.processIdentifier) unix=\(Date().timeIntervalSince1970) uptime_ns=\(pending.uptime) pending_retirements=\(pending.count) oldest_pending_age_s=\(pending.oldestAge)
+    \(stack)
+    SurfaceVideoFailure end
+
+    """
+    FileHandle.standardError.write(Data(record.utf8))
+}
+
 private func videoCheck(_ status: OSStatus) throws {
-    guard status == noErr else { throw SurfaceVideoError.status(status) }
+    guard status == noErr else {
+        let error = SurfaceVideoError.status(status)
+        videoReportFailure(error, phase: "videoCheck")
+        throw error
+    }
 }
 
 private func videoDimensions(_ width: Int, _ height: Int) throws {
@@ -39,11 +61,20 @@ private final class VideoOutput<Value>: @unchecked Sendable {
     }
 
     func wait() throws -> Value? {
-        guard ready.wait(timeout: .now() + 2) == .success else { throw SurfaceVideoError.timeout }
+        guard ready.wait(timeout: .now() + 2) == .success else {
+            let error = SurfaceVideoError.timeout
+            videoReportFailure(error, phase: "VideoOutput.wait.timeout")
+            throw error
+        }
         lock.lock()
         defer { lock.unlock() }
         guard let result else { throw SurfaceVideoError.missingOutput }
-        return try result.get()
+        do {
+            return try result.get()
+        } catch {
+            videoReportFailure(error, phase: "VideoOutput.wait.callback-result")
+            throw error
+        }
     }
 }
 
@@ -124,10 +155,14 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
     let session: VTCompressionSession
 
     func invalidate() {
+        videoPendingRetirements.withLock {
+            $0[ObjectIdentifier(session)] = DispatchTime.now().uptimeNanoseconds
+        }
         DispatchQueue.global(qos: .utility).async { [self] in
             // Drain callbacks before invalidation, without retaining the encoder or blocking its caller.
             _ = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
+            videoPendingRetirements.withLock { $0[ObjectIdentifier(session)] = nil }
         }
     }
 }
