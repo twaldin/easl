@@ -19,7 +19,7 @@ Preconditions: the isolated local board is selected, Get Started is closed, and 
 
 - Create a note with `scripts/dev.sh input mainmenu "File/New Note"`. Enter distinct text with `input text`. Capture the text in native pixels and retain `scripts/dev.sh cli board.get`. Repeat the creation entry with `input shortcut n --mods cmd`. The board must contain two distinct notes.
 - Leave text editing with `input key escape`. Select a note by its title or measured bounds, drag its title with `input drag "$X" "$Y" "$TO_X" "$TO_Y"`, and retain the old and new frames through `object.get --id "$NOTE"`. `input shortcut z --mods cmd` must restore the original frame in the API and pixels.
-- With canvas focus, use `input mainmenu "Drawing/Rectangle"` and drag on empty canvas. Repeat for Ellipse and Arrow. Use Text, click empty canvas, and type a label. Use Draw and drag a stroke. Capture each tool's visible result and confirm its object in `board.get`. Undo each completed drawing once. Also select the same tools from their toolbar accessibility buttons when qualifying toolbar interaction.
+- With canvas focus, use `input mainmenu "Drawing/Rectangle"` and drag on empty canvas. Repeat for Ellipse and Arrow. Use Text, click empty canvas, and type a label. Commit it with `input key escape` before inspecting the object or choosing Draw. Use Draw and drag a stroke. Capture each tool's visible result and confirm its object in `board.get`. Undo each completed drawing once. Also select the same tools from their toolbar accessibility buttons when qualifying toolbar interaction.
 - For body drags, grouped movement, cancellation, and content input isolation, run the separate [Move tool journey](move-tool.md).
 
 ### Middle-pan cancellation
