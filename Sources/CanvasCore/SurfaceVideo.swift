@@ -273,12 +273,42 @@ public struct SurfaceVideoFrame: Sendable {
     let refresh: Bool
 }
 
+enum SurfaceVideoCompressionSessions {
+    static let retirementQueue = DispatchQueue(label: "easl.surface.video-retirement", qos: .utility)
+    private static let counters = Locked((live: 0, retiring: 0))
+
+    static var counts: (live: Int, retiring: Int) { counters.withLock { $0 } }
+
+    static func waitForRetirements() {
+        guard counters.withLock({ $0.retiring > 0 }) else { return }
+        retirementQueue.sync {}
+    }
+
+    fileprivate static func didCreate() {
+        counters.withLock { $0.live += 1 }
+    }
+
+    fileprivate static func retire(_ work: @escaping @Sendable () -> Void) {
+        counters.withLock {
+            $0.retiring += 1
+            retirementQueue.async(execute: work)
+        }
+    }
+
+    fileprivate static func didRetire() {
+        counters.withLock {
+            $0.live -= 1
+            $0.retiring -= 1
+        }
+    }
+}
+
 private struct RetiredVideoCompressionSession: @unchecked Sendable {
     let session: VTCompressionSession
 
     func invalidate() {
         VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: .queued)
-        DispatchQueue.global(qos: .utility).async { [self] in
+        SurfaceVideoCompressionSessions.retire { [self] in
             VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: .executing)
             // Drain callbacks before invalidation, without retaining the encoder or blocking its caller.
             let status = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
@@ -288,6 +318,7 @@ private struct RetiredVideoCompressionSession: @unchecked Sendable {
             }
             VTCompressionSessionInvalidate(session)
             VideoSessionDiagnostics.shared.transition(ObjectIdentifier(session), to: nil)
+            SurfaceVideoCompressionSessions.didRetire()
         }
     }
 }
@@ -497,12 +528,14 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_EnableLowLatencyRateControl: profile == .motion]
         if profile == .sharp { specification[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] = true }
+        SurfaceVideoCompressionSessions.waitForRetirements()
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &session),
             operation: "encoder-create", detail: "dimensions=\(width)x\(height),profile=\(profile)")
         guard let session else { throw SurfaceVideoError.missingOutput }
+        SurfaceVideoCompressionSessions.didCreate()
         VideoSessionDiagnostics.shared.created(ObjectIdentifier(session), kind: .encoder,
                                                width: width, height: height, profile: "\(profile)")
         let settings: [(CFString, CFTypeRef)] = profile == .sharp ? [
@@ -612,6 +645,7 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
             if changed || session == nil || packet.keyframe {
                 let nextFormat = try packet.format(width: width, height: height)
                 clear()
+                SurfaceVideoCompressionSessions.waitForRetirements()
                 try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
                     decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
                     imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
