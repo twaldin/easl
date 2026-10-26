@@ -13,7 +13,7 @@ public enum HtmlChannel {
     /// against the board's root; a remote one is on a scratch board of its own (`Board.measuring`).
     /// A page with a `ref` reads its excerpts where the ref is now (`Board.linkSource`): the live
     /// worktree, else git objects at the ref's commit.
-    public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board, files: HostFiles? = nil) async throws -> JSONValue {
+    public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board, files: HostFiles? = nil, mayStartTurn: Bool = false, now: Date = Date()) async throws -> JSONValue {
         let object = board.objects[tile]
         if board.isRemote {
             // A page's messages are queued on this mirror, whose queue the host's integrations
@@ -85,14 +85,14 @@ public enum HtmlChannel {
             return .object([:])
 
         case .send(let payload):
-            return try send(payload, tile: tile, board: board)
+            return try send(payload, tile: tile, board: board, mayStartTurn: mayStartTurn, now: now)
         }
     }
 
     /// `canvasKit.send`: the page's JSON payload goes to the agent terminal that created the
-    /// tile, out of band (`Board.queueMessage`), so nothing is typed into its terminal. The
-    /// message names the tile; the reply names the queued message.
-    private static func send(_ payload: JSONValue, tile: ObjectID, board: Board) throws -> JSONValue {
+    /// tile, out of band, so nothing is typed into its terminal. The text is the payload alone.
+    /// The tile id and title travel in `from`, which easl fills, not in the page's bytes.
+    private static func send(_ payload: JSONValue, tile: ObjectID, board: Board, mayStartTurn: Bool, now: Date) throws -> JSONValue {
         try HtmlMessage.checkPayload(payload)
         let object = try board.object(tile)
         guard case .agent(let creator) = object.createdBy else {
@@ -110,12 +110,12 @@ public enum HtmlChannel {
         guard PromptTarget.takesMessages(creatorTile) else {
             throw HtmlError.unavailable("the agent in terminal \(creator) that created this page takes no messages: it needs an integration that takes them (agent.report protocol ≥ 1)")
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(payload) else { throw HtmlError.malformed("the payload is not JSON") }
-        let text = "HTML tile \(tile) \"\(Self.title(of: object))\" sent:\n\(String(decoding: data, as: UTF8.self))"
-        let message = AgentMessage(text: text, from: nil, html: tile, label: nil, when: .now, mentions: [])
-        try board.queueMessage(message, to: creator)
+        guard PromptTarget.takesPageMessages(creatorTile) else {
+            throw HtmlError.unavailable("the agent in terminal \(creator) that created this page does not take page messages: it needs an integration at protocol ≥ 2")
+        }
+        guard let text = HtmlSendBudget.payloadText(payload) else { throw HtmlError.malformed("the payload is not JSON") }
+        let message = AgentMessage(text: text, from: nil, html: tile, label: nil, when: .now, mentions: [], mayStartTurn: mayStartTurn)
+        try board.queueHtmlMessage(message, to: creator, now: now)
         return .object(["terminal": .string(creator), "message": .string(message.id)])
     }
 

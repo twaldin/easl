@@ -450,19 +450,21 @@ struct HtmlChannelTests {
 
     @Test func aPagesSendReachesTheAgentTerminalThatCreatedIt() async throws {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
+        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
         let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: terminal)
 
         let reply = try await HtmlChannel.handle(.send(payload: .object(["answer": .string("b"), "question": .number(2)])), tile: page.id, board: board)
         #expect(reply["terminal"] == .string(terminal))
-        let queued = try #require(board.messages[terminal])
+        #expect(board.messages[terminal] == nil)
+        let queued = try #require(board.htmlMessages[terminal])
         #expect(queued.count == 1)
         let message = try #require(queued.first)
         #expect(reply["message"] == .string(message.id))
         #expect(message.from == nil && message.label == nil && message.html == page.id)
         #expect(message.attribution == "html")
+        #expect(message.mayStartTurn == false)
         #expect(message.when == .now && message.mentions.isEmpty)
-        #expect(message.text == "HTML tile \(page.id) \"Quiz\" sent:\n{\"answer\":\"b\",\"question\":2}")
+        #expect(message.text == "{\"answer\":\"b\",\"question\":2}")
     }
 
     @Test func aSendIsRefusedWhenTheCreatingTerminalIsGone() async throws {

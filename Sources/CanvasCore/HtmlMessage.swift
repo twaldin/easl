@@ -131,6 +131,8 @@ public enum HtmlError: Error, Equatable, CustomStringConvertible {
     case busy
     /// The tile detached before the work finished.
     case cancelled
+    /// A page send was refused because a queue or rate cap was already full. Nothing was kept.
+    case overBudget(String)
 
     public var description: String {
         switch self {
@@ -144,6 +146,7 @@ public enum HtmlError: Error, Equatable, CustomStringConvertible {
         case .unavailable(let reason): reason
         case .busy: "too many outstanding requests"
         case .cancelled: "cancelled"
+        case .overBudget(let reason): reason
         }
     }
 }

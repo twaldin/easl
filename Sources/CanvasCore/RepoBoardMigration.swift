@@ -347,6 +347,7 @@ public enum RepoBoardMigration {
             var objects = snapshot.objects.map { rerooter.reroot($0, branch: rerootBranch) }
             let tray = (snapshot.tray ?? []).map { rerooter.reroot($0) }
             let messages = (snapshot.messages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
+            let pages = (snapshot.htmlMessages ?? [:]).mapValues { $0.map { rerooter.reroot($0) } }
 
             var region: CanvasObject?
             if legacy.url != base?.url, !objects.isEmpty {
@@ -402,6 +403,7 @@ public enum RepoBoardMigration {
             // Old names keep reaching their terminals; messages not yet taken stay queued.
             target.aliases = (target.aliases ?? [:]).merging(snapshot.aliases ?? [:]) { old, _ in old }.nilIfEmpty
             target.messages = (target.messages ?? [:]).merging(messages) { old, new in old + new }.nilIfEmpty
+            target.htmlMessages = (target.htmlMessages ?? [:]).merging(pages) { old, new in old + new }.nilIfEmpty
             target.revision = max(target.revision, snapshot.revision)
             if !(anchor == .main && isMainCheckout(legacy)) || region != nil {
                 let path = GitWorktree.normalized(legacy.top)

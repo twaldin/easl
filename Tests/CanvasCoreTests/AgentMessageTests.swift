@@ -98,7 +98,7 @@ final class AgentMessageTests {
 
     @Test func anHtmlPagesSendReachesItsCreatingTerminalsInboxAsThePagesMessage() async throws {
         let host = terminal("page-host")
-        try omp(host, .idle, seq: 1)
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
         let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: host)
         let integration = try connect()
         integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(host)","waitMs":5000}}"#)
@@ -110,7 +110,9 @@ final class AgentMessageTests {
         let message = try #require(polled["result"]?["messages"]?.array?.first, "\(polled)")
         #expect(message["attribution"] == .string("html") && message["when"] == .string("now"))
         #expect(message["from"] == .object(["html": .string(page.id), "name": .string("Quiz"), "board": .string(board.id)]))
-        #expect(message["text"] == .string("HTML tile \(page.id) \"Quiz\" sent:\n{\"answer\":\"b\"}"))
+        #expect(message["mayStartTurn"] == .bool(false) && message["untrustedPageContent"] == .bool(true))
+        #expect(message["text"] == .string("{\"answer\":\"b\"}"))
+        #expect(board.messages[host] == nil)
     }
 
     @Test func aScriptsMessageIsTheUsersAndALongPollTakesItAsItArrives() async throws {
@@ -443,4 +445,68 @@ final class AgentMessageTests {
         try BoardStore.export(board, to: exported)
         #expect(!(try String(contentsOf: exported, encoding: .utf8)).contains("Nightly failed."))
     }
+
+    @Test func anInboxReturnsHtmlAndUserMessagesAsSeparateItems() async throws {
+        let host = terminal("mixed-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: host)
+        _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": .string("user-said-this"), "from": .string("machine-watch")])
+        _ = try await HtmlChannel.handle(.send(payload: .string("page-said-this")), tile: page.id, board: board, mayStartTurn: true)
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let messages = try #require(taken["result"]?["messages"]?.array)
+        #expect(messages.count == 2)
+        let user = try #require(messages.first { $0["attribution"] == .string("user") })
+        let html = try #require(messages.first { $0["attribution"] == .string("html") })
+        #expect(user["text"] == .string("user-said-this"))
+        #expect(user["mayStartTurn"] == nil && user["untrustedPageContent"] == nil)
+        #expect(html["text"] == .string("\"page-said-this\""))
+        #expect(html["mayStartTurn"] == .bool(true) && html["untrustedPageContent"] == .bool(true))
+        #expect(html["from"]?["html"] == .string(page.id))
+        #expect(user["text"]?.string?.contains("page-said-this") != true)
+        #expect(html["text"]?.string?.contains("user-said-this") != true)
+    }
+
+    @Test func anInboxBatchKeepsTheExcessUnacked() async throws {
+        let host = terminal("batch-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let now = Date(timeIntervalSince1970: 120_000)
+        var ids: [String] = []
+        for pageIndex in 0..<5 {
+            let page = board.create(type: .html, props: .object(["html": .string("<p>\(pageIndex)</p>")]), caller: host)
+            for index in 0..<8 {
+                let reply = try await HtmlChannel.handle(.send(payload: .string("p\(pageIndex)-\(index)")), tile: page.id, board: board, now: now)
+                ids.append(try #require(reply["message"]?.string))
+            }
+        }
+        let first = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let firstIds = first["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
+        #expect(firstIds.count == HtmlSendBudget.inboxCount)
+        let second = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let secondIds = second["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
+        #expect(Set(firstIds + secondIds) == Set(ids))
+        #expect(board.htmlMessages[host]?.count == ids.count)
+
+        let wide = terminal("byte-host")
+        try board.reportLifecycle(tile: wide, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let heavy = JSONValue.string(String(repeating: "z", count: 60_000))
+        var heavyIds: [String] = []
+        let later = Date(timeIntervalSince1970: 130_000)
+        for pageIndex in 0..<4 {
+            let page = board.create(type: .html, props: .object(["html": .string("<p>b\(pageIndex)</p>")]), caller: wide)
+            for index in 0..<3 {
+                let reply = try await HtmlChannel.handle(.send(payload: heavy), tile: page.id, board: board, now: later.addingTimeInterval(Double(index) * 2))
+                heavyIds.append(try #require(reply["message"]?.string))
+            }
+        }
+        let batch = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
+        let rendered = try #require(batch["result"]?["messages"]?.array)
+        #expect(rendered.count < heavyIds.count)
+        #expect(HtmlSendBudget.responseBytes(rendered) <= HtmlSendBudget.inboxBytes)
+        let rest = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
+        let restIds = rest["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
+        let batchIds = rendered.compactMap { $0["id"]?.string }
+        #expect(Set(batchIds + restIds) == Set(heavyIds))
+        #expect(board.htmlMessages[wide]?.count == heavyIds.count)
+    }
+
 }

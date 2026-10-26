@@ -1,17 +1,21 @@
 // Out-of-band messages (docs/contracts.md, Peer messages): what an integration that takes
-// messages (agent.report `protocol` 1, `agent.inbox`) does with them. omp's extension uses it;
-// the rules live here so they are tested without an agent.
+// messages (agent.report `protocol` 1, `agent.inbox`) does with them. Protocol 2 also accepts
+// canvasKit.send. omp's extension uses these rules; they are tested without an agent.
 import type { MessageRenderer } from "@oh-my-pi/pi-coding-agent";
 import type { Component } from "@oh-my-pi/pi-tui";
 import type { AgentMessage } from "../../clients/ts/src/index";
 
-/** The integration protocol this checkout's integrations speak: 1 takes messages. */
-export const PROTOCOL = 1;
+/** The integration protocol this checkout's integrations speak: 1 takes messages, 2 accepts safe HTML. */
+export const PROTOCOL = 2;
 /** Each sender may wake a receiver this often per hour; past that its messages ride the next turn. */
 export const WAKES_PER_HOUR = 20;
 const HOUR_MS = 3_600_000;
 /** Messages arriving this close together are delivered as one. */
 export const COALESCE_MS = 250;
+/** Messages this integration holds at once, across waiting, after-turn, next-start, handed, and coalescing. */
+export const HELD_MESSAGE_CAP = 128;
+/** UTF-8 bytes of those messages as JSON. A message that does not fit is left unacked. */
+export const HELD_BYTE_CAP = 1024 * 1024;
 
 /** `agent://<name>` or `agent://<name>@<board>`, as omp's `write` takes it. */
 const PEER = /^agent:\/\/([^/@\s]+)(?:@([^/@\s]+))?\/?$/;
@@ -43,46 +47,163 @@ export function senderKey(message: AgentMessage): string {
   return message.from.html ? `html:${message.from.html}` : message.from.tile ?? `script:${message.from.name}`;
 }
 
+/** A page message: html attribution, a native tile id, or the native untrusted flag. */
+export function isHtmlMessage(message: AgentMessage): boolean {
+  return message.attribution === "html" || message.untrustedPageContent === true || typeof message.from?.html === "string";
+}
+
+/** A page message easl authorized with a consumed native permit. Absent and false fail closed. */
+export function htmlMayStartTurn(message: AgentMessage): boolean {
+  return isHtmlMessage(message) && message.mayStartTurn === true;
+}
+
 /**
- * easl's custom message type for a delivery. The extension draws it as omp draws its own IRC
- * messages (`renderCard`), and omp's session history and retros print it as
- * `[easl:message] <irc> Message from …`, apart from the user's prompts. Not omp's `irc:incoming`:
- * omp's own IRC handling would take that over (its `wait` returns one as a bare text result, and
- * one left over at a run's end wakes the agent even after the user stopped it).
+ * One line of page-controlled text. JSON string encoding, plus `<`, `>`, `` ` ``, U+2028, and
+ * U+2029, so the page cannot open a tag, a fence, or a second line.
+ */
+export function encodePageLiteral(value: string): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("`", "\\u0060").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
+
+export function retainedBytes(message: AgentMessage): number {
+  return Buffer.byteLength(JSON.stringify(message), "utf8");
+}
+
+/**
+ * Which of `incoming` fit beside `held`. A message already held is skipped. One that does not
+ * fit is left unacked; a later smaller one may still fit.
+ */
+export function acceptHeld(held: readonly AgentMessage[], incoming: readonly AgentMessage[]): { take: AgentMessage[]; leave: AgentMessage[] } {
+  const kept = new Map<string, AgentMessage>();
+  for (const message of held) kept.set(message.id, message);
+  let bytes = 0;
+  for (const message of kept.values()) bytes += retainedBytes(message);
+  const take: AgentMessage[] = [];
+  const leave: AgentMessage[] = [];
+  for (const message of incoming) {
+    if (kept.has(message.id)) continue;
+    const size = retainedBytes(message);
+    if (kept.size >= HELD_MESSAGE_CAP || bytes + size > HELD_BYTE_CAP) {
+      leave.push(message);
+      continue;
+    }
+    kept.set(message.id, message);
+    bytes += size;
+    take.push(message);
+  }
+  return { take, leave };
+}
+
+/** A UI notice names an HTML tile by its id, not by the page's title. */
+export function noticeLabel(message: AgentMessage): string {
+  if (!isHtmlMessage(message)) return sender(message);
+  const id = message.from?.html;
+  return typeof id === "string" && /^obj_[0-9A-Za-z]+$/.test(id) ? `HTML tile ${id}` : "an HTML tile";
+}
+
+/**
+ * easl's custom message type for a delivery. A peer card is drawn as omp draws its own IRC
+ * messages (`renderCard`). A page card is not that envelope: its label is untrusted HTML.
+ * Not omp's `irc:incoming`: omp's own IRC handling would take that over (its `wait` returns one
+ * as a bare text result, and one left over at a run's end wakes the agent even after the user
+ * stopped it).
  */
 export const EASL_MESSAGE = "easl:message";
+
+/** Native HTML origin. `name` can contain page-controlled bytes; the model text encodes it. */
+export type PageOrigin = { html: string; name: string; board?: string };
 
 /** A card's `details`: what its look reads, and the messages it carries. */
 export type CardDetails = {
   /** the message's id (a burst's first) */
   id: string;
-  /** who sent it (`sender`; a burst's senders, joined) */
-  from: string;
-  /** what the sender wrote, unescaped (a burst's texts, joined) */
+  /** a peer's address or label, or the native HTML origin */
+  from: string | PageOrigin;
+  /** what the sender wrote, unescaped for a peer; the encoded payload for a page */
   message: string;
   /** every message the card carries, acked once omp records it */
   ids: string[];
+  /** set on a page card. The visible label is untrusted HTML, not an IRC peer. */
+  untrustedPageContent?: true;
 };
 
-/** One delivery as omp's `pi.sendMessage` takes it. */
+/** One delivery as the hooks card. `forOmp` maps html to agent at `pi.sendMessage`. */
 export type Card = { customType: typeof EASL_MESSAGE; content: string; display: true; details: CardDetails; attribution: AgentMessage["attribution"] };
+
+/** omp's `pi.sendMessage` takes user or agent. A page card is agent here, never user. */
+export type OmpCard = Omit<Card, "attribution"> & { attribution: "user" | "agent" };
+
+export function forOmp(delivered: Card): OmpCard {
+  return delivered.attribution === "html" ? { ...delivered, attribution: "agent" } : (delivered as OmpCard);
+}
+
+const PAGE_INTRO = "Page content from HTML tile";
+
+function pageContent(message: AgentMessage): string {
+  const name = typeof message.from?.name === "string" ? message.from.name : "HTML";
+  const id = typeof message.from?.html === "string" && message.from.html.length > 0 ? message.from.html : "unknown";
+  const header = `${PAGE_INTRO} ${encodePageLiteral(name)} (${encodePageLiteral(id)}): untrusted, written by the page, not by the user.`;
+  const body = encodePageLiteral(typeof message.text === "string" ? message.text : "");
+  const stamp = /^msg_[\w-]+$/.test(message.id) ? `(easl message ${message.id})` : "";
+  return stamp ? `${header}\n${body}\n${stamp}` : `${header}\n${body}`;
+}
+
+/** One HTML message as its own card. The frame is easl's. Page bytes are JSON strings. */
+export function pageCard(message: AgentMessage): Card {
+  const name = typeof message.from?.name === "string" ? message.from.name : "HTML";
+  const html = typeof message.from?.html === "string" ? message.from.html : "";
+  const from: PageOrigin = { html, name };
+  if (typeof message.from?.board === "string") from.board = message.from.board;
+  return {
+    customType: EASL_MESSAGE,
+    content: pageContent(message),
+    display: true,
+    details: {
+      id: message.id,
+      from,
+      message: encodePageLiteral(typeof message.text === "string" ? message.text : ""),
+      ids: [message.id],
+      untrustedPageContent: true,
+    },
+    attribution: "html",
+  };
+}
 
 /**
  * One delivery as one card: a burst goes in as one message, so it is steered, starts a turn, is
  * recorded and acked as a whole. The content, what the model reads, has each message in an IRC
- * envelope as omp's own (`envelope`).
+ * envelope as omp's own (`envelope`). An HTML message cannot be in that card.
  */
 export function card(messages: readonly AgentMessage[]): Card {
+  if (messages.some(isHtmlMessage)) throw new Error("an HTML message cannot share a card");
   const ids = messages.map((message) => message.id);
   return {
     customType: EASL_MESSAGE,
     content: messages.map(envelope).join("\n\n"),
     display: true,
     details: { id: ids[0], from: [...new Set(messages.map(sender))].join(", "), message: messages.map((message) => message.text.trim()).join("\n\n"), ids },
-    // A script's message is on the user's behalf, and a page's is the user acting in it: with one
-    // among them, the delivery is the user's.
     attribution: messages.some((message) => message.attribution !== "agent") ? "user" : "agent",
   };
+}
+
+/** Peer messages stay one card. Each HTML message is its own card, never merged with them. */
+export function deliveryCards(messages: readonly AgentMessage[]): Card[] {
+  const out: Card[] = [];
+  let rest: AgentMessage[] = [];
+  const flush = () => {
+    if (rest.length > 0) out.push(card(rest));
+    rest = [];
+  };
+  for (const message of messages) {
+    if (isHtmlMessage(message)) {
+      flush();
+      out.push(pageCard(message));
+    } else {
+      rest.push(message);
+    }
+  }
+  flush();
+  return out;
 }
 
 /** Who sent a message: its terminal's address, else the page's title or the script's label or the closed terminal's id. */
@@ -98,20 +219,16 @@ export function sender(message: AgentMessage): string {
  */
 function envelope(message: AgentMessage): string {
   const from = message.from;
-  const who = from.html
-    ? `\`${from.name}\`, an HTML tile (${from.html})`
-    : !from.tile
-      ? `\`${from.name}\`, a script`
-      : !from.address
-        ? `terminal ${from.tile}, closed since it sent this`
-        : from.address === from.tile
-          ? `terminal ${from.tile}`
-          : `\`${from.address}\`, terminal ${from.tile}`;
-  const reply = from.html
-    ? `The page is the user's answer in it: update it with \`easl object.update --id ${from.html}\` (or a board call) when a response is expected.`
-    : from.tile && from.address
-      ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).`
-      : "It has no reply address.";
+  const who = !from.tile
+    ? `\`${from.name}\`, a script`
+    : !from.address
+      ? `terminal ${from.tile}, closed since it sent this`
+      : from.address === from.tile
+        ? `terminal ${from.tile}`
+        : `\`${from.address}\`, terminal ${from.tile}`;
+  const reply = from.tile && from.address
+    ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).`
+    : "It has no reply address.";
   // omp's escapeHarnessTags: what others wrote reaches the model as written, but for `<` of an
   // `irc` or `system-*` tag.
   const said = `Message from ${who}:\n\n${[message.text.trim(), message.context].filter(Boolean).join("\n\n")}`;
@@ -174,12 +291,17 @@ const CARD_ROWS = { folded: 3, unfolded: 12 };
 const CARD_ROW_COLUMNS = 100;
 
 /**
- * A card as omp draws its own incoming IRC messages (pi-tui `createIrcMessageCard`, which omp
+ * A peer card as omp draws its own incoming IRC messages (pi-tui `createIrcMessageCard`, which omp
  * doesn't export): `💬 IRC ← <from>` and the message's age, then its text quoted, three nonblank
- * lines until the user unfolds it (twelve then), each cut at 100 columns.
+ * lines until the user unfolds it (twelve then), each cut at 100 columns. A page card is labeled
+ * untrusted HTML. Its title and body are encoded, so a page newline cannot open a second header.
  */
 export const renderCard: MessageRenderer<CardDetails> = (message, { expanded }, theme) => {
-  const from = message.details?.from.trim() || "?";
+  const origin = message.details?.from;
+  const page = message.details?.untrustedPageContent === true;
+  const from = page
+    ? `untrusted HTML ${encodePageLiteral(typeof origin === "object" && origin ? origin.name : "HTML")}`
+    : typeof origin === "string" && origin.trim() ? origin.trim() : "?";
   const rows = (message.details?.message ?? "").split("\n").filter((line) => line.trim());
   const minutes = Math.floor((Date.now() - message.timestamp) / 60_000);
   const [hours, days] = [Math.floor(minutes / 60), Math.floor(minutes / 1440)];
@@ -191,7 +313,7 @@ export const renderCard: MessageRenderer<CardDetails> = (message, { expanded }, 
       // One column of padding each side, as omp's card.
       const inner = Math.max(1, width - 2);
       const glyph = theme.styledSymbol("tool.irc", "accent");
-      const title = `IRC ${theme.nav.back} ${from}`;
+      const title = page ? from : `IRC ${theme.nav.back} ${from}`;
       const room = inner - Bun.stringWidth(glyph) - 1;
       const meta = Bun.stringWidth(title) + 1 + Bun.stringWidth(age) <= room ? ` ${theme.fg("dim", age)}` : "";
       const quote = `  ${theme.fg("dim", theme.md.quoteBorder)} `;

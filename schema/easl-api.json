@@ -1070,7 +1070,7 @@
         "name": { "type": "string" },
         "address": { "type": "string", "description": "how to reach this terminal as a `target` from any board, resolving to it alone: `name@board` (the board's name is its root folder's name) for a named terminal, `name@<board id>` while another open board's folder has that name too (or its own is gone), its tile id when it has no name or another terminal on its board has the same one" },
         "aliases": { "type": "array", "items": { "type": "string" }, "description": "names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none" },
-        "protocol": { "type": "integer", "description": "the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt)" },
+        "protocol": { "type": "integer", "description": "the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). 2 and later also accept canvasKit.send from an HTML tile this terminal created; easl does not queue those sends to protocol 1. Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt)" },
         "kind": { "type": "string", "description": "the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: \"notifications\"`), else unknown" },
         "title": { "type": "string", "description": "the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's \"✋ Action Required (glow)\"; absent when none" },
         "program": { "type": "string", "description": "what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt" },
@@ -1092,16 +1092,18 @@
       "required": ["id", "text", "from", "attribution", "when", "queuedAt"],
       "properties": {
         "id": { "$ref": "#/definitions/MessageId", "description": "`msg_…`; ack it (agent.inbox `ack`) once the agent has it" },
-        "text": { "type": "string", "description": "as the sender wrote it" },
+        "text": { "type": "string", "description": "as the sender wrote it. An HTML page's text is the payload as single-line JSON, with no title and no easl header" },
         "from": { "$ref": "#/definitions/MessageSender" },
-        "attribution": { "enum": ["agent", "user", "html"], "description": "agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`); user: a script with no tile (its `from` label), on the user's behalf" },
+        "attribution": { "enum": ["agent", "user", "html"], "description": "agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`), untrusted page content, never the user; user: a script with no tile (its `from` label), on the user's behalf" },
         "when": { "enum": ["now", "next-turn"], "description": "now: into the running turn (a steer) or a new turn when idle; next-turn: never into a running turn, only once it has ended" },
+        "mayStartTurn": { "type": "boolean", "description": "HTML only, set by easl, never by the page. True only when easl consumed a fresh native click or key permit for this tile at bridge receipt. False or absent: do not start or steer a turn for this message. Omitted on a non-HTML message." },
+        "untrustedPageContent": { "type": "boolean", "description": "true when an HTML page wrote `text`. Omitted on a non-HTML message." },
         "queuedAt": { "type": "string", "format": "date-time" },
         "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "the board objects the sender attached (agent.prompt `mentions`); absent when none" },
         "context": { "type": "string", "description": "those mentions resolved now, as the hand-off block a drain gives (`<canvas-mentions …>` naming the sender); absent when none" }
       },
       "additionalProperties": false,
-      "description": "An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1)"
+      "description": "An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1). HTML attribution stays html. mayStartTurn is easl's permit and does not change that attribution."
     },
     "MessageSender": {
       "type": "object",
@@ -2039,7 +2041,7 @@
           "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" },
           "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" },
           "error": { "type": "string", "description": "only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message and as its lifecycle's `error`, never `done`, until a turn starts (also through agent.restart), and `agent.read` `final` reports the answer as cut off (`cutOff`)" },
-          "protocol": { "type": "integer", "minimum": 0, "description": "the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal" },
+          "protocol": { "type": "integer", "minimum": 0, "description": "the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal. 2: it also accepts canvasKit.send from an HTML tile it created. Ordinary agent and script messages stay available at 1." },
           "draft": { "type": "boolean", "description": "the agent's input editor holds text the user hasn't sent (kept as `props.agent.draft`; every report of an integration that tracks it says it, a report without it means unknown). agent.restart refuses unless it is false. omp's extension reports it when the editor goes from empty to holding text and back, whether the user typed it or omp put it there (a restored draft)" },
           "pid": { "type": "integer", "minimum": 1, "description": "the agent's process id (kept as `props.agent.pid`; a report without it forgets it): agent.list `pid`" }
         },
@@ -2172,7 +2174,7 @@
       }
     },
     "agent.inbox": {
-      "description": "A terminal's agent integration takes the messages queued for it (agent.prompt to a target whose integration reports `protocol` ≥ 1) and delivers them to its agent, without touching the terminal. `ack` first drops the messages it delivered (`started`: that delivery started a new turn, so agent.wait now waits for that turn as after a prompt to an idle agent; otherwise it joined the running turn). Then it answers the messages waiting that no open connection holds, oldest first, each sender's name and each message's mentions resolved now; they are held by this connection until it acks them or closes, and offered again then. With `waitMs`, when none waits, it answers as soon as one arrives (at most that long, then with none). An integration acks a message once its agent has recorded it, never before, and dedupes by id (one comes again after a lost connection or a restart). Messages are saved with the board, so an app restart keeps them; when the agent session they were queued for ends first (agent.release, its integration dying, another session reported, the terminal deleted) they bounce, as agent.prompt says.",
+      "description": "A terminal's agent integration takes the messages queued for it (agent.prompt to a target whose integration reports `protocol` ≥ 1) and delivers them to its agent, without touching the terminal. `ack` first drops the messages it delivered (`started`: that delivery started a new turn, so agent.wait now waits for that turn as after a prompt to an idle agent; otherwise it joined the running turn). Then it answers the messages waiting that no open connection holds, oldest first, each sender's name and each message's mentions resolved now; they are held by this connection until it acks them or closes, and offered again then. With `waitMs`, when none waits, it answers as soon as one arrives (at most that long, then with none). An integration acks a message once its agent has recorded it, never before, and dedupes by id (one comes again after a lost connection or a restart). Messages are saved with the board, so an app restart keeps them; when the agent session they were queued for ends first (agent.release, its integration dying, another session reported, the terminal deleted) they bounce, as agent.prompt says. A reply carries at most 32 messages and 256 KiB of the serialized result. An HTML page message has attribution html, untrustedPageContent true, and mayStartTurn true only after easl consumed a native click or key permit. HTML page messages are saved apart from the legacy messages snapshot so an older app skips them.",
       "params": {
         "type": "object",
         "required": ["tile"],

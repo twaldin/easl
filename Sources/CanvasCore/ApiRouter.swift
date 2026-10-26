@@ -684,7 +684,7 @@ public final class ApiRouter {
         }
         if board.agentExited(waiter.tile) { return Self.error(waiter.id, Self.agentExited(terminal)) }
         // A message the terminal's integration hasn't delivered yet: its turn hasn't started.
-        if board.messages[waiter.tile]?.isEmpty == false { return nil }
+        if board.hasPendingTurn(waiter.tile) { return nil }
         if let prompted = pendingPrompts[waiter.tile] {
             guard Date().timeIntervalSince(prompted) >= promptStartGrace else { return nil }
             return Self.error(waiter.id, Failure("unavailable", "\(terminal.id)'s last agent.prompt started no turn within \(promptStartGrace.formatted()) s "
@@ -1121,7 +1121,7 @@ public final class ApiRouter {
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
         let offered = offer(tile, on: board, to: connection)
-        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, try await inboxResult(offered, to: tile, on: board)) }
+        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, await inboxResult(offered, to: tile, on: board, connection: connection)) }
         let waiter = InboxWaiter(id: id, connection: connection, tile: tile)
         inboxWaiters.append(waiter)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
@@ -1134,19 +1134,35 @@ public final class ApiRouter {
         return nil
     }
 
-    /// The messages for `tile` no open connection holds, now held by `connection`; none while
-    /// agent.restart kills and relaunches it (`restarting`).
+    /// The messages for `tile` no open connection holds, now held by `connection`, at most one
+    /// inbox batch. The rest stay free for the next poll. None while agent.restart kills and
+    /// relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
         guard !restarting.contains(tile) else { return [] }
-        let free = (board.messages[tile] ?? []).filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
-        for message in free { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
-        return free
+        let free = board.pendingMessages(for: tile).filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
+        let reserved = Array(free.prefix(HtmlSendBudget.inboxCount))
+        for message in reserved { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
+        return reserved
     }
 
-    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board) async throws -> JSONValue {
-        var rendered: [JSONValue] = []
-        for message in messages { rendered.append(await board.delivered(message, to: tile, boards: Array(registry.boards.values))) }
-        return .object(["messages": .array(rendered)])
+    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async -> JSONValue {
+        var chosen: [JSONValue] = []
+        var kept = 0
+        for message in messages {
+            let item = await board.delivered(message, to: tile, boards: Array(registry.boards.values))
+            let next = chosen + [item]
+            if !chosen.isEmpty, HtmlSendBudget.responseBytes(next) > HtmlSendBudget.inboxBytes { break }
+            chosen.append(item)
+            kept += 1
+            if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes { break }
+        }
+        if kept < messages.count {
+            for message in messages[kept...] {
+                let key = MessageHold(tile: tile, message: message.id)
+                if messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
+            }
+        }
+        return .object(["messages": .array(chosen)])
     }
 
     /// A message reached `tile`'s queue (or agent.restart let it go again): the oldest open long
@@ -1157,7 +1173,7 @@ public final class ApiRouter {
         let waiter = inboxWaiters.remove(at: index)
         let offered = offer(tile, on: board, to: waiter.connection)
         Task { @MainActor in
-            let result = (try? await inboxResult(offered, to: tile, on: board)) ?? .object(["messages": .array([])])
+            let result = await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
             waiter.connection.send(Self.ok(waiter.id, result))
         }
     }
@@ -1379,8 +1395,8 @@ public final class ApiRouter {
     private func finalAnswer(of terminal: CanvasObject, on board: Board, _ p: JSONValue) throws -> JSONValue {
         guard p["lines"] == nil, p["since"] == nil else { throw Failure("invalid_params", "final takes no lines or since: it returns the whole last answer") }
         let state = Self.state(of: terminal)
-        if pendingPrompts[terminal.id] != nil || board.messages[terminal.id]?.isEmpty == false || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts[terminal.id] != nil || board.messages[terminal.id]?.isEmpty == false ? "prompted" : state)): agent.wait for it, then read final")
+        if pendingPrompts[terminal.id] != nil || board.hasPendingTurn(terminal.id) || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts[terminal.id] != nil || board.hasPendingTurn(terminal.id) ? "prompted" : state)): agent.wait for it, then read final")
         }
         let cutOff = board.turnErrors[terminal.id]
         guard let answer = board.finalAnswers[terminal.id] else {

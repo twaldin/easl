@@ -22,9 +22,12 @@ public struct AgentMessage: Codable, Equatable, Sendable {
     public var when: When
     /// The board objects the sender attached, as a hand-off's (`HandoffMention`).
     public var mentions: [Mention]
+    /// Native decision, set only when a page sent it. True only if easl consumed a fresh native
+    /// click or key permit at bridge receipt. Absent or false never starts a turn.
+    public var mayStartTurn: Bool?
     public var queuedAt: Date
 
-    public init(id: String = IDs.make("msg"), text: String, from: ObjectID?, html: ObjectID? = nil, label: String?, when: When, mentions: [Mention], queuedAt: Date = Date()) {
+    public init(id: String = IDs.make("msg"), text: String, from: ObjectID?, html: ObjectID? = nil, label: String?, when: When, mentions: [Mention], mayStartTurn: Bool? = nil, queuedAt: Date = Date()) {
         self.id = id
         self.text = text
         self.from = label == nil ? from : nil
@@ -32,7 +35,38 @@ public struct AgentMessage: Codable, Equatable, Sendable {
         self.label = label
         self.when = when
         self.mentions = mentions
+        self.mayStartTurn = self.html == nil ? nil : mayStartTurn
         self.queuedAt = queuedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, from, html, label, when, mentions, mayStartTurn, queuedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        text = try container.decode(String.self, forKey: .text)
+        from = try container.decodeIfPresent(ObjectID.self, forKey: .from)
+        html = try container.decodeIfPresent(ObjectID.self, forKey: .html)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        when = try container.decode(When.self, forKey: .when)
+        mentions = try container.decode([Mention].self, forKey: .mentions)
+        mayStartTurn = try container.decodeIfPresent(Bool.self, forKey: .mayStartTurn)
+        queuedAt = try container.decode(Date.self, forKey: .queuedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(from, forKey: .from)
+        try container.encodeIfPresent(html, forKey: .html)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encode(when, forKey: .when)
+        try container.encode(mentions, forKey: .mentions)
+        try container.encodeIfPresent(mayStartTurn, forKey: .mayStartTurn)
+        try container.encode(queuedAt, forKey: .queuedAt)
     }
 
     /// `agent` when a terminal sent it, `html` when a page sent it (`canvasKit.send`), `user` for
@@ -75,6 +109,13 @@ extension PromptTarget {
     public static func takesMessages(_ terminal: CanvasObject) -> Bool {
         drains(terminal) && (terminal.props["agent"]?["protocol"]?.int ?? 0) >= 1
     }
+
+    /// Page messages need the safe HTML contract (`protocol` ≥ 2). Ordinary prompts stay at 1.
+    public static let pageMessageProtocol = 2
+
+    public static func takesPageMessages(_ terminal: CanvasObject) -> Bool {
+        takesMessages(terminal) && (terminal.props["agent"]?["protocol"]?.int ?? 0) >= pageMessageProtocol
+    }
 }
 
 extension Board {
@@ -88,13 +129,59 @@ extension Board {
     /// prompt until an agent reports there again or the tile is released.
     public func agentExited(_ terminal: ObjectID) -> Bool { exitedAgents.contains(terminal) }
 
-    /// Queues `message` for `terminal`, after those already waiting.
+    /// Queues `message` for `terminal`, after those already waiting. A page message cannot enter
+    /// this queue: 0.3.2 would read it as a user script.
     public func queueMessage(_ message: AgentMessage, to terminal: ObjectID) throws {
+        guard message.html == nil else { throw BoardError.invalidParams("a page message is not a user or agent message") }
         let tile = try object(terminal)
         guard tile.type == .terminal else { throw BoardError.invalidParams("\(terminal) is not a terminal tile") }
         messages[terminal, default: []].append(message)
         onChange?()
         onMessageQueued?(terminal)
+    }
+
+    /// Queues a page message. Refusals keep nothing and do not charge the rate.
+    public func queueHtmlMessage(_ message: AgentMessage, to terminal: ObjectID, now: Date = Date()) throws {
+        guard let page = message.html, message.mayStartTurn != nil else {
+            throw BoardError.invalidParams("a page message needs its tile and an explicit turn flag")
+        }
+        let tile = try object(terminal)
+        guard tile.type == .terminal else { throw BoardError.invalidParams("\(terminal) is not a terminal tile") }
+        let bytes = HtmlSendBudget.retainedBytes(message)
+        try HtmlSendBudget.check(page: page, destination: terminal, bytes: bytes, queues: htmlMessages, rate: &htmlSendRate, now: now)
+        htmlMessages[terminal, default: []].append(message)
+        htmlSendRate.charge(page, at: now)
+        onChange?()
+        onMessageQueued?(terminal)
+    }
+
+    /// Ordinary messages, then page messages, oldest first. A tie keeps the ordinary message first.
+    func pendingMessages(for terminal: ObjectID) -> [AgentMessage] {
+        let ordinary = messages[terminal] ?? []
+        let pages = htmlMessages[terminal] ?? []
+        if pages.isEmpty { return ordinary }
+        if ordinary.isEmpty { return pages }
+        var merged: [AgentMessage] = []
+        merged.reserveCapacity(ordinary.count + pages.count)
+        var ordinaryIndex = 0
+        var pageIndex = 0
+        while ordinaryIndex < ordinary.count || pageIndex < pages.count {
+            let takeOrdinary = pageIndex == pages.count || (ordinaryIndex < ordinary.count && ordinary[ordinaryIndex].queuedAt <= pages[pageIndex].queuedAt)
+            if takeOrdinary {
+                merged.append(ordinary[ordinaryIndex])
+                ordinaryIndex += 1
+            } else {
+                merged.append(pages[pageIndex])
+                pageIndex += 1
+            }
+        }
+        return merged
+    }
+
+    /// A queued ordinary message, or a page message that may start a turn. Inert page data does not.
+    func hasPendingTurn(_ terminal: ObjectID) -> Bool {
+        if messages[terminal]?.isEmpty == false { return true }
+        return htmlMessages[terminal]?.contains { $0.mayStartTurn == true } == true
     }
 
     /// The mentions `targets` name as a message carries them: one each, in order (a target given
@@ -109,26 +196,34 @@ extension Board {
     }
 
     /// Drops the messages `ids` names from `terminal`'s queue (its integration delivered them);
-    /// returns those it dropped.
+    /// returns those it dropped. Page messages ack the same way and stay out of the user queue.
     @discardableResult
     public func ackMessages(_ ids: [String], of terminal: ObjectID) -> [AgentMessage] {
-        guard let waiting = messages[terminal] else { return [] }
-        let acked = waiting.filter { ids.contains($0.id) }
+        let wanted = Set(ids)
+        guard !wanted.isEmpty else { return [] }
+        let ordinary = messages[terminal] ?? []
+        let pages = htmlMessages[terminal] ?? []
+        let acked = (ordinary + pages).filter { wanted.contains($0.id) }
         guard !acked.isEmpty else { return [] }
-        let left = waiting.filter { !ids.contains($0.id) }
-        messages[terminal] = left.isEmpty ? nil : left
+        let ordinaryLeft = ordinary.filter { !wanted.contains($0.id) }
+        let pagesLeft = pages.filter { !wanted.contains($0.id) }
+        messages[terminal] = ordinaryLeft.isEmpty ? nil : ordinaryLeft
+        htmlMessages[terminal] = pagesLeft.isEmpty ? nil : pagesLeft
         onChange?()
         return acked
     }
 
     /// The agent session in `terminal` ended: released, its integration died, or another session
     /// (another agent, or the same agent's new conversation) took the tile. Its generation moves
-    /// on, and the messages still queued for it bounce.
+    /// on, and the ordinary messages still queued for it bounce. Page messages are dropped, not
+    /// bounced: a bounce would notify a script as the user.
     func endAgentSession(_ terminal: ObjectID) {
         agentSessions[terminal, default: 0] += 1
-        guard let waiting = messages.removeValue(forKey: terminal) else { return }
+        let pages = htmlMessages.removeValue(forKey: terminal)
+        let waiting = messages.removeValue(forKey: terminal)
+        if pages != nil || waiting != nil { onChange?() }
+        guard let waiting else { return }
         bouncing.append(MessageBounce(tile: terminal, name: objects[terminal].flatMap(AgentAddress.name(of:)), messages: waiting, deleted: false))
-        onChange?()
         flushBounces()
     }
 
@@ -144,11 +239,19 @@ extension Board {
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
     }
 
-    /// A deleted terminal's undelivered messages bounce once the step that deleted it closes with
-    /// it still gone; a deleted object leaves the messages that mentioned it, without that mention.
+    /// A deleted terminal's undelivered ordinary messages bounce once the step that deleted it
+    /// closes with it still gone. Page messages for that terminal, or sent by a deleted tile, are
+    /// dropped. A deleted object leaves the messages that mentioned it, without that mention.
     func forgetMessages(of removed: CanvasObject) {
+        htmlSendRate.forget(removed.id)
         if let waiting = messages.removeValue(forKey: removed.id) {
             bouncing.append(MessageBounce(tile: removed.id, name: AgentAddress.name(of: removed), messages: waiting, deleted: true))
+        }
+        htmlMessages.removeValue(forKey: removed.id)
+        for terminal in Array(htmlMessages.keys) {
+            let waiting = htmlMessages[terminal] ?? []
+            let left = waiting.filter { $0.html != removed.id }
+            htmlMessages[terminal] = left.isEmpty ? nil : left
         }
         for (terminal, waiting) in messages where waiting.contains(where: { $0.mentions.contains { $0.target.objectIDs.contains(removed.id) } }) {
             messages[terminal] = waiting.map { message in
@@ -203,6 +306,10 @@ extension Board {
             "attribution": .string(message.attribution), "when": .string(message.when.rawValue),
             "queuedAt": .string(message.queuedAt.formatted(.iso8601)),
         ]
+        if message.html != nil {
+            result["mayStartTurn"] = .bool(message.mayStartTurn == true)
+            result["untrustedPageContent"] = .bool(true)
+        }
         if !message.mentions.isEmpty {
             result["mentions"] = (try? JSONValue.encode(message.mentions)) ?? .array([])
             let block = await handoffBlock(message.mentions, from: message.from, fromName: senderName, for: terminal, index: 1)

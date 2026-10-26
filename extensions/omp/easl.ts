@@ -6,7 +6,7 @@
 //    unsent draft, and omp's pid
 //  - adds the board's standing orders (its note keyed `rules`, read each turn) to the system prompt
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
-//  - takes the messages other agents and scripts send this tile (agent.prompt, agent.inbox) and
+//  - takes the messages other agents, scripts, and HTML pages send this tile (agent.prompt, agent.inbox) and
 //    hands them to omp without touching the editor; `write agent://<name>` that omp doesn't know
 //    is delivered through easl (docs/contracts.md, Peer messages)
 //  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
+import { acceptHeld, COALESCE_MS, deliveryCards, EASL_MESSAGE, forOmp, GUIDANCE_BLOCK, guided, htmlMayStartTurn, isHtmlMessage, noticeLabel, peerAddress, plan, PROTOCOL, recordedIds, renderCard, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -383,8 +383,9 @@ export default function canvas(pi: ExtensionAPI): void {
     staged = staged.filter((entry) => !entry.committed);
     publish();
     // Messages over their senders' wake bound ride this turn, without interrupting it.
-    const riding = nextStart;
-    nextStart = [];
+    // Inert page messages that arrived during the turn already running stay until a later start.
+    const riding = nextStart.filter((message) => !inertAwaitingTurnEnd.has(message.id));
+    nextStart = nextStart.filter((message) => inertAwaitingTurnEnd.has(message.id));
     send(riding, "aside");
   });
 
@@ -400,7 +401,10 @@ export default function canvas(pi: ExtensionAPI): void {
       policy = undefined;
     }
     publish();
-    if (!active) setTimeout(releaseAfterTurn, 0);
+    if (!active) {
+      inertAwaitingTurnEnd.clear();
+      setTimeout(releaseAfterTurn, 0);
+    }
   });
 
   // Out-of-band messages (docs/contracts.md, Peer messages): easl queues `agent.prompt` for this
@@ -427,6 +431,12 @@ export default function canvas(pi: ExtensionAPI): void {
   let afterTurn: AgentMessage[] = [];
   // Messages over their senders' wake bound while nothing streams, riding the next turn that starts.
   let nextStart: AgentMessage[] = [];
+  // The burst in the coalesce window, counted in the hold before it is accepted.
+  let coalescing: AgentMessage[] = [];
+  // A refused offer closed the inbox. Wait before polling again so the retry does not spin.
+  let holdoff = false;
+  // Inert page messages that arrived while a turn was already running. They join only a start after that turn ends.
+  const inertAwaitingTurnEnd = new Set<string>();
   // Acks easl didn't take: sent with the next poll.
   let unacked: string[] = [];
   let polling = false;
@@ -457,6 +467,8 @@ export default function canvas(pi: ExtensionAPI): void {
     handed.clear();
     afterTurn = [];
     nextStart = [];
+    inertAwaitingTurnEnd.clear();
+    coalescing = [];
     marked.clear();
     prepared = false;
     policy = undefined;
@@ -469,46 +481,87 @@ export default function canvas(pi: ExtensionAPI): void {
     if (polling) return;
     polling = true;
     while (reporting) {
-      const ack = unacked;
+      if (holdoff) {
+        holdoff = false;
+        if (reporting) await Bun.sleep(INBOX_RETRY_MS);
+        if (!reporting) break;
+      }
+      const ackIds = unacked;
       unacked = [];
       let first: AgentMessage[];
       try {
-        first = (await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ack.length ? ack : undefined })).messages;
+        first = (await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined })).messages;
       } catch {
-        unacked.push(...ack);
+        unacked.push(...ackIds);
         inbox.close();
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
         continue;
       }
       if (first.length === 0) continue;
-      // A burst (several senders, or one sending several) goes in as one delivery; a follow-up
-      // that fails loses nothing already here.
-      await Bun.sleep(COALESCE_MS);
-      const more = await inbox.api.agent.inbox({ tile: tile! }).then(
-        (reply) => reply.messages,
-        () => {
-          inbox.close();
-          return [];
-        },
-      );
-      receive([...first, ...more]);
+      coalescing = first;
+      const firstIds = new Set(first.map((message) => message.id));
+      const firstFits = acceptHeld(heldMessages().filter((message) => !firstIds.has(message.id)), first).leave.length === 0;
+      let more: AgentMessage[] = [];
+      if (firstFits) {
+        // A burst goes in as one delivery. A follow-up that fails loses nothing already here.
+        // Skip it when this batch already fills the hold, so the rest stays native and unacked.
+        await Bun.sleep(COALESCE_MS);
+        more = await inbox.api.agent.inbox({ tile: tile! }).then(
+          (reply) => reply.messages,
+          () => {
+            inbox.close();
+            return [];
+          },
+        );
+        coalescing = [...first, ...more];
+      }
+      const refused = receive(coalescing);
+      coalescing = [];
+      if (refused) {
+        inbox.close();
+        holdoff = true;
+      }
     }
     polling = false;
   }
 
-  function receive(messages: readonly AgentMessage[]): void {
-    if (switching) return;
+  function receive(messages: readonly AgentMessage[]): boolean {
+    if (switching) return false;
     ack(messages.filter((message) => recorded.has(message.id)).map((message) => message.id), false);
-    const fresh = messages.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
-    for (const message of fresh) waiting.set(message.id, message);
-    deliver(fresh);
+    const incoming = messages.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
+    const incomingIds = new Set(incoming.map((message) => message.id));
+    const { take, leave } = acceptHeld(
+      heldMessages().filter((message) => !incomingIds.has(message.id)),
+      incoming,
+    );
+    for (const message of take) waiting.set(message.id, message);
+    if (take.length > 0) deliver(take);
+    return leave.length > 0;
+  }
+
+  function heldMessages(): AgentMessage[] {
+    const byId = new Map<string, AgentMessage>();
+    for (const message of coalescing) byId.set(message.id, message);
+    for (const message of waiting.values()) byId.set(message.id, message);
+    for (const message of afterTurn) byId.set(message.id, message);
+    for (const message of nextStart) byId.set(message.id, message);
+    for (const id of handed.keys()) {
+      const message = waiting.get(id);
+      if (message) byId.set(id, message);
+    }
+    return [...byId.values()];
   }
 
   // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
   function ack(ids: readonly string[], started: boolean): void {
     if (ids.length === 0) return;
     inbox.api.agent.inbox({ tile: tile!, ack: [...ids], started }).then(
-      (reply) => receive(reply.messages),
+      (reply) => {
+        if (receive(reply.messages)) {
+          inbox.close();
+          holdoff = true;
+        }
+      },
       () => {
         unacked.push(...ids);
         inbox.close();
@@ -516,16 +569,20 @@ export default function canvas(pi: ExtensionAPI): void {
     );
   }
 
-  // `now`: a steer while omp works (a question or approval keeps waiting, the message comes after
-  // it), else a new turn; `next-turn`: held until the running turn ends. A sender past its wake
-  // bound joins the step omp is streaming without interrupting it, or waits for the next turn to
-  // start (omp idle, or awaiting background work).
+  // `now`: a steer while omp works, else a new turn; `next-turn`: held until the running turn ends.
+  // A sender past its wake bound joins the step omp is streaming, or waits for the next turn to start.
+  // Inert HTML never wakes or steers, including when a turn ends. It joins the next start that is not this one.
   function deliver(messages: readonly AgentMessage[]): void {
     const steer: AgentMessage[] = [];
     const turn: AgentMessage[] = [];
     const aside: AgentMessage[] = [];
     const streaming = session ? !session.isIdle() : active;
     for (const message of messages) {
+      if (isHtmlMessage(message) && !htmlMayStartTurn(message)) {
+        nextStart.push(message);
+        if (active) inertAwaitingTurnEnd.add(message.id);
+        continue;
+      }
       switch (plan(message.when, { turn: active, streaming, mayWake: wakes.allows([senderKey(message)]) })) {
         case "steer":
           steer.push(message);
@@ -552,20 +609,19 @@ export default function canvas(pi: ExtensionAPI): void {
   function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
     if (messages.length === 0) return;
     if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
-    const ids = messages.map((message) => message.id);
     // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
-    // cut short. An omp streaming nothing (idle, or awaiting background work) starts a turn with
-    // the card instead (`triggerTurn`), one it doesn't prepare: whatever omp prepared before (a
-    // turn now paused, a preparation the user cancelled) is over. `aside` joins the step omp
-    // streams without interrupting it.
+    // cut short. An omp streaming nothing starts a turn with the card instead (`triggerTurn`).
+    // `aside` joins the step omp streams without interrupting it. Each HTML message is its own card.
     if (session ? session.isIdle() : !active) {
       prepared = false;
       policy = undefined;
     }
-    mark(ids);
-    pi.sendMessage(card(messages), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
     const at = Date.now();
-    for (const id of ids) handed.set(id, { started: how === "turn", at });
+    for (const item of deliveryCards(messages)) {
+      mark(item.details.ids);
+      pi.sendMessage(forOmp(item), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
+      for (const id of item.details.ids) handed.set(id, { started: how === "turn", at });
+    }
     recordCheck ??= setTimeout(unrecorded, RECORD_MS);
   }
 
@@ -595,6 +651,7 @@ export default function canvas(pi: ExtensionAPI): void {
       waiting.delete(id);
       handed.delete(id);
       recorded.add(id);
+      inertAwaitingTurnEnd.delete(id);
     }
     afterTurn = afterTurn.filter((held) => waiting.has(held.id));
     nextStart = nextStart.filter((held) => waiting.has(held.id));
@@ -617,7 +674,7 @@ export default function canvas(pi: ExtensionAPI): void {
       nextStart.push(...lost);
       if (lost.length > 0) {
         for (const message of lost) marked.delete(message.id);
-        const senders = [...new Set(lost.map(sender))].join(", ");
+        const senders = [...new Set(lost.map(noticeLabel))].join(", ");
         const what = lost.length === 1 ? "the message" : `${lost.length} messages`;
         session.ui.notify(`easl: omp started no turn with ${what} from ${senders}; easl keeps ${lost.length === 1 ? "it" : "them"} for the next turn that starts`, "warning");
       }
