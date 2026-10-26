@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sample: [1, 2]
+        scrollers: [system, disabled]
     steps:
       - uses: actions/checkout@v5
       - name: Select Swift 6.4 Command Line Tools
@@ -25,4 +25,6 @@ jobs:
       - name: Build native app
         run: swift build --build-system native -j 2 --product Easl
       - name: Trace native replacement readiness
+        env:
+          EASL_HTML_SEND_NO_SCROLLERS: ${{ matrix.scrollers == 'disabled' && '1' || '0' }}
         run: python3 Tests/HtmlSend/run.py --bin-path "$(swift build --build-system native --show-bin-path)"

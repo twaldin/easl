@@ -75,6 +75,7 @@ private enum HtmlSend {
     private static func traceClickState(_ stage: String, web: WKWebView, tile: NSView, window: NSWindow) {
         let point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
         let hit = window.contentView.flatMap { $0.hitTest($0.convert(point, from: nil)) }
+        let outsideHit = window.contentView.flatMap { $0.hitTest($0.convert(NSPoint(x: 4, y: 4), from: nil)) }
         func view(_ value: NSView) -> [String: Any] {
             [
                 "class": NSStringFromClass(type(of: value)),
@@ -87,11 +88,14 @@ private enum HtmlSend {
                 "needsLayout": value.needsLayout,
             ]
         }
-        var ancestors: [[String: Any]] = []
-        var ancestor = hit
-        while let current = ancestor {
-            ancestors.append(view(current))
-            ancestor = current.superview
+        func ancestors(of value: NSView?) -> [[String: Any]] {
+            var result: [[String: Any]] = []
+            var ancestor = value
+            while let current = ancestor {
+                result.append(view(current))
+                ancestor = current.superview
+            }
+            return result
         }
         let state: [String: Any] = [
             "stage": stage,
@@ -103,7 +107,9 @@ private enum HtmlSend {
             "tile": view(tile),
             "tileChildren": tile.subviews.map(view),
             "clickPoint": NSStringFromPoint(point),
-            "hitAncestors": ancestors,
+            "hitAncestors": ancestors(of: hit),
+            "webAncestors": ancestors(of: web),
+            "outsideHitAncestors": ancestors(of: outsideHit),
             "hitWeb": hit.map { $0 === web || $0.isDescendant(of: web) } ?? false,
             "window": [
                 "number": window.windowNumber,
@@ -143,6 +149,10 @@ private enum HtmlSend {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = Board(id: "brd_htmlsend", root: root)
         let canvas = CanvasView(board: board, viewport: nil, remote: nil)
+        if ProcessInfo.processInfo.environment["EASL_HTML_SEND_NO_SCROLLERS"] == "1" {
+            canvas.hasHorizontalScroller = false
+            canvas.hasVerticalScroller = false
+        }
         let window = CanvasWindow(contentRect: NSRect(x: 40, y: 40, width: 1000, height: 700),
                                   styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -198,7 +208,9 @@ private enum HtmlSend {
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "a permit expires after 1.5 seconds")
         check("expired permit stayed inert")
 
+        traceClickState("before-outside-click", web: web, tile: tile, window: window)
         NSApp.sendEvent(mouse(.leftMouseDown, at: NSPoint(x: 4, y: 4), in: window))
+        traceClickState("after-outside-click", web: web, tile: tile, window: window)
         try await pageSend(web, "outside")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "a click outside the tile must not arm its permit")
         check("outside click did not authorize")
