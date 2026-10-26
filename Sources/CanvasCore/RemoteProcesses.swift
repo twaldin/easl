@@ -18,11 +18,14 @@ public final class RemoteProcesses: @unchecked Sendable {
         let process: Process
         /// Entered at launch, left when the process exited.
         let exited = DispatchGroup()
+        let callbackEntered = Locked<UInt64?>(nil)
+        var removedAt: UInt64?
         init(_ process: Process) { self.process = process }
     }
 
     private let lock = NSLock()
     private var entries: [ObjectIdentifier: Entry] = [:]
+    private var diagnosticHistory: [Entry] = []
     private var stopped = false
 
     public init() {}
@@ -34,7 +37,11 @@ public final class RemoteProcesses: @unchecked Sendable {
         let key = ObjectIdentifier(process)
         let previous = process.terminationHandler
         process.terminationHandler = { [weak self] process in
-            self?.lock.withLock { self?.entries[key] = nil }
+            entry.callbackEntered.withLock { $0 = DispatchTime.now().uptimeNanoseconds }
+            self?.lock.withLock {
+                entry.removedAt = DispatchTime.now().uptimeNanoseconds
+                self?.entries[key] = nil
+            }
             entry.exited.leave()
             previous?(process)
         }
@@ -48,6 +55,7 @@ public final class RemoteProcesses: @unchecked Sendable {
                 throw error
             }
             entries[key] = entry
+            diagnosticHistory.append(entry)
         }
     }
 
@@ -69,6 +77,22 @@ public final class RemoteProcesses: @unchecked Sendable {
 
     /// How many tracked processes are running.
     public var count: Int { lock.withLock { entries.count } }
+
+    func diagnosticSnapshot() -> (count: Int, description: String) {
+        lock.withLock {
+            let capturedAt = DispatchTime.now().uptimeNanoseconds
+            let count = entries.count
+            let lines = diagnosticHistory.map { entry in
+                let pid = entry.process.processIdentifier
+                let probe = kill(pid, 0)
+                let probeError = errno
+                let callback = entry.callbackEntered.withLock { $0 }
+                let tracked = entries[ObjectIdentifier(entry.process)] != nil
+                return "pid=\(pid) tracked=\(tracked) probe=\(probe) errno=\(probeError) callbackEntered=\(String(describing: callback)) removedAt=\(String(describing: entry.removedAt)) arguments=\(entry.process.arguments ?? [])"
+            }
+            return (count, "HOSTMASTER-DIAGNOSTIC parent=\(getpid()) capturedAt=\(capturedAt) count=\(count)\n" + lines.joined(separator: "\n"))
+        }
+    }
 
     /// Ends `process` without waiting: SIGTERM, then SIGKILL after `grace` seconds if it ignored
     /// that. Whoever waits on it (or its termination handler) reaps it.

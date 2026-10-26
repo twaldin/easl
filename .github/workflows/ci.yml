@@ -6,6 +6,32 @@ on:
   pull_request:
 
 jobs:
+  core-hostmaster-matrix:
+    name: Core HostMaster sample ${{ matrix.sample }}
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Select Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+      - name: Core HostMaster sample
+        run: |
+          swift --version
+          bun --version
+          cores=$(sysctl -n hw.ncpu)
+          width=$((cores * 4))
+          printf 'hw.ncpu: %s\nCore parallelization width: %s\n' "$cores" "$width"
+          swift run -j 2 CanvasCoreTests --experimental-maximum-parallelization-width "$width"
+
   test:
     runs-on: macos-26
     steps:

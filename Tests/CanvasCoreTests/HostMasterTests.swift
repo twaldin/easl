@@ -453,7 +453,18 @@ struct HostMasterTests {
         #expect(masters.allSatisfy { kill($0, 0) == 0 })
         host.master.close()
         #expect(try await eventually { masters.allSatisfy { kill($0, 0) == -1 && errno == ESRCH } })
-        #expect(host.processes.count == 0)
+        let pidAbsenceAt = DispatchTime.now().uptimeNanoseconds
+        let snapshot = host.processes.diagnosticSnapshot()
+        print("HOSTMASTER-DIAGNOSTIC pidAbsenceAt=\(pidAbsenceAt) masters=\(masters)")
+        print(snapshot.description)
+        #expect(snapshot.count == 0, "\(snapshot.description)")
+        if snapshot.count != 0 {
+            let ps = try await RemoteHost.run("/bin/ps", ["-o", "pid,ppid,stat,etime,command", "-p", ([getpid()] + masters).map(String.init).joined(separator: ",")], timeout: 3)
+            print("HOSTMASTER-DIAGNOSTIC ps status=\(ps.status)\n\(ps.output)\(ps.errors)")
+            let cleared = try await eventually { host.processes.count == 0 }
+            print("HOSTMASTER-DIAGNOSTIC cleared=\(cleared)\n\(host.processes.diagnosticSnapshot().description)")
+            #expect(cleared)
+        }
         let afterClose = HostFiles(host: remote, master: host.master)
         await #expect(throws: HostFileError.self) { try await afterClose.read(request) }
         #expect(host.masters == masters)
