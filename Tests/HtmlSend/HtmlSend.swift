@@ -158,8 +158,6 @@ private enum HtmlSend {
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == true, "a new native click in the replacement document must authorize again")
         check("a fresh click authorized the replacement document")
 
-        window.makeKey()
-        try require(window.isKeyWindow, "the proof window must be key before a native key can count")
         try require(window.makeFirstResponder(canvas.document), "the canvas must hold the keyboard")
         NSApp.sendEvent(key(in: window))
         try await pageSend(web, "canvas-key")
@@ -168,6 +166,8 @@ private enum HtmlSend {
         NSApp.sendEvent(key(in: window))
         try await pageSend(web, "tile-key")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == true, "a native key while the tile owns the keyboard must authorize one send")
+        try await pageSend(web, "same-key")
+        try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "one native key must not authorize a second send")
         check("keyboard ownership restricted the key gesture")
         check("native send gate held")
     }

@@ -128,7 +128,7 @@ struct HtmlSendBudgetTests {
         #expect(board.htmlMessages[host]?.contains { $0.text.contains("REFUSED-COUNT") } != true)
 
         let other = try terminal(2)
-        let wide = page(other)
+        let wide = self.page(other)
         now = Date(timeIntervalSince1970: 30_000)
         let heavy = JSONValue.string(String(repeating: "x", count: 60_000))
         var kept = 0

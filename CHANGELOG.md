@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Plain wheel scrolling over oversized browser tiles reveals clipped edges before scrolling the page, including streamed browsers. Move-tool panning and Command-scroll zoom are unchanged.
+- Restore afowic's `canvasKit.send` for agent-created local HTML tiles. Page content stays untrusted; only one send per fresh native gesture can start a turn, and native retention, send rate, inbox batches and integration queues have explicit limits.
 
 ## 0.3.2
 
@@ -46,7 +47,6 @@ The board format is unchanged, still format 3. New graph data lives in `props.kn
 - HTML field clicks use an isolated script world and expire after 300 ms. Moving focus, another native click, or a window activation change cancels pending keyboard permission.
 - HTML keyboard clicks read the real DOM prototype getters and must land inside the active editable. Named forms and stale DOM focus cannot grant the keyboard for an outside click.
 - HTML navigation commits, HTML or asset reloads, and web-content crashes revoke pending and granted keyboard permission. Rewriting a tile's page cannot carry its old keyboard grant into the replacement document.
-- HTML tiles can push a page's JSON answer (a quiz choice, a form, a confirmed decision) to the agent terminal that created them with `canvasKit.send`: the message arrives out of band, names the tile, and is refused for a user-created tile, a gone or non-message-taking creator, and remote boards.
 - Consume the remaining middle-button events after a cancelled canvas pan instead of forwarding a stray release to the tile.
 - Development: guard test-child cleanup after a failed spawn so it cannot signal the test runner's process group.
 - Development: reconcile the design backlog with shipped remote-board features and restrict update proof to the remaining `agent-gui` guest.

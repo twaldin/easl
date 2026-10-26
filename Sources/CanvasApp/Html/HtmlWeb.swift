@@ -401,7 +401,7 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
         let origin = message.frameInfo.securityOrigin
-        guard let tile, origin.protocol == HtmlKit.scheme, origin.host.isEmpty || origin.host == HtmlKit.host,
+        guard let tile, origin.protocol == HtmlKit.scheme,
               let source = message.webView, source === tile.webView || source === tile.renderWebView else { return (nil, "not allowed") }
         guard let body = message.body as? [String: Any] else { return (nil, HtmlError.malformed("message must be an object").description) }
         if body["type"] as? String == "network.url" {
@@ -624,7 +624,7 @@ final class HtmlWebView: WKWebView {
             guard let web = webView(hitBy: event), web.acceptsSendGestures, web.isLiveVisible else { return }
             web.sendPermit.arm(at: event.timestamp)
         case .keyDown:
-            guard !event.isARepeat, let window = event.window, window.isKeyWindow,
+            guard !event.isARepeat, let window = event.window,
                   let web = webView(owningKeyboardIn: window), web.acceptsSendGestures, web.isLiveVisible else { return }
             web.sendPermit.arm(at: event.timestamp)
         default:

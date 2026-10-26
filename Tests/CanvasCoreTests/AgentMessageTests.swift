@@ -502,10 +502,14 @@ final class AgentMessageTests {
         let rendered = try #require(batch["result"]?["messages"]?.array)
         #expect(rendered.count < heavyIds.count)
         #expect(HtmlSendBudget.responseBytes(rendered) <= HtmlSendBudget.inboxBytes)
-        let rest = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
-        let restIds = rest["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
-        let batchIds = rendered.compactMap { $0["id"]?.string }
-        #expect(Set(batchIds + restIds) == Set(heavyIds))
+        var received = rendered.compactMap { $0["id"]?.string }
+        for _ in 0..<heavyIds.count where received.count < heavyIds.count {
+            let rest = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
+            let items = try #require(rest["result"]?["messages"]?.array)
+            #expect(HtmlSendBudget.responseBytes(items) <= HtmlSendBudget.inboxBytes)
+            received.append(contentsOf: items.compactMap { $0["id"]?.string })
+        }
+        #expect(Set(received) == Set(heavyIds))
         #expect(board.htmlMessages[wide]?.count == heavyIds.count)
     }
 

@@ -20,6 +20,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Graph diagrams](graph-diagrams.md) covers authored knowledge, statuses, source badges, and expanded detail.
 - [Graded questions](graded-questions.md) covers correct and wrong answers with optional confidence.
 - [HTML keyboard ownership](html-keyboard.md) covers Return, editable clicks, Escape, autofocus, and document grants.
+- [HTML page messages](html-send.md) covers native Submit, inert load/timer sends, consumed gestures, flood refusals and untrusted framing.
 
 ## Proof and failure reporting
 
