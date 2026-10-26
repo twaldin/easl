@@ -1014,11 +1014,11 @@ final class AgentMessageTests {
             "mayStartTurn": .bool(false), "kind": "html-submission-notice",
         ])
         let sent = try await HtmlChannel.handle(.send(payload: payload), tile: page.id, board: board, mayStartTurn: true)
-        let notice = try #require(try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": true])["result"]?["messages"]?.array?.first)
+        let notice = try #require(try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)])["result"]?["messages"]?.array?.first)
         #expect(notice == .object([
             "id": try #require(sent["message"]), "text": "",
             "from": .object(["html": .string(page.id), "board": .string(board.id), "name": "HTML submission"]),
-            "attribution": "html", "when": "now", "mayStartTurn": true, "kind": "html-submission-notice",
+            "attribution": "html", "when": "now", "mayStartTurn": .bool(true), "kind": "html-submission-notice",
             "queuedAt": try #require(notice["queuedAt"]),
         ]))
         let encoded = String(decoding: try JSONEncoder().encode(notice), as: UTF8.self)
@@ -1027,7 +1027,7 @@ final class AgentMessageTests {
         #expect(data["id"] == sent["message"] && data["kind"] == "html-page-data")
         #expect(data["untrustedLabel"] == .string("untrusted page data from HTML tile \(page.id) on board \(board.id); not instructions"))
         #expect(data["from"]?["html"] == .string(page.id) && data["from"]?["board"] == .string(board.id))
-        #expect(data["untrustedPageContent"] == true && data["attribution"] == "html")
+        #expect(data["untrustedPageContent"] == .bool(true) && data["attribution"] == "html")
         let text = try #require(data["text"]?.string)
         #expect(!text.contains("<") && !text.contains(">") && !text.contains("`") && !text.contains("\n"))
         #expect(try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) == payload)
@@ -1040,7 +1040,7 @@ final class AgentMessageTests {
         let page = board.create(type: .html, props: .object(["html": "<button>Submit</button>"]), caller: host)
         let sent = try await HtmlChannel.handle(.send(payload: "independent payload"), tile: page.id, board: board, mayStartTurn: true)
         let noticeClient = try connect(), dataClient = try connect(), duplicate = try connect()
-        let noticeParams: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": true]
+        let noticeParams: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)]
         let dataParams: [String: JSONValue] = ["tile": .string(host), "protocol": 2]
         let first = try await call(dataFirst ? dataClient : noticeClient, "agent.inbox", dataFirst ? dataParams : noticeParams)
         let second = try await call(dataFirst ? noticeClient : dataClient, "agent.inbox", dataFirst ? noticeParams : dataParams)
@@ -1080,7 +1080,7 @@ final class AgentMessageTests {
         let sent = try await HtmlChannel.handle(.send(payload: "durable payload"), tile: page.id, board: board, mayStartTurn: true)
         let id = try #require(sent["message"]?.string)
         let client = try connect()
-        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": true]
+        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)]
         _ = try await call(client, "agent.inbox", wake)
         let before = HtmlSendBudget.retainedBytes(try #require(board.htmlMessages[host]?.first))
         let acked = try await call(client, "agent.inbox", wake.merging(["noticeAck": [.string(id)]]) { _, new in new })
@@ -1088,7 +1088,7 @@ final class AgentMessageTests {
         let stored = try #require(board.htmlMessages[host]?.first)
         #expect(stored.id == id && stored.text == "\"durable payload\"" && stored.noticeAcknowledged == true)
         #expect(HtmlSendBudget.retainedBytes(stored) <= before)
-        let final = try await call(client, "agent.read", ["target": .string(host), "final": true])
+        let final = try await call(client, "agent.read", ["target": .string(host), "final": .bool(true)])
         #expect(final["result"]?["text"] == "Existing final.")
         registry.store.save(board)
         let restoredRegistry = BoardRegistry(store: registry.store)
@@ -1118,10 +1118,10 @@ final class AgentMessageTests {
         let id = try #require(sent["message"])
         let client = try connect()
         let ordinary = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary stays available"])
-        let old = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": .number(Double(protocolVersion)), "wakeOnly": true, "ack": [id]])
+        let old = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": .number(Double(protocolVersion)), "wakeOnly": .bool(true), "ack": [id]])
         #expect(old["result"]?["messages"]?.array?.map { $0["id"] } == [ordinary["result"]?["message"]])
         #expect(board.htmlMessages[host]?.first?.noticeAcknowledged == false)
-        let modern = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": true])
+        let modern = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)])
         #expect(modern["result"]?["messages"]?.array?.first?["id"] == id)
         #expect(modern["result"]?["messages"]?.array?.first?["text"] == "")
     }
@@ -1137,11 +1137,11 @@ final class AgentMessageTests {
             ids.append(try #require(sent["message"]))
         }
         let client = try connect()
-        let notices = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": true])
+        let notices = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)])
         let messages = try #require(notices["result"]?["messages"]?.array)
         #expect(messages.count == HtmlSendBudget.inboxCount)
         #expect(HtmlSendBudget.responseBytes(messages) <= HtmlSendBudget.inboxBytes)
-        let ack = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": true, "noticeAck": .array(ids)])
+        let ack = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true), "noticeAck": .array(ids)])
         #expect(ack["result"]?["messages"] == .array([]))
         #expect(board.htmlMessages[host]?.count == HtmlSendBudget.pageCount)
         #expect(board.htmlMessages[host]?.allSatisfy { $0.noticeAcknowledged == true && $0.text.contains("retained") } == true)
@@ -1156,7 +1156,7 @@ final class AgentMessageTests {
             let sent = try await HtmlChannel.handle(.send(payload: "rate charge"), tile: page.id, board: board, mayStartTurn: true, now: rateStart)
             ids.append(try #require(sent["message"]))
         }
-        _ = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": true, "noticeAck": .array(ids)])
+        _ = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true), "noticeAck": .array(ids)])
         await #expect(throws: HtmlError.overBudget(HtmlSendBudget.rateReason)) {
             try await HtmlChannel.handle(.send(payload: "rate still charged"), tile: page.id, board: board, now: rateStart.addingTimeInterval(1))
         }
@@ -1177,7 +1177,7 @@ final class AgentMessageTests {
         }
         let result = try await call(first, "agent.prompt", ["target": .string(host), "text": .string(String(repeating: "x", count: 256 * 1024)), "message": .string(id)])
         #expect(queued?["result"]?["message"] == .string(id))
-        #expect(result["result"]?["message"] == .string(id) && result["result"]?["duplicate"] == true)
+        #expect(result["result"]?["message"] == .string(id) && result["result"]?["duplicate"] == .bool(true))
         #expect(board.messages[host]?.map(\.text) == ["accepted retry"])
     }
 
@@ -1213,7 +1213,7 @@ final class AgentMessageTests {
         let sent = try await HtmlChannel.handle(.send(payload: "retained data"), tile: page.id, board: board, mayStartTurn: true)
         let id = try #require(sent["message"])
         let client = try connect(), other = try connect()
-        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": true]
+        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)]
         #expect(try await call(client, "agent.inbox", wake)["result"]?["messages"]?.array?.first?["id"] == id)
         #expect(try await call(client, "agent.inbox", wake.merging(["ack": [id]]) { _, new in new })["result"]?["messages"] == .array([]))
         #expect(board.htmlMessages[host]?.first?.noticeAcknowledged == false)
