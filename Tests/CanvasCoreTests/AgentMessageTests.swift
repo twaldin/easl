@@ -620,6 +620,82 @@ final class AgentMessageTests {
         #expect(taken["result"]?["messages"]?.array?.first?["text"] == "still available")
     }
 
+    @Test func anAcceptedMessageWhoseMentionGrowsBouncesAndTheInboxKeepsProgressing() async throws {
+        let host = terminal("growing-host"), lead = terminal("growing-sender")
+        try omp(host, .idle, seq: 1)
+        try omp(lead, .working, seq: 1)
+        let file = board.root.appendingPathComponent("growing.txt")
+        try "initial excerpt\n".write(to: file, atomically: true, encoding: .utf8)
+        let code = board.create(type: .code, props: .object([
+            "path": "growing.txt", "range": .object(["start": 1, "end": 1]),
+        ]))
+        let producer = try connect(), consumer = try connect(), senderInbox = try connect()
+        let sent = try await call(producer, "agent.prompt", [
+            "target": .string(host), "caller": .string(lead), "text": "check the growing excerpt",
+            "mentions": [.object(["object": .string(code.id)])],
+        ])
+        #expect(sent["result"]?["delivery"] == "message")
+        let id = try #require(sent["result"]?["message"]?.string)
+        #expect(board.messages[host]?.map(\.id) == [id])
+        try String(repeating: "expanded-line", count: 30_000).write(to: file, atomically: true, encoding: .utf8)
+        let following = try await call(producer, "agent.prompt", ["target": .string(host), "text": "still deliverable"])
+        let nextId = try #require(following["result"]?["message"]?.string)
+
+        let taken = try await call(consumer, "agent.inbox", ["tile": .string(host)])
+        let items = try #require(taken["result"]?["messages"]?.array)
+        #expect(items.map { $0["id"] } == [.string(nextId)])
+        #expect(items.first?["text"] == "still deliverable")
+        #expect(items.count <= 32 && HtmlSendBudget.responseBytes(items) <= 256 * 1024)
+        #expect(board.messages[host]?.map(\.id) == [nextId])
+        let returned = try await call(senderInbox, "agent.inbox", ["tile": .string(lead)])
+        let notices = try #require(returned["result"]?["messages"]?.array)
+        #expect(notices.count == 1)
+        let notice = try #require(notices.first)
+        #expect(notice["text"] == .string("undelivered message \(id) to \(host): \(HtmlSendBudget.inboxBytesReason)"))
+        #expect(notice["from"] == .object(["name": "easl"]) && notice["attribution"] == "user")
+        #expect(notice["context"] == nil && notice["mentions"] == nil)
+        #expect(HtmlSendBudget.responseBytes(notices) <= 256 * 1024)
+        let drained = try await call(consumer, "agent.inbox", ["tile": .string(host), "ack": [.string(nextId)]])
+        #expect(drained["result"]?["messages"] == .array([]))
+        let acked = try await call(senderInbox, "agent.inbox", ["tile": .string(lead), "ack": .array(notices.compactMap { $0["id"] })])
+        #expect(acked["result"]?["messages"] == .array([]))
+        #expect(board.messages[host] == nil && board.messages[lead] == nil)
+    }
+
+    @Test func anOversizeLegacyBounceQuotesNoUnboundedPayloadAndCannotPoisonTheSenderInbox() async throws {
+        let host = terminal("legacy-recipient"), lead = terminal("legacy-sender")
+        try omp(host, .idle, seq: 1)
+        try omp(lead, .working, seq: 1)
+        let old = AgentMessage(text: "x" + String(repeating: "\u{0301}", count: 150_000), from: lead, label: nil, when: .now, mentions: [])
+        let small = AgentMessage(text: "following legacy data", from: nil, label: nil, when: .now, mentions: [])
+        var snapshot = board.snapshot
+        snapshot.messages = [host: [old, small]]
+        let store = BoardStore(directory: dir.appendingPathComponent("legacy-bounce-boards"))
+        store.save(Board(snapshot: snapshot))
+        let restoredRegistry = BoardRegistry(store: store)
+        let restored = try await restoredRegistry.open(root: board.root)
+        let restoredRouter = ApiRouter(registry: restoredRegistry)
+        let path = dir.appendingPathComponent("legacy-bounce.sock").path
+        let restoredServer = SocketServer(path: path) { request, connection in
+            await restoredRouter.handle(request, connection: connection)
+        }
+        try restoredServer.start()
+        defer { restoredServer.stop() }
+        let client = try LineClient(path: path)
+        let taken = try await call(client, "agent.inbox", ["tile": .string(host)])
+        #expect(taken["result"]?["messages"]?.array?.map { $0["id"] } == [.string(small.id)])
+        let returned = try await call(client, "agent.inbox", ["tile": .string(lead)])
+        let notices = try #require(returned["result"]?["messages"]?.array)
+        #expect(notices.count == 1)
+        #expect(notices.first?["text"] == .string("undelivered message \(old.id) to \(host): \(HtmlSendBudget.inboxBytesReason)"))
+        #expect(HtmlSendBudget.responseBytes(notices) <= 256 * 1024)
+        let acked = try await call(client, "agent.inbox", ["tile": .string(lead), "ack": .array(notices.compactMap { $0["id"] })])
+        #expect(acked["result"]?["messages"] == .array([]))
+        let drained = try await call(client, "agent.inbox", ["tile": .string(host), "ack": [.string(small.id)]])
+        #expect(drained["result"]?["messages"] == .array([]))
+        #expect(restored.messages[host] == nil && restored.messages[lead] == nil)
+    }
+
     @Test func legacyOversizeMessagesCannotStarveFollowingOrdinaryMessages() async throws {
         let host = terminal("legacy-host")
         try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)

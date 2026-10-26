@@ -1175,7 +1175,12 @@ public final class ApiRouter {
                     board.ackMessages([message.id], of: tile)
                     board.activity.record(.message, actor: .system, rev: board.revision, id: tile, type: .terminal,
                                           summary: "undelivered message \(message.id) to \(tile): exceeded the \(HtmlSendBudget.inboxBytes)-byte inbox batch limit; dropped")
-                    for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
+                    if message.html == nil {
+                        bounce(MessageBounce(tile: tile, name: board.objects[tile].flatMap(AgentAddress.name(of:)), messages: [message], deleted: false),
+                               on: board, reason: HtmlSendBudget.inboxBytesReason)
+                    } else {
+                        for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
+                    }
                     continue
                 }
                 break
@@ -1270,18 +1275,25 @@ public final class ApiRouter {
         if staged.isEmpty && !present { return nil }
         return try ViewerEdit.viewer(p["viewer"])
     }
-    /// Messages whose receiver's agent session ended before its integration took them
-    /// (`Board.endAgentSession`): never dropped silently. Each goes back to a sending terminal
-    /// whose integration takes messages, as a message from easl ("undelivered to bob@canvas: its
-    /// first line…"); a script's, or one whose sender takes no messages or has closed, is logged
+    /// Messages whose receiver's agent session ended, or whose rendering outgrew the inbox:
+    /// each goes back to a sending terminal whose integration takes messages, as a message
+    /// from easl. Session-end bounces quote the first line; a size refusal gives only its id
+    /// and reason. A script's, or one whose sender takes no messages or has closed, is logged
     /// in the receiver's board.history (`message`). Waits on the receiver look again.
-    private func bounce(_ bounce: MessageBounce, on board: Board) {
+    private func bounce(_ bounce: MessageBounce, on board: Board, reason: String? = nil) {
         let boards = Array(registry.boards.values)
         let receiver = board.objects[bounce.tile].map { AgentAddress.address(of: $0, on: board, among: boards) }
             ?? bounce.name.map { "\($0)@\(AgentAddress.boardName(board.root))" } ?? bounce.tile
-        for message in bounce.messages {
+        for message in bounce.messages where message.html == nil {
             messageHolds.removeValue(forKey: MessageHold(tile: bounce.tile, message: message.id))
-            let notice = "undelivered to \(receiver): \(message.gist)"
+            let notice: String
+            if let reason {
+                // Legacy payloads can exceed the budget even in one grapheme. Quote only a bounded id.
+                let id = String(decoding: message.id.utf8.prefix(128), as: UTF8.self)
+                notice = "undelivered message \(id) to \(bounce.tile): \(reason)"
+            } else {
+                notice = "undelivered to \(receiver): \(message.gist)"
+            }
             let home = message.from.flatMap { registry.board(containing: $0) }
             if let sender = message.from, let home, let tile = home.objects[sender], PromptTarget.takesMessages(tile),
                (try? home.queueMessage(AgentMessage(text: notice, from: nil, label: AgentMessage.bounceSender, when: .now, mentions: []), to: sender)) != nil {

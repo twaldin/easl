@@ -145,9 +145,13 @@ private enum HtmlSend {
         check("outside click did not authorize")
         try await Task.sleep(for: .seconds(10))
 
+        let reloadGestureAt = ContinuousClock.now
+        NSApp.sendEvent(mouse(.leftMouseDown, at: inside, in: window))
         try board.update(object.id, props: .object(["html": .string(pageHTML(marker: "GEN2", autoSend: false))]))
         try await waitMarker("GEN2", in: web)
         try await pageSend(web, "reloaded")
+        try require(ContinuousClock.now - reloadGestureAt < .milliseconds(1500),
+                    "the post-reload send must complete before the old permit would expire")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "a reload must drop the previous document's permit")
         check("reload reset the permit")
 

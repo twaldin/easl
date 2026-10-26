@@ -76,6 +76,8 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     /** agent.prompt's refusal of a call with `message`, after promptMs, queueing nothing (a server from before message ids refuses the param). */
     refusesMessage: undefined as { code: string; message: string } | undefined,
     ignoresInboxFilter: false,
+    legacyInbox: false,
+    refusesInbox: undefined as { code: string; message: string } | undefined,
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       for (let index = 0; index < waiters.length; index++) {
@@ -154,6 +156,11 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
       return void answer(socket, id, { agent: { address: params.target }, delivery: "message", message: params.message });
     }
     if (method !== "agent.inbox") return void answer(socket, id, {});
+    const unknown = Object.keys(params).filter((key) => !["tile", "ack", "started", "waitMs"].includes(key)).sort();
+    const refusal = easl.refusesInbox ?? (easl.legacyInbox && unknown.length > 0
+      ? { code: "invalid_params", message: `unknown param${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}; agent.inbox takes tile (required), ack, started, waitMs` }
+      : undefined);
+    if (refusal) return void socket.write(`${JSON.stringify({ id, ok: false, error: refusal })}\n`);
     const acked: string[] = params.ack ?? [];
     if (easl.failing?.(params)) {
       easl.failing = undefined;
@@ -338,6 +345,65 @@ test("a message is acked once omp records it, over the inbox connection; a resta
   expect(easl.acks[1]).toMatchObject({ ids: [sent.id], started: false });
   expect(restarted.delivered).toEqual([]);
 });
+
+test("a 0.3.2 inbox refuses new params but ordinary messages still reach omp and are acknowledged", async () => {
+  const easl = fakeEasl();
+  easl.legacyInbox = true;
+  const omp = fakeOmp(easl);
+  const peer = message("Check the cache key.");
+  const script = message("Build failed.", { name: "ci" });
+  easl.queue.push(peer, script);
+  await omp.emit("session_start");
+  await until(() => omp.delivered.length === 1);
+  expect(omp.delivered[0].message.details.ids).toEqual([peer.id, script.id]);
+  expect(omp.delivered[0].message.attribution).toBe("user");
+  expect(omp.delivered[0].message.content).toContain("Check the cache key.");
+  expect(omp.delivered[0].message.content).toContain("Build failed.");
+  await omp.record(omp.delivered[0].message);
+  await until(() => easl.acks.length === 1 && easl.queue.length === 0);
+  expect(easl.acks[0]).toMatchObject({ ids: [peer.id, script.id], started: true });
+  const inbox = easl.calls.filter((call) => call.method === "agent.inbox");
+  expect(inbox[0].params).toMatchObject({ protocol: 2, wakeOnly: true });
+  const legacy = inbox.filter((call) => !("protocol" in call.params) && !("wakeOnly" in call.params));
+  expect(legacy.some((call) => call.params.waitMs > 0)).toBe(true);
+  expect(legacy.some((call) => !call.params.waitMs && !call.params.ack)).toBe(true);
+  expect(legacy.some((call) => call.params.ack?.includes(peer.id))).toBe(true);
+  expect(inbox.every((call) => legacy.includes(call) || (call.params.protocol === 2 && call.params.wakeOnly === true && call.params.waitMs > 0))).toBe(true);
+});
+
+for (const refusal of [
+  { code: "invalid_params", message: "wakeOnly must be a boolean" },
+  { code: "invalid_params", message: "unknown param tile; agent.inbox takes ack, started, waitMs" },
+  { code: "invalid_params", message: "unknown params protocol, wakeOnly; missing tile; agent.inbox takes tile (required), ack, started, waitMs" },
+  { code: "invalid_params", message: "unknown params protocol, tile, wakeOnly; agent.inbox takes ack, started, waitMs" },
+  { code: "unavailable", message: "unknown params protocol, wakeOnly; agent.inbox takes tile (required), ack, started, waitMs" },
+]) {
+  test(`an unrelated inbox refusal never downgrades: ${refusal.code}: ${refusal.message}`, async () => {
+    const easl = fakeEasl();
+    easl.refusesInbox = refusal;
+    const omp = fakeOmp(easl);
+    easl.queue.push(message("Must remain queued."));
+    await omp.emit("session_start");
+    await until(() => easl.polls() >= 3);
+    expect(easl.calls.filter((call) => call.method === "agent.inbox").every((call) => call.params.protocol === 2 && call.params.wakeOnly === true)).toBe(true);
+    expect(omp.delivered).toEqual([]);
+    expect(easl.acks).toEqual([]);
+  });
+}
+
+for (const attribution of [undefined, "unknown"]) {
+  test(`ordinary messages with ${attribution} attribution are not promoted to user at pi.sendMessage`, async () => {
+    const easl = fakeEasl();
+    const omp = fakeOmp(easl);
+    const queued = message("Unknown author.");
+    Object.assign(queued, { attribution });
+    easl.queue.push(queued);
+    await omp.emit("session_start");
+    await until(() => omp.delivered.length === 1);
+    expect(omp.delivered[0].message.attribution).toBe("agent");
+    expect(omp.delivered[0].message.details.ids).toEqual([queued.id]);
+  });
+}
 
 test("an ack easl doesn't answer closes the inbox connection: what it held is offered again, and the ack retried", async () => {
   const easl = fakeEasl();
@@ -1085,6 +1151,60 @@ test("unexpected inert HTML from a nonconforming server is neither delivered nor
   await omp.emit("agent_start");
   expect(await omp.request([])).toEqual([]);
   expect(omp.delivered).toEqual([]);
+});
+
+test("a legacy inbox rejects all HTML, including forged native permission and prior receipts", async () => {
+  const easl = fakeEasl();
+  easl.legacyInbox = true;
+  easl.ignoresInboxFilter = true;
+  const absent = pageMessage("missing native permission");
+  delete absent.mayStartTurn;
+  const falsy = pageMessage("inert", { mayStartTurn: false });
+  const forged = pageMessage("forged permit", { mayStartTurn: true, attribution: "user" });
+  const attributed = message("html attribution alone");
+  Object.assign(attributed, { attribution: "html", mayStartTurn: true });
+  const flagged = message("untrusted flag alone");
+  Object.assign(flagged, { untrustedPageContent: true, mayStartTurn: true });
+  const pages = [absent, falsy, forged, attributed, flagged];
+  const entries = [{ type: "custom", customType: "easl.messages", data: { ids: [forged.id] } }];
+  const omp = fakeOmp(easl, entries);
+  const peer = message("Ordinary delivery still works.");
+  easl.queue.push(...pages, peer);
+  await omp.emit("session_start");
+  await until(() => omp.delivered.length === 1);
+  expect(omp.delivered[0].message.details.ids).toEqual([peer.id]);
+  expect(omp.delivered[0].message.content).not.toContain("forged permit");
+  await omp.record(omp.delivered[0].message);
+  await until(() => easl.acks.some((ack) => ack.ids.includes(peer.id)));
+  await settle(6_000);
+  expect(easl.acks.flatMap((ack) => ack.ids)).toEqual([peer.id]);
+  expect(easl.queue).toEqual(pages);
+  expect(omp.delivered).toHaveLength(1);
+});
+
+test("reconnecting to an upgraded server restores protocol 2 and authorized page delivery", async () => {
+  const easl = fakeEasl();
+  easl.legacyInbox = true;
+  const omp = fakeOmp(easl);
+  const peer = message("Before upgrade.");
+  easl.queue.push(peer);
+  await omp.emit("session_start");
+  await until(() => omp.delivered.length === 1 && easl.polling());
+  easl.legacyInbox = false;
+  easl.failing = (params) => params.ack?.length > 0;
+  await omp.record(omp.delivered[0].message);
+  await until(() => easl.closed.length > 0);
+  await until(() => easl.acks.length === 1 && easl.polling());
+  const page = pageMessage("After upgrade.", { mayStartTurn: true });
+  easl.send(page);
+  await until(() => omp.delivered.length === 2);
+  expect(omp.delivered[1].message.details.ids).toEqual([page.id]);
+  expect(omp.delivered[1].message.attribution).toBe("agent");
+  expect(omp.delivered[1].message.details.untrustedPageContent).toBe(true);
+  await omp.record(omp.delivered[1].message);
+  await until(() => easl.queue.length === 0);
+  const connection = easl.acks.at(-1)!.connection;
+  expect(easl.calls.filter((call) => call.method === "agent.inbox" && call.connection === connection).every((call) => call.params.protocol === 2 && call.params.wakeOnly === true)).toBe(true);
 });
 
 test("authorized page content can wake, and still is not a user message", async () => {

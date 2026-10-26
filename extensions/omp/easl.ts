@@ -359,7 +359,7 @@ export default function canvas(pi: ExtensionAPI): void {
     await reported;
     switching = false;
     // What this connection held is gone from easl's queue; the next poll takes this session's.
-    inbox.close();
+    closeInbox();
   });
 
   pi.on("session_shutdown", () => {
@@ -373,7 +373,7 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = false;
     // Ends the long poll; what this session never recorded bounces with a release, else stays
     // queued for the resumed session.
-    inbox.close();
+    closeInbox();
   });
 
   pi.on("agent_start", () => {
@@ -400,9 +400,7 @@ export default function canvas(pi: ExtensionAPI): void {
       policy = undefined;
     }
     publish();
-    if (!active) {
-      setTimeout(releaseAfterTurn, 0);
-    }
+    if (!active) setTimeout(releaseAfterTurn, 0);
   });
 
   // Out-of-band messages (docs/contracts.md, Peer messages): easl queues `agent.prompt` for this
@@ -413,6 +411,30 @@ export default function canvas(pi: ExtensionAPI): void {
   // card; until then easl keeps it. Polls and acks use the inbox connection: a failed call closes
   // it, so easl offers what it held again. Inert HTML stays native for manual agent.inbox reads.
   const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
+  let inboxCapability = { legacy: false };
+
+  function closeInbox(): void {
+    inbox.close();
+    inboxCapability = { legacy: false };
+  }
+
+  async function readInbox(params: Omit<Parameters<typeof inbox.api.agent.inbox>[0], "tile" | "protocol" | "wakeOnly"> = {}): Promise<{ messages: AgentMessage[]; acceptsHtml: boolean }> {
+    const capability = inboxCapability;
+    // Reprobe long polls too: CanvasClient can reconnect transparently after a server upgrade.
+    if (params.waitMs || !capability.legacy) {
+      try {
+        const reply = await inbox.api.agent.inbox({ ...params, tile: tile!, protocol: PROTOCOL, wakeOnly: true });
+        capability.legacy = false;
+        return { messages: reply.messages, acceptsHtml: true };
+      } catch (error) {
+        // Both 0.3.2 routers reject unknown params before applying acks or holding messages.
+        if (!(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:protocol|wakeOnly)|params protocol, wakeOnly); agent\.inbox takes /.test(error.message)) throw error;
+        capability.legacy = true;
+      }
+    }
+    const reply = await inbox.api.agent.inbox({ ...params, tile: tile! });
+    return { messages: reply.messages, acceptsHtml: false };
+  }
   const wakes = new WakeBudget();
   // The session (with a UI) messages go into: whether omp streams, or holds queued messages.
   let session: ExtensionContext | undefined;
@@ -483,11 +505,14 @@ export default function canvas(pi: ExtensionAPI): void {
       const ackIds = unacked;
       unacked = [];
       let first: AgentMessage[];
+      let acceptsHtml: boolean;
       try {
-        first = (await inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL, wakeOnly: true, waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined })).messages;
+        const reply = await readInbox({ waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined });
+        first = reply.messages;
+        acceptsHtml = reply.acceptsHtml;
       } catch {
         unacked.push(...ackIds);
-        inbox.close();
+        closeInbox();
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
         continue;
       }
@@ -498,28 +523,31 @@ export default function canvas(pi: ExtensionAPI): void {
       let more: AgentMessage[] = [];
       if (firstFits) {
         await Bun.sleep(COALESCE_MS);
-        more = await inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL, wakeOnly: true }).then(
-          (reply) => reply.messages,
+        more = await readInbox().then(
+          (reply) => {
+            acceptsHtml &&= reply.acceptsHtml;
+            return reply.messages;
+          },
           () => {
-            inbox.close();
+            closeInbox();
             return [];
           },
         );
         coalescing = [...first, ...more];
       }
-      const refused = receive(coalescing);
+      const refused = receive(coalescing, acceptsHtml);
       coalescing = [];
       if (refused) {
-        inbox.close();
+        closeInbox();
         holdoff = true;
       }
     }
     polling = false;
   }
 
-  function receive(messages: readonly AgentMessage[]): boolean {
+  function receive(messages: readonly AgentMessage[], acceptsHtml: boolean): boolean {
     if (switching) return false;
-    const eligible = messages.filter((message) => !isHtmlMessage(message) || htmlMayStartTurn(message));
+    const eligible = messages.filter((message) => !isHtmlMessage(message) || (acceptsHtml && htmlMayStartTurn(message)));
     ack(eligible.filter((message) => recorded.has(message.id)).map((message) => message.id), false);
     const incoming = eligible.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
     const incomingIds = new Set(incoming.map((message) => message.id));
@@ -548,16 +576,16 @@ export default function canvas(pi: ExtensionAPI): void {
   // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
   function ack(ids: readonly string[], started: boolean): void {
     if (ids.length === 0) return;
-    inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL, wakeOnly: true, ack: [...ids], started }).then(
+    readInbox({ ack: [...ids], started }).then(
       (reply) => {
-        if (receive(reply.messages)) {
-          inbox.close();
+        if (receive(reply.messages, reply.acceptsHtml)) {
+          closeInbox();
           holdoff = true;
         }
       },
       () => {
         unacked.push(...ids);
-        inbox.close();
+        closeInbox();
       },
     );
   }
@@ -595,7 +623,7 @@ export default function canvas(pi: ExtensionAPI): void {
 
   function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
     if (messages.length === 0) return;
-    if (how === "steer" || how === "turn") wakes.spend(new Set(messages.map(senderKey)));
+    if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
     // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
     // cut short. An omp streaming nothing starts a turn with the card instead (`triggerTurn`).
     // `aside` joins the step omp streams without interrupting it. Each HTML message is its own card.
@@ -620,12 +648,9 @@ export default function canvas(pi: ExtensionAPI): void {
     if (listening) return;
     listening = true;
     pi.on("context", async (event) => {
-      const owner = session;
-      const needsGuidance = !prepared && marked.size > 0;
-      if (needsGuidance) policy ??= boardRules(client).then((rules) => guidanceBlock(guidance, rules));
-      const rules = needsGuidance ? await policy : undefined;
-      if (!reporting || session !== owner) return;
-      return { messages: rules === undefined ? event.messages : guided(event.messages, marked, rules) };
+      if (prepared || marked.size === 0) return;
+      policy ??= boardRules(client).then((rules) => guidanceBlock(guidance, rules));
+      return { messages: guided(event.messages, marked, await policy) };
     });
   }
 

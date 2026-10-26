@@ -32,6 +32,8 @@ Native retained HTML budgets are 32 messages/256 KiB per page and 128 messages/1
 
 For refusal proof, exercise each intended entry point separately. A unit frame-gate test is not a live hostile-frame proof. Offscreen rendering and remote pages cannot send at all. A protocol-1 terminal still takes ordinary agent messages but refuses page messages. Every inbox poll and acknowledgement independently opts into protocol 2; legacy requests must not receive HTML even when the saved terminal reports protocol 2. A 0.3.2 peer must ignore the separate `htmlMessages` snapshot field without exposing it as a user message.
 
+The new omp extension must recover ordinary delivery and acknowledgements when a 0.3.2 app or easld refuses the new inbox parameters. Legacy responses must not deliver or acknowledge any HTML, even with a claimed native permit. Reconnecting to an upgraded server must restore protocol-2 page delivery.
+
 ## Gotchas
 
 - A queued receipt is not user approval and does not prove a turn began.

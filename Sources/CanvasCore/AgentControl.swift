@@ -315,7 +315,7 @@ extension ApiRouter {
             throw Failure("conflict", "\(terminal.id) has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)")
         }
         if board.htmlMessages[terminal.id]?.isEmpty == false {
-            throw Failure("conflict", "\(terminal.id) has a page message queued that its agent hasn't taken yet: restarting would drop it. Wait for it (agent.inbox), or force: true restarts anyway")
+            throw Failure("conflict", "\(terminal.id) has a page message queued that its agent hasn't taken yet: restarting would drop it. Read and ack it via agent.inbox with protocol: 2, or force: true restarts anyway")
         }
         switch terminal.props["agent"]?["draft"]?.bool {
         case true?:
