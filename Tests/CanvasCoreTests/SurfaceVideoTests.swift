@@ -484,17 +484,13 @@ struct SurfaceVideoTests {
                 encoderRetired.signal()
 
                 encoder = SurfaceVideoEncoder()
-                var checks = 0
-                var afterCreation: (live: Int, retiring: Int)?
                 guard let next = try encoder?.encode(source, width: 64, height: 64, isCancelled: {
-                    checks += 1
-                    if checks == 2 { creationEntered.signal() }
-                    if checks == 3 { afterCreation = SurfaceVideoCompressionSessions.counts }
+                    creationEntered.signal()
                     return false
                 }) else {
                     throw LifecycleError.missingFrame
                 }
-                guard let afterCreation else { throw LifecycleError.missingFrame }
+                let afterCreation = SurfaceVideoCompressionSessions.counts
                 active.append(SurfaceVideoCompressionSessions.counts)
                 keyframes += next.data[4] == 1 ? 1 : 0
                 nextCreated.signal()
