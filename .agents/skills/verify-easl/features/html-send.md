@@ -41,6 +41,7 @@ After receiving a valid notice, downgrade the server before its receipt. Require
 - A queued receipt is not user approval and does not prove a turn began.
 - A DOM event is not native input, even if its handler calls `send`.
 - A click and its mouse-up are one gesture; key repeat does not renew permission.
+- The native runner disables scrollbars and verifies its outside-click target is empty canvas. On CI, a corner click can hit a horizontal scroller and move the page out of the window. Verify the original page still owns its click point before testing reload revocation.
 - A replacement script's marker can appear before native loading and layout settle. Before the fresh-click positive check, require the current web view to finish loading and own the native hit-test point. Keep the old-permit rejection inside its original 1.5-second window; do not replace either check with a sleep or a page-reported gesture.
 - Inspect actual CuaDriver PNGs and retain exact PID/window receipts. Unit tests or `view.render` cannot replace them.
 - Source entry points are `HtmlWeb.swift`, `HtmlTile.swift`, `HtmlSend.swift`, `AgentMessages.swift`, `ApiRouter.swift`, `extensions/agent-hooks/messages.ts` and `extensions/omp/easl.ts`.
