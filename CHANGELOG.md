@@ -11,12 +11,12 @@ easl 0.3.2 adds teaching features contributed by @afowic: math in notes and HTML
 These changes need easld 0.3.2 for their full effect on remote boards:
 
 - Grading answers and stamping `answer.correct` on the host, with confidence validation and grading in the answer mention.
-- Validating and normalizing authored graphs, including reasoning levels and the 500-node and 2,000-edge limits.
+- Creating, validating, and normalizing authored graphs, including reasoning levels and the 500-node and 2,000-edge limits.
 - Normalizing stored question answers, discarding invalid confidence values and recomputing derived correctness.
 
-A 0.3.2 app on easld 0.3.1 renders math, graph statuses and sources, and answered questions with grading and confidence. The older host preserves the new props but does not gain the new grading, graph validation, or question normalization rules.
+A 0.3.2 app on easld 0.3.1 renders math, existing graph statuses and sources, and answered questions with grading and confidence. The older host preserves existing new props, but refuses new graph diagrams and graph prop updates with `invalid_params` (`diagram kind must be one of calls`). Frame-only graph moves still work. The older host does not gain the new grading or question normalization rules.
 
-A 0.3.1 app on easld 0.3.2 can still view and edit boards, but shows math as literal TeX source and a knowledge graph as a blank titled diagram. An answered question shows the selected option but omits confidence and the grading explanation. The release-candidate checks exercised both mixed-version directions through edits, saves, restarts, and reopening; all new-object props were kept byte for byte.
+A 0.3.1 app on easld 0.3.2 can still view and edit boards, but shows math as literal TeX source and, in the RC fixture, a knowledge graph as a blank titled diagram. An answered question shows the selected option but omits confidence and the grading explanation. The release-candidate checks exercised both mixed-version directions through edits, saves, restarts, and reopening; all new-object props were kept byte for byte.
 
 Math rendering, HTML keyboard ownership, remote-tab listing, and the middle-click pan fix are app-side changes. The browser-stream retirement fix runs on the Mac encoding the stream; it does not need a new easld.
 
