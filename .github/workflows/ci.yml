@@ -23,7 +23,15 @@ jobs:
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
+      - name: Focused HostMaster observations
+        run: |
+          swift build -j 2 --product CanvasCoreTests
+          for observation in {1..100}; do
+            printf 'HostMaster observation %s\n' "$observation"
+            .build/debug/CanvasCoreTests --filter persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters --no-parallel
+          done
       - name: Core HostMaster sample
+        if: always()
         run: |
           swift --version
           bun --version
