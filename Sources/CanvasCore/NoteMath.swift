@@ -26,14 +26,19 @@ enum NoteMath {
     /// `raw` decoded as CommonMark decodes a text node, or nil when it can't be reproduced
     /// exactly (an entity beyond the numeric and XML ones), which leaves the node as prose.
     static func text(raw: String, decoded: String) -> Text? {
+        text(raw: Array(raw), decoded: decoded)
+    }
+
+    /// The buffer uses contiguous integer offsets; collection input makes scanner work observable.
+    static func text<Characters: RandomAccessCollection>(raw: Characters, decoded: String) -> Text? where Characters.Element == Character, Characters.Index == Int {
         var characters: [Character] = []
         var source: [String] = []
         var escapedDollar: [Bool] = []
-        let scalars = Array(raw)
-        var index = 0
-        while index < scalars.count {
+        let scalars = raw
+        var index = scalars.startIndex
+        while index < scalars.endIndex {
             let character = scalars[index]
-            if character == "\\", index + 1 < scalars.count, isPunctuation(scalars[index + 1]) {
+            if character == "\\", index + 1 < scalars.endIndex, isPunctuation(scalars[index + 1]) {
                 let escaped = scalars[index + 1]
                 characters.append(escaped)
                 source.append(String([character, escaped]))
@@ -41,7 +46,7 @@ enum NoteMath {
                 index += 2
                 continue
             }
-            if character == "&", let semicolon = scalars[index..<min(index + 33, scalars.count)].firstIndex(of: ";"),
+            if character == "&", let semicolon = scalars[index..<min(index + 33, scalars.endIndex)].firstIndex(of: ";"),
                let decoded = entity(scalars[(index + 1)..<semicolon]) {
                 characters.append(contentsOf: decoded)
                 for _ in decoded { source.append(String(scalars[index...semicolon])) }
@@ -402,7 +407,7 @@ enum NoteMath {
 
     /// A numeric entity, or one of the five XML names. Named HTML entities beyond these can't be
     /// reproduced without cmark's table, so the text node stays prose.
-    private static func entity(_ body: ArraySlice<Character>) -> [Character]? {
+    private static func entity<Body: Collection>(_ body: Body) -> [Character]? where Body.Element == Character {
         let name = String(body)
         if name.hasPrefix("#x") || name.hasPrefix("#X") {
             guard let value = UInt32(name.dropFirst(2), radix: 16), let scalar = Unicode.Scalar(value) else { return nil }

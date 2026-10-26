@@ -120,14 +120,45 @@ public struct SurfaceVideoFrame: Sendable {
     let refresh: Bool
 }
 
+enum SurfaceVideoCompressionSessions {
+    static let retirementQueue = DispatchQueue(label: "easl.surface.video-retirement", qos: .utility)
+    private static let counters = Locked((live: 0, retiring: 0))
+
+    static var counts: (live: Int, retiring: Int) { counters.withLock { $0 } }
+
+    static func waitForRetirements() {
+        guard counters.withLock({ $0.retiring > 0 }) else { return }
+        retirementQueue.sync {}
+    }
+
+    fileprivate static func didCreate() {
+        counters.withLock { $0.live += 1 }
+    }
+
+    fileprivate static func retire(_ work: @escaping @Sendable () -> Void) {
+        counters.withLock {
+            $0.retiring += 1
+            retirementQueue.async(execute: work)
+        }
+    }
+
+    fileprivate static func didRetire() {
+        counters.withLock {
+            $0.live -= 1
+            $0.retiring -= 1
+        }
+    }
+}
+
 private struct RetiredVideoCompressionSession: @unchecked Sendable {
     let session: VTCompressionSession
 
     func invalidate() {
-        DispatchQueue.global(qos: .utility).async { [self] in
+        SurfaceVideoCompressionSessions.retire { [self] in
             // Drain callbacks before invalidation, without retaining the encoder or blocking its caller.
             _ = VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
+            SurfaceVideoCompressionSessions.didRetire()
         }
     }
 }
@@ -337,11 +368,13 @@ public final class SurfaceVideoEncoder: @unchecked Sendable {
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_EnableLowLatencyRateControl: profile == .motion]
         if profile == .sharp { specification[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] = true }
+        SurfaceVideoCompressionSessions.waitForRetirements()
         try videoCheck(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
             codecType: kCMVideoCodecType_H264, encoderSpecification: specification as CFDictionary,
             imageBufferAttributes: attributes as CFDictionary, compressedDataAllocator: nil,
             outputCallback: nil, refcon: nil, compressionSessionOut: &session))
         guard let session else { throw SurfaceVideoError.missingOutput }
+        SurfaceVideoCompressionSessions.didCreate()
         let settings: [(CFString, CFTypeRef)] = profile == .sharp ? [
             (kVTCompressionPropertyKey_ProfileLevel, "H264_High444Predictive_AutoLevel" as CFString),
             (kVTCompressionPropertyKey_RealTime, kCFBooleanFalse),

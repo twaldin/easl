@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Rapid browser-stream churn drains old compression sessions before creating another encoder. Encoder destruction stays asynchronous; creating a new encoder can wait for retirement.
 - Authored graph diagrams store their data in `props.knowledge`, separate from the legacy calls cache. Expanded details scroll within a capped panel while the graph remains visible.
 - Diagram measurement respects the diagram kind and reports invalid authored graph input as `invalid_params`, consistent with easld.
 - Display math in blockquotes excludes the quote markers from the formula.

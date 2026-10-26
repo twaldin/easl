@@ -114,11 +114,13 @@ struct NoteMathTests {
     }
 
     @Test func ampersandHeavyProsePreservesEveryCharacter() throws {
-        let raw = String(repeating: "&", count: 2_000_000)
-        let text = try #require(NoteMath.text(raw: raw, decoded: raw))
+        let raw = String(repeating: "&", count: 128)
+        let input = CountingNoteMathCharacters(Array(raw))
+        let text = try #require(NoteMath.text(raw: input, decoded: raw))
         #expect(String(text.characters) == raw)
         #expect(text.source.joined() == raw)
         #expect(text.escapedDollar.allSatisfy { !$0 })
+        #expect(input.visits <= 34 * input.count)
     }
 
     @Test func boundedEntitiesKeepTheirDecodedTextAndMathSource() throws {
@@ -135,4 +137,26 @@ struct NoteMathTests {
         let tooLong = "&#" + String(repeating: "0", count: 29) + "36;"
         #expect(NoteMath.text(raw: tooLong, decoded: "$") == nil)
     }
+}
+
+private final class CountingNoteMathCharacters: RandomAccessCollection {
+    private let characters: [Character]
+    private(set) var visits = 0
+
+    init(_ characters: [Character]) {
+        self.characters = characters
+    }
+
+    var startIndex: Int { characters.startIndex }
+    var endIndex: Int { characters.endIndex }
+
+    subscript(index: Int) -> Character {
+        visits += 1
+        return characters[index]
+    }
+
+    func index(after index: Int) -> Int { index + 1 }
+    func index(before index: Int) -> Int { index - 1 }
+    func index(_ index: Int, offsetBy distance: Int) -> Int { index + distance }
+    func distance(from start: Int, to end: Int) -> Int { end - start }
 }
