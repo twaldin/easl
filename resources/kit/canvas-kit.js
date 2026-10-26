@@ -100,7 +100,7 @@
     // Queues `payload` (any JSON value, at most 64 KiB) for the agent terminal that created
     // this tile. The page cannot name a sender or a gesture. easl treats the payload as
     // untrusted page content. Resolves with {terminal, message} once queued, else rejects
-    // with the refusal (a user-created tile, a creator that is gone or below protocol 2,
+    // with the refusal (a user-created tile, a creator that is gone or below protocol 3,
     // a remote board, or a cap).
     send(payload) {
       return post({ type: 'send', payload: payload === undefined ? null : payload });
