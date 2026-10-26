@@ -478,10 +478,11 @@ final class AgentMessageTests {
                 ids.append(try #require(reply["message"]?.string))
             }
         }
-        let first = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let countInbox = try connect()
+        let first = try await call(countInbox, "agent.inbox", ["tile": .string(host)])
         let firstIds = first["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
         #expect(firstIds.count == HtmlSendBudget.inboxCount)
-        let second = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let second = try await call(countInbox, "agent.inbox", ["tile": .string(host)])
         let secondIds = second["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
         #expect(Set(firstIds + secondIds) == Set(ids))
         #expect(board.htmlMessages[host]?.count == ids.count)
@@ -498,13 +499,14 @@ final class AgentMessageTests {
                 heavyIds.append(try #require(reply["message"]?.string))
             }
         }
-        let batch = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
+        let byteInbox = try connect()
+        let batch = try await call(byteInbox, "agent.inbox", ["tile": .string(wide)])
         let rendered = try #require(batch["result"]?["messages"]?.array)
         #expect(rendered.count < heavyIds.count)
         #expect(HtmlSendBudget.responseBytes(rendered) <= HtmlSendBudget.inboxBytes)
         var received = rendered.compactMap { $0["id"]?.string }
         for _ in 0..<heavyIds.count where received.count < heavyIds.count {
-            let rest = try await call(try connect(), "agent.inbox", ["tile": .string(wide)])
+            let rest = try await call(byteInbox, "agent.inbox", ["tile": .string(wide)])
             let items = try #require(rest["result"]?["messages"]?.array)
             #expect(HtmlSendBudget.responseBytes(items) <= HtmlSendBudget.inboxBytes)
             received.append(contentsOf: items.compactMap { $0["id"]?.string })
