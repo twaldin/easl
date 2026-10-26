@@ -110,6 +110,9 @@ var messageIDPattern = regexp.MustCompile(`^msg_[A-Za-z0-9_-]{8,64}$`)
 // for it (held by this connection until acked, offered again once it closes), or waits up to
 // waitMs for a message.
 func (r *Router) inbox(id any, p map[string]any, c Conn) (any, error) {
+	if _, present := p["noticeAck"]; present {
+		return nil, invalid("unknown params noticeAck; easld does not support HTML submission notices")
+	}
 	tile, err := str(p, "tile")
 	if err != nil {
 		return nil, err

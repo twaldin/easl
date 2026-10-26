@@ -63,6 +63,13 @@ export function noticeIds(message: AgentMessage): SubmissionNoticeIds | undefine
   return { id, html, board } as SubmissionNoticeIds;
 }
 
+export type MessageIdentity = Pick<AgentMessage, "id" | "kind">;
+
+/** Ordinary IDs are msg_ identifiers; notices occupy a separate projection namespace. */
+export function messageKey(message: MessageIdentity): string {
+  return message.kind === "html-submission-notice" ? `notice:${message.id}` : message.id;
+}
+
 export function retainedBytes(message: AgentMessage): number {
   return Buffer.byteLength(JSON.stringify(message), "utf8");
 }
@@ -73,19 +80,20 @@ export function retainedBytes(message: AgentMessage): number {
  */
 export function acceptHeld(held: readonly AgentMessage[], incoming: readonly AgentMessage[]): { take: AgentMessage[]; leave: AgentMessage[] } {
   const kept = new Map<string, AgentMessage>();
-  for (const message of held) kept.set(message.id, message);
+  for (const message of held) kept.set(messageKey(message), message);
   let bytes = 0;
   for (const message of kept.values()) bytes += retainedBytes(message);
   const take: AgentMessage[] = [];
   const leave: AgentMessage[] = [];
   for (const message of incoming) {
-    if (kept.has(message.id)) continue;
+    const key = messageKey(message);
+    if (kept.has(key)) continue;
     const size = retainedBytes(message);
     if (kept.size >= HELD_MESSAGE_CAP || bytes + size > HELD_BYTE_CAP) {
       leave.push(message);
       continue;
     }
-    kept.set(message.id, message);
+    kept.set(key, message);
     bytes += size;
     take.push(message);
   }
@@ -232,6 +240,14 @@ export function recordedIds(message: Recorded): string[] {
   return [...text.matchAll(ENVELOPE_ID)].map((match) => match[1]);
 }
 
+/** Session cards and recovered editor envelopes retain their delivery projection. */
+export function recordedKeys(message: Recorded): string[] {
+  const notice = message.role === "custom" && message.customType === EASL_MESSAGE && (message.details as { kind?: unknown } | undefined)?.kind === "html-submission-notice";
+  return recordedIds(message)
+    .filter((id) => !notice || (MESSAGE_ID.test(id) && id.trim() === id))
+    .map((id) => messageKey({ id, kind: notice ? "html-submission-notice" : undefined }));
+}
+
 /** The hidden context `guided` adds: omp hands it to the model as developer context, and never records it. */
 export const GUIDANCE = "easl.guidance";
 export type Guidance = { role: "custom"; customType: typeof GUIDANCE; content: string; display: false; attribution: "agent"; timestamp: number };
@@ -242,7 +258,7 @@ export type Guidance = { role: "custom"; customType: typeof GUIDANCE; content: s
  */
 export function guided<M extends Recorded>(messages: readonly M[], ids: ReadonlySet<string>, text: string): (M | Guidance)[] {
   const at = Math.max(
-    messages.findIndex((message) => recordedIds(message).some((id) => ids.has(id))),
+    messages.findIndex((message) => recordedKeys(message).some((id) => ids.has(id))),
     0,
   );
   const stamp = messages[at]?.timestamp;

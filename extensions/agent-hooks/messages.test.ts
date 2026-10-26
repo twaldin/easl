@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import type { Theme } from "@oh-my-pi/pi-coding-agent";
 import type { AgentMessage } from "../../clients/ts/src/index";
-import { card, deliveryCards, forOmp, GUIDANCE, guided, noticeIds, submissionNotice, peerAddress, plan, recordedIds, renderCard, WakeBudget } from "./messages";
+import { acceptHeld, card, deliveryCards, forOmp, GUIDANCE, guided, noticeIds, submissionNotice, peerAddress, plan, recordedIds, renderCard, WakeBudget } from "./messages";
 
 const message = (from: AgentMessage["from"], text = "hi", context?: string): AgentMessage => ({
   id: "msg_1",
@@ -175,4 +175,27 @@ test("a submission notice draws native IDs, not a page title or payload", () => 
   expect(lines.join("\n")).not.toMatch(/[<>`\u2028\u2029]/);
   expect(lines.join("\n")).not.toContain("HOSTILE");
   expect(lines.filter((line) => line.includes("│"))).toHaveLength(1);
+});
+
+test("held admission deduplicates retransmissions without merging same-ID ordinary and notice projections", () => {
+  const ordinary = { ...message({ name: "ci" }), id: "msg_collision123" };
+  const notice: AgentMessage = { ...message({ html: "obj_p", name: "Quiz", board: "brd_c" }), id: ordinary.id, attribution: "html", kind: "html-submission-notice", mayStartTurn: true };
+  expect(acceptHeld([], [ordinary, notice, { ...ordinary }, { ...notice }])).toEqual({ take: [ordinary, notice], leave: [] });
+  expect(acceptHeld([ordinary], [notice, { ...ordinary }])).toEqual({ take: [notice], leave: [] });
+  expect(acceptHeld([notice], [ordinary, { ...notice }])).toEqual({ take: [ordinary], leave: [] });
+});
+
+test("same-ID ordinary and notice projections each consume a held-message slot", () => {
+  const ordinary = { ...message({ name: "ci" }), id: "msg_collision123" };
+  const notice: AgentMessage = { ...message({ html: "obj_p", name: "Quiz", board: "brd_c" }), id: ordinary.id, attribution: "html", kind: "html-submission-notice", mayStartTurn: true };
+  const fillers = Array.from({ length: 126 }, (_, index) => ({ ...ordinary, id: `msg_filler${index}` }));
+  const overflow = { ...ordinary, id: "msg_overflow123" };
+  expect(acceptHeld([...fillers, ordinary, notice], [overflow])).toEqual({ take: [], leave: [overflow] });
+});
+
+test("same-ID ordinary and notice projections each consume retained UTF-8 bytes", () => {
+  const ordinary = { ...message({ name: "ci" }, "x".repeat(520_000)), id: "msg_collision123" };
+  const notice: AgentMessage = { ...message({ html: "obj_p", name: "Quiz", board: "brd_c" }, "x".repeat(520_000)), id: ordinary.id, attribution: "html", kind: "html-submission-notice", mayStartTurn: true };
+  const overflow = { ...message({ name: "ci" }, "x".repeat(10_000)), id: "msg_overflow123" };
+  expect(acceptHeld([ordinary, notice], [overflow])).toEqual({ take: [], leave: [overflow] });
 });
