@@ -119,7 +119,6 @@ public enum HtmlChannel {
         return .object(["terminal": .string(creator), "message": .string(message.id)])
     }
 
-    /// What a message from an HTML tile calls it: its title, else `HTML`, as its title bar shows.
     static func title(of tile: CanvasObject) -> String {
         tile.props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "HTML"
     }

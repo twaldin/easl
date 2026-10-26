@@ -163,7 +163,6 @@ public final class Board {
     /// Page messages waiting for each terminal (`htmlMessages` in the board file). Not part of
     /// `messages`: a bounce of that queue would notify the page as the user.
     public internal(set) var htmlMessages: [ObjectID: [AgentMessage]] = [:]
-    /// Accepted page-send times for the rolling rate cap. In memory only.
     var htmlSendRate = HtmlSendRateBook()
     /// Each terminal's agent session generation (`agentSession(of:)`); in memory: what a restart
     /// keeps queued belongs to the session there now.

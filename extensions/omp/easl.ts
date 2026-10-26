@@ -431,9 +431,7 @@ export default function canvas(pi: ExtensionAPI): void {
   let afterTurn: AgentMessage[] = [];
   // Messages over their senders' wake bound while nothing streams, riding the next turn that starts.
   let nextStart: AgentMessage[] = [];
-  // The burst in the coalesce window, counted in the hold before it is accepted.
   let coalescing: AgentMessage[] = [];
-  // A refused offer closed the inbox. Wait before polling again so the retry does not spin.
   let holdoff = false;
   // Inert page messages that arrived while a turn was already running. They join only a start after that turn ends.
   const inertAwaitingTurnEnd = new Set<string>();
@@ -503,8 +501,6 @@ export default function canvas(pi: ExtensionAPI): void {
       const firstFits = acceptHeld(heldMessages().filter((message) => !firstIds.has(message.id)), first).leave.length === 0;
       let more: AgentMessage[] = [];
       if (firstFits) {
-        // A burst goes in as one delivery. A follow-up that fails loses nothing already here.
-        // Skip it when this batch already fills the hold, so the rest stays native and unacked.
         await Bun.sleep(COALESCE_MS);
         more = await inbox.api.agent.inbox({ tile: tile! }).then(
           (reply) => reply.messages,

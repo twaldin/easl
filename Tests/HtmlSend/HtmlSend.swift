@@ -4,8 +4,6 @@ import WebKit
 @testable import CanvasApp
 @testable import CanvasCore
 
-/// A native click or key in the live HTML tile arms one send. A DOM click, a timer, mouse up,
-/// a click outside the tile, and a reload do not. The bridge records that on the queued message.
 @main
 @MainActor
 private enum HtmlSend {

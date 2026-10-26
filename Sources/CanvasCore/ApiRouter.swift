@@ -18,7 +18,6 @@ public final class BoardRegistry {
     var routerHook: ((Board, BoardEvent) -> Void)?
     /// The router's handler of messages that bounced on any open board (`Board.onMessagesBounced`).
     var messagesBounced: ((Board, MessageBounce) -> Void)?
-    /// The router's handler of messages queued for a terminal on any open board (`Board.onMessageQueued`).
     var messageQueued: ((Board, ObjectID) -> Void)?
     var didClose: ((Board) -> Void)?
     var terminalsEnded: (([CanvasObject]) -> Void)?

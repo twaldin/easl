@@ -616,8 +616,6 @@ final class HtmlWebView: WKWebView {
         }
     }
 
-    /// Left mouse down only. Mouse up is the same click, not a second gesture. Key repeats do
-    /// not extend the window after the first key down.
     private static func observeSendGesture(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:

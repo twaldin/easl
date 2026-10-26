@@ -110,8 +110,6 @@ public enum HtmlMessage: Equatable, Sendable {
         return key
     }
 
-    /// A send payload is any JSON value, bounded by the message cap: the transport already caps
-    /// the body a page builds, and a message constructed in code is checked here.
     static func checkPayload(_ payload: JSONValue) throws {
         let size = (try? JSONEncoder().encode(payload).count) ?? Int.max
         guard size <= maxMessageBytes else { throw HtmlError.tooLarge(size, limit: maxMessageBytes) }
