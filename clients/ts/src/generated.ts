@@ -2056,6 +2056,8 @@ export type AgentInboxParams = {
   tile: Id;
   /** receiving capability for this request only, including its long poll or ack reply; 1 or omitted: ordinary agent and user messages only; 2 and later: also untrusted HTML page messages. Must be sent on every request that accepts HTML, regardless of the terminal's persisted agent.report protocol */
   protocol?: number;
+  /** filter this request's reply, including its long poll or ack reply, to ordinary messages plus HTML whose native mayStartTurn is true. HTML still requires protocol 2 or later. False or omitted: include inert HTML data too when protocol permits it. Filtered data remains native, unacknowledged and unheld, available through a separate manual agent.inbox request with protocol 2 and no wakeOnly */
+  wakeOnly?: boolean;
   /** messages this integration has handed to its agent */
   ack?: MessageId[];
   /** with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one */

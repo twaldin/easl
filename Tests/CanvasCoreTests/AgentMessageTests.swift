@@ -734,4 +734,197 @@ final class AgentMessageTests {
         #expect(messages.contains { $0["id"] == .string(ordinary.id) && $0["text"] == "ordinary after page" && $0["attribution"] == "user" })
     }
 
+    @Test(arguments: [false, true])
+    func aWakeOnlyPollLeavesInertDataAvailableForManualReadAndAck(working: Bool) async throws {
+        let host = terminal("manual-host"), lead = terminal("lead")
+        try board.reportLifecycle(tile: host, kind: "omp", state: working ? .working : .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>manual data</p>"]), caller: host)
+        let integration = try connect(), manual = try connect(), sender = try connect()
+        integration.send(#"{"id":"wake","method":"agent.inbox","params":{"tile":"\#(host)","protocol":2,"wakeOnly":true,"waitMs":5000}}"#)
+        integration.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await integration.next()["id"] == "ready")
+
+        let queued = try await HtmlChannel.handle(.send(payload: .object(["answer": "inert"])), tile: page.id, board: board)
+        let id = try #require(queued["message"]?.string)
+        integration.send(#"{"id":"still-waiting","method":"system.ping","params":{}}"#)
+        #expect(try await integration.next()["id"] == "still-waiting")
+        let taken = try await call(manual, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        let messages = try #require(taken["result"]?["messages"]?.array)
+        #expect(messages.map { $0["id"] } == [.string(id)])
+        #expect(messages.first?["text"] == .string("{\"answer\":\"inert\"}"))
+        #expect(messages.first?["attribution"] == "html")
+        #expect(messages.first?["mayStartTurn"] == .bool(false) && messages.first?["untrustedPageContent"] == .bool(true))
+        let acked = try await call(manual, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": [.string(id)]])
+        #expect(acked["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host] == nil)
+        integration.send(#"{"id":"after-manual-ack","method":"system.ping","params":{}}"#)
+        #expect(try await integration.next()["id"] == "after-manual-ack")
+
+        let peer = try await call(sender, "agent.prompt", ["target": .string(host), "caller": .string(lead), "text": "ordinary peer"])
+        let wake = try await integration.next()
+        #expect(wake["id"] == "wake")
+        #expect(wake["result"]?["messages"]?.array?.map { $0["id"] } == [peer["result"]?["message"]])
+        #expect(wake["result"]?["messages"]?.array?.first?["attribution"] == "agent")
+        #expect(typed.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func inertBacklogsAtNativeCapsDoNotInterceptPeersOrAcceptedSubmits(destinationFull: Bool) async throws {
+        let host = terminal("backlog-host"), lead = terminal("lead")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let count = destinationFull ? HtmlSendBudget.destinationCount : HtmlSendBudget.pageCount
+        let start = Date(timeIntervalSince1970: 200_000)
+        var inertIds: [String] = []
+        for pageIndex in 0..<(count / HtmlSendBudget.pageCount) {
+            let page = board.create(type: .html, props: .object(["html": .string("<p>inert \(pageIndex)</p>")]), caller: host)
+            for index in 0..<HtmlSendBudget.pageCount {
+                let queued = try await HtmlChannel.handle(.send(payload: .string("inert \(pageIndex)-\(index)")), tile: page.id, board: board, now: start.addingTimeInterval(Double(index) * 2))
+                inertIds.append(try #require(queued["message"]?.string))
+            }
+            await #expect(throws: HtmlError.overBudget(HtmlSendBudget.pageCountReason)) {
+                try await HtmlChannel.handle(.send(payload: "page overflow"), tile: page.id, board: board, now: start.addingTimeInterval(100))
+            }
+        }
+        let integration = try connect(), manual = try connect(), sender = try connect()
+        let wakeParams: [String: JSONValue] = ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true)]
+        #expect(try await call(integration, "agent.inbox", wakeParams)["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host]?.map(\.id) == inertIds)
+
+        let peer = try await call(sender, "agent.prompt", ["target": .string(host), "caller": .string(lead), "text": "peer after full backlog"])
+        let peerReply = try await call(integration, "agent.inbox", wakeParams)
+        let peerMessages = try #require(peerReply["result"]?["messages"]?.array)
+        #expect(peerMessages.map { $0["id"] } == [peer["result"]?["message"]])
+        #expect(peerMessages.first?["attribution"] == "agent" && peerMessages.first?["text"] == "peer after full backlog")
+        let peerAck = try await call(integration, "agent.inbox", wakeParams.merging(["ack": .array(peerMessages.compactMap { $0["id"] })]) { _, new in new })
+        #expect(peerAck["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host]?.map(\.id) == inertIds)
+
+        let manualReply = try await call(manual, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        let manualIds = try #require(manualReply["result"]?["messages"]?.array).compactMap { $0["id"]?.string }
+        #expect(manualIds == Array(inertIds.prefix(HtmlSendBudget.inboxCount)))
+        let submit = board.create(type: .html, props: .object(["html": "<button>Submit</button>"]), caller: host)
+        if destinationFull {
+            await #expect(throws: HtmlError.overBudget(HtmlSendBudget.destinationCountReason)) {
+                try await HtmlChannel.handle(.send(payload: "no native capacity"), tile: submit.id, board: board, mayStartTurn: true, now: start)
+            }
+            let freed = try await call(manual, "agent.inbox", wakeParams.merging(["ack": .array(manualIds.map(JSONValue.string))]) { _, new in new })
+            #expect(freed["result"]?["messages"] == .array([]))
+            inertIds.removeFirst(manualIds.count)
+            for index in 0..<(manualIds.count - 1) {
+                let queued = try await HtmlChannel.handle(.send(payload: .string("replacement inert \(index)")), tile: submit.id, board: board, now: start.addingTimeInterval(Double(index) * 2))
+                inertIds.append(try #require(queued["message"]?.string))
+            }
+        }
+        let authorized = try await HtmlChannel.handle(.send(payload: "authorized Submit"), tile: submit.id, board: board, mayStartTurn: true, now: start.addingTimeInterval(100))
+        if destinationFull { #expect(board.htmlMessages[host]?.count == HtmlSendBudget.destinationCount) }
+        let offered = try await call(integration, "agent.inbox", wakeParams)
+        let messages = try #require(offered["result"]?["messages"]?.array)
+        #expect(messages.map { $0["id"] } == [authorized["message"]])
+        #expect(messages.first?["attribution"] == "html" && messages.first?["mayStartTurn"] == .bool(true))
+        #expect(messages.first?["untrustedPageContent"] == .bool(true) && messages.first?["from"]?["html"] == .string(submit.id))
+        let acked = try await call(integration, "agent.inbox", wakeParams.merging(["ack": .array(messages.compactMap { $0["id"] })]) { _, new in new })
+        #expect(acked["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host]?.map(\.id) == inertIds)
+        #expect(typed.isEmpty)
+    }
+
+    @Test func simultaneousInboxWaitersKeepTheirOwnWakeFilterAndProtocol() async throws {
+        let host = terminal("waiter-filters")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>waiters</p>"]), caller: host)
+        let client = try connect()
+        client.send(#"{"id":"wake","method":"agent.inbox","params":{"tile":"\#(host)","protocol":2,"wakeOnly":true,"waitMs":5000}}"#)
+        client.send(#"{"id":"manual","method":"agent.inbox","params":{"tile":"\#(host)","protocol":2,"waitMs":5000}}"#)
+        client.send(#"{"id":"legacy","method":"agent.inbox","params":{"tile":"\#(host)","wakeOnly":true,"waitMs":5000}}"#)
+        client.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == "ready")
+
+        let inert = try await HtmlChannel.handle(.send(payload: "inert for manual"), tile: page.id, board: board)
+        let manual = try await client.next()
+        #expect(manual["id"] == "manual")
+        #expect(manual["result"]?["messages"]?.array?.map { $0["id"] } == [inert["message"]])
+        client.send(#"{"id":"remaining-waiters","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == "remaining-waiters")
+
+        let authorized = try await HtmlChannel.handle(.send(payload: "authorized for wake"), tile: page.id, board: board, mayStartTurn: true)
+        let wake = try await client.next()
+        #expect(wake["id"] == "wake")
+        #expect(wake["result"]?["messages"]?.array?.map { $0["id"] } == [authorized["message"]])
+        let another = try await HtmlChannel.handle(.send(payload: "authorized but not legacy"), tile: page.id, board: board, mayStartTurn: true)
+        client.send(#"{"id":"legacy-still-waiting","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == "legacy-still-waiting")
+        let ordinary = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary for legacy"])
+        let legacy = try await client.next()
+        #expect(legacy["id"] == "legacy")
+        #expect(legacy["result"]?["messages"]?.array?.map { $0["id"] } == [ordinary["result"]?["message"]])
+        #expect(legacy["result"]?["messages"]?.array?.first?["attribution"] == "user")
+        let explicitLegacy = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 1, "wakeOnly": .bool(false)])
+        #expect(explicitLegacy["result"]?["messages"] == .array([]))
+        let modern = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true)])
+        #expect(modern["result"]?["messages"]?.array?.map { $0["id"] } == [another["message"]])
+    }
+
+    @Test func inboxAckRepliesUseOnlyThatRequestsWakeFilterAndProtocol() async throws {
+        let host = terminal("ack-filters")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>ack filters</p>"]), caller: host)
+        let client = try connect(), sender = try connect()
+        let inert = try await HtmlChannel.handle(.send(payload: "first inert"), tile: page.id, board: board)
+        let ordinary = try await call(sender, "agent.prompt", ["target": .string(host), "text": "first ordinary"])
+        let wake = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true)])
+        #expect(wake["result"]?["messages"]?.array?.map { $0["id"] } == [ordinary["result"]?["message"]])
+        let ordinaryId = try #require(ordinary["result"]?["message"])
+        let manualAck = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": .array([ordinaryId])])
+        #expect(manualAck["result"]?["messages"]?.array?.map { $0["id"] } == [inert["message"]])
+
+        let nextInert = try await HtmlChannel.handle(.send(payload: "next inert"), tile: page.id, board: board)
+        let authorized = try await HtmlChannel.handle(.send(payload: "authorized"), tile: page.id, board: board, mayStartTurn: true)
+        let inertId = try #require(inert["message"])
+        let wakeAck = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true), "ack": .array([inertId])])
+        #expect(wakeAck["result"]?["messages"]?.array?.map { $0["id"] } == [authorized["message"]])
+        let nextAuthorized = try await HtmlChannel.handle(.send(payload: "next authorized"), tile: page.id, board: board, mayStartTurn: true)
+        let nextOrdinary = try await call(sender, "agent.prompt", ["target": .string(host), "text": "next ordinary"])
+        let authorizedId = try #require(authorized["message"])
+        let legacyAck = try await call(client, "agent.inbox", ["tile": .string(host), "wakeOnly": .bool(true), "ack": .array([authorizedId])])
+        #expect(legacyAck["result"]?["messages"]?.array?.map { $0["id"] } == [nextOrdinary["result"]?["message"]])
+        let nextOrdinaryId = try #require(nextOrdinary["result"]?["message"])
+        let unfilteredAck = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(false), "ack": .array([nextOrdinaryId])])
+        #expect(unfilteredAck["result"]?["messages"]?.array?.map { $0["id"] } == [nextInert["message"], nextAuthorized["message"]])
+        let remainingIds = try #require(unfilteredAck["result"]?["messages"]?.array).compactMap { $0["id"] }
+        let finished = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true), "ack": .array(remainingIds)])
+        #expect(finished["result"]?["messages"] == .array([]))
+        #expect(board.messages[host] == nil && board.htmlMessages[host] == nil)
+    }
+
+    @Test func wakeOnlyTreatsAbsentStoredNativePermissionAsInert() async throws {
+        let host = terminal("stored-permission")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>stored permission</p>"]), caller: host)
+        let absent = AgentMessage(text: "\"absent permission\"", from: nil, html: page.id, label: nil, when: .now, mentions: [])
+        let inert = AgentMessage(text: "\"false permission\"", from: nil, html: page.id, label: nil, when: .now, mentions: [], mayStartTurn: false)
+        let authorized = AgentMessage(text: "\"true permission\"", from: nil, html: page.id, label: nil, when: .now, mentions: [], mayStartTurn: true)
+        var snapshot = board.snapshot
+        snapshot.htmlMessages = [host: [absent, inert, authorized]]
+        registry.store.save(Board(snapshot: snapshot))
+        let restoredRegistry = BoardRegistry(store: registry.store)
+        let restored = try await restoredRegistry.open(root: board.root)
+        let restoredRouter = ApiRouter(registry: restoredRegistry)
+        let path = dir.appendingPathComponent("stored-permission.sock").path
+        let restoredServer = SocketServer(path: path) { request, connection in
+            await restoredRouter.handle(request, connection: connection)
+        }
+        try restoredServer.start()
+        defer { restoredServer.stop() }
+        let integration = try LineClient(path: path), manual = try LineClient(path: path)
+        let wake = try await call(integration, "agent.inbox", ["tile": .string(host), "protocol": 2, "wakeOnly": .bool(true)])
+        #expect(wake["result"]?["messages"]?.array?.map { $0["id"] } == [.string(authorized.id)])
+        let data = try await call(manual, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        let messages = try #require(data["result"]?["messages"]?.array)
+        #expect(messages.map { $0["id"] } == [.string(absent.id), .string(inert.id)])
+        #expect(messages.allSatisfy { $0["mayStartTurn"] == .bool(false) && $0["attribution"] == "html" })
+        let acked = try await call(manual, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": [.string(absent.id), .string(inert.id)]])
+        #expect(acked["result"]?["messages"] == .array([]))
+        #expect(restored.htmlMessages[host]?.map(\.id) == [authorized.id])
+    }
+
 }
