@@ -1227,6 +1227,35 @@ final class AgentMessageTests {
         #expect(board.htmlMessages[host] == nil)
     }
 
+    @Test(arguments: [1, 2, 3])
+    func ordinaryAcknowledgementsPreserveSameIdPageDataAndBothPageHolds(protocolVersion: Int) async throws {
+        let host = terminal("colliding-ack")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
+        let page = board.create(type: .html, props: .object(["html": "<p>retained submission</p>"]), caller: host)
+        let sent = try await HtmlChannel.handle(.send(payload: "retained data"), tile: page.id, board: board, mayStartTurn: true)
+        let id = try #require(sent["message"]?.string)
+        let noticeOwner = try connect(), dataOwner = try connect(), ordinary = try connect(), other = try connect()
+        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)]
+        let data: [String: JSONValue] = ["tile": .string(host), "protocol": 2]
+        #expect(try await call(noticeOwner, "agent.inbox", wake)["result"]?["messages"]?.array?.first?["id"] == .string(id))
+        #expect(try await call(dataOwner, "agent.inbox", data)["result"]?["messages"]?.array?.first?["id"] == .string(id))
+        let queued = try await call(ordinary, "agent.prompt", ["target": .string(host), "message": .string(id), "text": "ordinary same-ID message"])
+        #expect(queued["result"]?["message"] == .string(id))
+        let mode: [String: JSONValue] = ["tile": .string(host), "protocol": .number(Double(protocolVersion)), "wakeOnly": .bool(protocolVersion != 1)]
+        #expect(try await call(ordinary, "agent.inbox", mode)["result"]?["messages"]?.array?.first?["text"] == "ordinary same-ID message")
+        #expect(try await call(ordinary, "agent.inbox", mode.merging(["ack": [.string(id)]]) { _, new in new })["result"]?["messages"] == .array([]))
+        #expect(board.messages[host] == nil)
+        #expect(board.htmlMessages[host]?.first?.text == "\"retained data\"")
+        #expect(board.htmlMessages[host]?.first?.noticeAcknowledged == false)
+        #expect(try await call(other, "agent.inbox", wake)["result"]?["messages"] == .array([]))
+        #expect(try await call(other, "agent.inbox", data)["result"]?["messages"] == .array([]))
+        _ = try await call(noticeOwner, "agent.inbox", wake.merging(["noticeAck": [.string(id)]]) { _, new in new })
+        #expect(board.htmlMessages[host]?.first?.noticeAcknowledged == true)
+        #expect(try await call(other, "agent.inbox", data)["result"]?["messages"] == .array([]))
+        #expect(try await call(dataOwner, "agent.inbox", data.merging(["ack": [.string(id)]]) { _, new in new })["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host] == nil)
+    }
+
     @Test func noticeAckCapabilityValidationPrecedesEveryAcknowledgement() async throws {
         let host = terminal("receipt-capability")
         try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
