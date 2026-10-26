@@ -39,36 +39,6 @@ public struct AgentMessage: Codable, Equatable, Sendable {
         self.queuedAt = queuedAt
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id, text, from, html, label, when, mentions, mayStartTurn, queuedAt
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        text = try container.decode(String.self, forKey: .text)
-        from = try container.decodeIfPresent(ObjectID.self, forKey: .from)
-        html = try container.decodeIfPresent(ObjectID.self, forKey: .html)
-        label = try container.decodeIfPresent(String.self, forKey: .label)
-        when = try container.decode(When.self, forKey: .when)
-        mentions = try container.decode([Mention].self, forKey: .mentions)
-        mayStartTurn = try container.decodeIfPresent(Bool.self, forKey: .mayStartTurn)
-        queuedAt = try container.decode(Date.self, forKey: .queuedAt)
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(text, forKey: .text)
-        try container.encodeIfPresent(from, forKey: .from)
-        try container.encodeIfPresent(html, forKey: .html)
-        try container.encodeIfPresent(label, forKey: .label)
-        try container.encode(when, forKey: .when)
-        try container.encode(mentions, forKey: .mentions)
-        try container.encodeIfPresent(mayStartTurn, forKey: .mayStartTurn)
-        try container.encode(queuedAt, forKey: .queuedAt)
-    }
-
     /// `agent` when a terminal sent it, `html` when a page sent it (`canvasKit.send`), `user` for
     /// a script (no tile, or a `from` label).
     public var attribution: String {

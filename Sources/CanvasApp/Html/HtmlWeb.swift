@@ -415,11 +415,10 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
         // send must not see the same arm.
         var mayStartTurn = false
         if body["type"] as? String == "send" {
-            switch tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime) {
-            case .failure(let reason):
-                return (nil, reason)
-            case .success(let authorized):
-                mayStartTurn = authorized
+            do {
+                mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+            } catch {
+                return (nil, error.description)
             }
         } else {
             guard message.frameInfo.isMainFrame else { return (nil, "not allowed") }

@@ -1121,7 +1121,7 @@ public final class ApiRouter {
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
         let offered = offer(tile, on: board, to: connection)
-        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, await inboxResult(offered, to: tile, on: board, connection: connection)) }
+        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, try await inboxResult(offered, to: tile, on: board, connection: connection)) }
         let waiter = InboxWaiter(id: id, connection: connection, tile: tile)
         inboxWaiters.append(waiter)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
@@ -1145,22 +1145,26 @@ public final class ApiRouter {
         return reserved
     }
 
-    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async -> JSONValue {
+    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async throws -> JSONValue {
         var chosen: [JSONValue] = []
         var kept = 0
-        for message in messages {
-            let item = await board.delivered(message, to: tile, boards: Array(registry.boards.values))
-            let next = chosen + [item]
-            if !chosen.isEmpty, HtmlSendBudget.responseBytes(next) > HtmlSendBudget.inboxBytes { break }
-            chosen.append(item)
-            kept += 1
-            if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes { break }
-        }
-        if kept < messages.count {
-            for message in messages[kept...] {
+        defer {
+            for message in messages.dropFirst(kept) {
                 let key = MessageHold(tile: tile, message: message.id)
                 if messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
             }
+        }
+        for message in messages {
+            let item = await board.delivered(message, to: tile, boards: Array(registry.boards.values))
+            chosen.append(item)
+            if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes {
+                chosen.removeLast()
+                if chosen.isEmpty {
+                    throw Failure("unavailable", "an inbox message exceeds the \(HtmlSendBudget.inboxBytes)-byte batch limit")
+                }
+                break
+            }
+            kept += 1
         }
         return .object(["messages": .array(chosen)])
     }
@@ -1173,8 +1177,12 @@ public final class ApiRouter {
         let waiter = inboxWaiters.remove(at: index)
         let offered = offer(tile, on: board, to: waiter.connection)
         Task { @MainActor in
-            let result = await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
-            waiter.connection.send(Self.ok(waiter.id, result))
+            do {
+                let result = try await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
+                waiter.connection.send(Self.ok(waiter.id, result))
+            } catch {
+                waiter.connection.send(Self.error(waiter.id, Self.failure(for: error)))
+            }
         }
     }
 

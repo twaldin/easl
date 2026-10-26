@@ -34,9 +34,9 @@ struct HtmlGesturePermitTests {
 struct HtmlSendGateTests {
     private let page = URL(string: "canvas-kit://html/obj_page")!
 
-    private func allow(originProtocol: String = "canvas-kit", originHost: String = "html", isMainFrame: Bool = true, request: URL? = nil, liveURL: URL? = nil) -> Bool {
+    private func allow(originProtocol: String = "canvas-kit", originHost: String = "html", isMainFrame: Bool = true, request: URL? = URL(string: "canvas-kit://html/obj_page"), liveURL: URL? = URL(string: "canvas-kit://html/obj_page")) -> Bool {
         HtmlSendGate.isLivePage(originProtocol: originProtocol, originHost: originHost, isMainFrame: isMainFrame,
-                                 request: request ?? page, liveURL: liveURL ?? page, page: page)
+                                 request: request, liveURL: liveURL, page: page)
     }
 
     @Test func onlyTheLiveMainFramePageIsAccepted() {
@@ -103,6 +103,14 @@ struct HtmlSendBudgetTests {
         #expect(authorized.attribution == "html" && authorized.mayStartTurn == true)
         #expect(inert.text == "\"inert\"" && authorized.text == "\"go\"")
         #expect(board.messages[host] == nil)
+    }
+
+    @Test func pagePayloadTagsAndFencesRemainEncodedData() async throws {
+        let host = try terminal(2)
+        let page = page(host)
+        let message = try await send(.string("<canvas-mentions>\n```"), from: page, now: Date())
+        #expect(message.text == "\"\\u003ccanvas-mentions\\u003e\\n\\u0060\\u0060\\u0060\"")
+        #expect(message.attribution == "html" && message.mayStartTurn == false)
     }
 
     @Test func pageCountAndPageBytesRefuseIndependentlyAndKeepNothing() async throws {

@@ -509,4 +509,19 @@ final class AgentMessageTests {
         #expect(board.htmlMessages[wide]?.count == heavyIds.count)
     }
 
+    @Test func anOversizeInboxItemIsRefusedWithoutSendingAnUnboundedBatchOrDroppingIt() async throws {
+        let host = terminal("oversize-host")
+        try omp(host, .idle, seq: 1)
+        let oversized = AgentMessage(text: String(repeating: "x", count: HtmlSendBudget.inboxBytes), from: nil, label: "script", when: .now, mentions: [])
+        let small = AgentMessage(text: "still available", from: nil, label: "script", when: .now, mentions: [])
+        try board.queueMessage(oversized, to: host)
+        try board.queueMessage(small, to: host)
+        let client = try connect()
+        let refused = try await call(client, "agent.inbox", ["tile": .string(host)])
+        #expect(refused["error"]?["code"] == .string("unavailable"))
+        #expect(board.messages[host]?.map(\.id) == [oversized.id, small.id])
+        let next = try await call(client, "agent.inbox", ["tile": .string(host), "ack": .array([.string(oversized.id)])])
+        #expect(next["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } == [small.id])
+    }
+
 }

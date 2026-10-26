@@ -366,15 +366,15 @@ final class HtmlTile: NSView, TileContent {
 
     /// Decides a `canvasKit.send` at bridge receipt, before the channel's work queue. A refusal
     /// does not consume the permit. Success is whether this document's permit was spent.
-    func beginPageSend(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) -> Result<Bool, String> {
-        if hostBoardClosed || board.isClosed { return .failure(HtmlError.unavailable("host closed this board").description) }
-        if isRemote { return .failure(HtmlError.unavailable("canvasKit.send is unsupported on remote boards").description) }
-        if webView !== self.webView { return .failure(HtmlError.malformed("not available while the page renders offscreen").description) }
+    func beginPageSend(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) -> Bool {
+        if hostBoardClosed || board.isClosed { throw .unavailable("host closed this board") }
+        if isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
+        if webView !== self.webView { throw .malformed("not available while the page renders offscreen") }
         guard HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
                                       isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {
-            return .failure("not allowed")
+            throw .unavailable("not allowed")
         }
-        return .success((webView as? HtmlWebView)?.consumeSendPermit(at: time) == true)
+        return (webView as? HtmlWebView)?.consumeSendPermit(at: time) == true
     }
 
     // MARK: Snapshots

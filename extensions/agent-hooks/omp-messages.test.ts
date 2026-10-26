@@ -19,7 +19,7 @@ const TILE = "obj_bob";
 const ALICE = { tile: "obj_alice", name: "alice", address: "alice@canvas", board: "brd_c" };
 
 type Params = Record<string, any>;
-type Wire = { write(data: string): unknown };
+type Wire = { write(data: string | Uint8Array): number };
 type Handler = (event: Params, ctx: unknown) => unknown;
 
 const cleanups: (() => unknown)[] = [];
@@ -53,7 +53,7 @@ async function until(check: () => boolean, limitMs = 10_000): Promise<void> {
 }
 
 /** easl's side for one terminal: the queue, which connection holds what, every call and ack. */
-function fakeEasl() {
+function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
   const dir = mkdtempSync(join(tmpdir(), "easl-omp-"));
   const socketPath = join(dir, "easl.sock");
   const easl = {
@@ -104,11 +104,21 @@ function fakeEasl() {
   let waiters: { connection: number; id: string; socket: Wire }[] = [];
   let sessionId: string | undefined;
   const offer = (connection: number) => {
-    const free = easl.queue.filter((queued) => !open.has(holds.get(queued.id) ?? -1));
+    const free = easl.queue.filter((queued) => !open.has(holds.get(queued.id) ?? -1)).slice(0, batchLimit);
     for (const queued of free) holds.set(queued.id, connection);
     return free;
   };
-  const answer = (socket: Wire, id: string, result: unknown) => socket.write(`${JSON.stringify({ id, ok: true, result })}\n`);
+  const outgoing = new Map<Wire, Uint8Array>();
+  const answer = (socket: Wire, id: string, result: unknown) => {
+    const bytes = Buffer.from(`${JSON.stringify({ id, ok: true, result })}\n`);
+    const pending = outgoing.get(socket);
+    if (pending) {
+      outgoing.set(socket, Buffer.concat([pending, bytes]));
+      return;
+    }
+    const written = socket.write(bytes);
+    if (written < bytes.length) outgoing.set(socket, bytes.subarray(written));
+  };
   async function handle(connection: number, socket: Wire, line: string): Promise<void> {
     const { id, method, params } = JSON.parse(line) as { id: string; method: string; params: Params };
     easl.calls.push({ connection, method, params });
@@ -165,11 +175,19 @@ function fakeEasl() {
         state.buffer = parts.pop()!;
         for (const line of parts.filter(Boolean)) void handle(state.connection, socket, line);
       },
+      drain(socket) {
+        const pending = outgoing.get(socket);
+        if (!pending) return;
+        const written = socket.write(pending);
+        if (written === pending.length) outgoing.delete(socket);
+        else outgoing.set(socket, pending.subarray(written));
+      },
       // A client that ends its side is gone, as the app treats the end of its input.
       end(socket) {
         socket.end();
       },
       close(socket) {
+        outgoing.delete(socket);
         const state = lines.get(socket)!;
         open.delete(state.connection);
         easl.closed.push(state.connection);
@@ -1014,6 +1032,8 @@ test("an authorized page past the wake bound rides the next turn instead of star
     await until(() => omp.delivered.length === i + 1);
     expect(omp.delivered[i].options).toEqual({ deliverAs: "steer", triggerTurn: true });
     expect(omp.delivered[i].message.attribution).toBe("agent");
+    await omp.record(omp.delivered[i].message);
+    await until(() => easl.acks.some((ack) => ack.ids.includes(omp.delivered[i].message.details.id)));
   }
   const before = easl.polls();
   easl.send(pageMessage("over the bound", { mayStartTurn: true }));
@@ -1068,21 +1088,23 @@ test("the hold stops at 128 messages and leaves the rest native and unacked", as
 });
 
 test("the accumulated hold stops at 1MiB and releases backpressure after recording", async () => {
-  const easl = fakeEasl();
+  const easl = fakeEasl(3);
   const omp = fakeOmp(easl);
+  omp.state.pending = true;
   const queued = Array.from({ length: 20 }, (_, index) => message(`${index}:` + "x".repeat(65_000)));
   easl.queue.push(...queued);
+  const deliveredIds = () => omp.delivered.flatMap((item) => item.message.details.ids);
   await omp.emit("session_start");
-  await until(() => omp.delivered.length === 1);
-  expect(omp.delivered[0].message.details.ids).toEqual(queued.slice(0, 16).map((item) => item.id));
+  await until(() => deliveredIds().length === 16);
+  expect(deliveredIds()).toEqual(queued.slice(0, 16).map((item) => item.id));
   expect(easl.acks).toEqual([]);
   const polls = easl.polls();
   await settle(500);
   expect(easl.polls()).toBeLessThan(polls + 3);
-  expect(omp.delivered).toHaveLength(1);
-  await omp.record(omp.delivered[0].message);
-  await until(() => omp.delivered.length === 2);
-  expect(omp.delivered[1].message.details.ids).toEqual(queued.slice(16).map((item) => item.id));
-  await omp.record(omp.delivered[1].message);
+  expect(deliveredIds()).toHaveLength(16);
+  for (const delivered of [...omp.delivered]) await omp.record(delivered.message);
+  await until(() => deliveredIds().length === 20);
+  expect(deliveredIds()).toEqual(queued.map((item) => item.id));
+  for (const delivered of [...omp.delivered]) await omp.record(delivered.message);
   await until(() => easl.queue.length === 0);
 });

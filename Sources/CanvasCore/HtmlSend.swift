@@ -106,17 +106,52 @@ public enum HtmlSendBudget {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(payload) else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        let json = String(decoding: data, as: UTF8.self)
+        let scalars = json.unicodeScalars
+        guard let first = scalars.firstIndex(where: {
+            switch $0.value {
+            case 60, 62, 96, 0x2028, 0x2029: true
+            default: false
+            }
+        }) else { return json }
+        var escaped = String(scalars[..<first])
+        escaped.reserveCapacity(json.utf8.count + 8)
+        for scalar in scalars[first...] {
+            switch scalar.value {
+            case 60: escaped += "\\u003c"
+            case 62: escaped += "\\u003e"
+            case 96: escaped += "\\u0060"
+            case 0x2028: escaped += "\\u2028"
+            case 0x2029: escaped += "\\u2029"
+            default: escaped.unicodeScalars.append(scalar)
+            }
+        }
+        return escaped
     }
 
     static func check(page: ObjectID, destination: ObjectID, bytes: Int, queues: [ObjectID: [AgentMessage]], rate: inout HtmlSendRateBook, now: Date) throws {
-        if bytes > pageBytes { throw HtmlError.overBudget(pageBytesReason) }
-        let fromPage = queues.values.flatMap { $0 }.filter { $0.html == page }
-        if fromPage.count + 1 > pageCount { throw HtmlError.overBudget(pageCountReason) }
-        if fromPage.reduce(0, { $0 + retainedBytes($1) }) + bytes > pageBytes { throw HtmlError.overBudget(pageBytesReason) }
-        let waiting = queues[destination] ?? []
-        if waiting.count + 1 > destinationCount { throw HtmlError.overBudget(destinationCountReason) }
-        if waiting.reduce(0, { $0 + retainedBytes($1) }) + bytes > destinationBytes { throw HtmlError.overBudget(destinationBytesReason) }
+        if bytes > Self.pageBytes { throw HtmlError.overBudget(pageBytesReason) }
+        var pageCount = 0
+        var pageBytes = 0
+        var destinationCount = 0
+        var destinationBytes = 0
+        for (terminal, waiting) in queues {
+            for message in waiting where message.html == page || terminal == destination {
+                let retained = retainedBytes(message)
+                if message.html == page {
+                    pageCount += 1
+                    pageBytes += retained
+                }
+                if terminal == destination {
+                    destinationCount += 1
+                    destinationBytes += retained
+                }
+            }
+        }
+        if pageCount + 1 > Self.pageCount { throw HtmlError.overBudget(pageCountReason) }
+        if pageBytes + bytes > Self.pageBytes { throw HtmlError.overBudget(pageBytesReason) }
+        if destinationCount + 1 > Self.destinationCount { throw HtmlError.overBudget(destinationCountReason) }
+        if destinationBytes + bytes > Self.destinationBytes { throw HtmlError.overBudget(destinationBytesReason) }
         if !rate.allows(page, at: now) { throw HtmlError.overBudget(rateReason) }
     }
 
