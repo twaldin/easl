@@ -266,6 +266,7 @@ enum DevInput {
                 guard let controller = window.windowController as? CanvasWindowController else { return nil }
                 return .object([
                     "window": .number(Double(window.windowNumber)),
+                    "contentTop": .number(window.frame.height - (window.contentView?.frame.height ?? 0)),
                     "board": .string(controller.board.id),
                     "closed": .bool(controller.hostBoardClosed),
                     "selected": .bool(window.tabGroup?.selectedWindow === window || window.tabGroup == nil),

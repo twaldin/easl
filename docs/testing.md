@@ -317,6 +317,53 @@ python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system nati
 
 The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
+### Scrolling oversized browser tiles
+
+Plain scrolling over an oversized live local or streamed browser first reveals any browser edge clipped
+in that direction by the canvas window, clear of the toolbar and tray. The pan stops at that
+edge; further wheel steps scroll the page itself. A phased gesture keeps the owner selected by its first movement through
+momentum, so another gesture may be needed after revealing the edge. A browser resize during
+a gesture does not change that gesture's owner. A gesture that began outside the browser page
+continues panning the canvas when that browser arrives under the pointer. The tile's frame,
+page viewport size, and board layout stay unchanged. Move and ⌘-scroll keep their existing
+pan and zoom behavior.
+
+```sh
+scripts/bundle.sh
+python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --arrival
+python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --drift
+```
+
+The runner launches a real app with a disposable home and a local oversized document. It
+replays native precise and line-based scrolls through the full document on both axes. Phased
+trackpad replay checks canvas reveal with a viewport-sized document, because directly replayed
+WebKit gestures drop later steps (`DevInput.swift`). START and END must become visible inside
+the window. A final END-marker WindowServer capture checks that native chrome, including
+the toolbar and tray, does not cover its colored border. The runner also checks that the tile frame and WebKit viewport
+stay unchanged. The runner never builds the app or touches the installed app's boards.
+The fixture hides page scrollbars and waits for native overlay scrollers to fade.
+
+Run this manual regression on an isolated macOS GUI test machine with Python 3, an installed
+Swift toolchain, and `/Applications/CuaDriver.app` already authorized to capture windows.
+It uses only the Python standard library and compiles its AppKit pixel reader once at startup.
+No Pillow, `uv`, or package download is required. AppKit converts captured colors to sRGB
+before the reader rounds components to 8-bit RGB values for the border assertions.
+The reader preserves the bitmap's declared color space when sampling; AppKit's `colorAt`
+otherwise returns Generic RGB colors even for an sRGB bitmap.
+The shared `Tests/RemoteClosedBoard/native.py` helper captures the exact development-home
+PID and selected window, checks the capture receipt, and ends its Cua session afterward.
+`--out <directory>` retains the initial, reached-edge, and final captures with their receipts,
+capture stderr, `pixels.json` with sample coordinates and colors, and `app.log`.
+A failed edge check also retains its clipped-window capture.
+Without `--out`, only the final capture is taken, and it lives in the disposable home.
+
+This is not part of headless CI. The current CI workflow does not provision an authorized
+CuaDriver capture session. Do not replace the native capture with a DOM-only assertion
+or request new capture permissions during an unattended run. Resolve capture authorization
+on the isolated GUI machine before running the regression.
+
 ### HTML tile keyboard
 
 ```sh

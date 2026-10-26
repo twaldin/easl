@@ -22,6 +22,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
   Code and changes tiles scroll vertically when their content overflows; sideways scrolls pan the board.
   Over terminals, vertical scrolling stays with the tile, focused or not. Click into a full-screen program that does not read the mouse to scroll it. Sideways scrolls pan the board.
+  Over an oversized browser, plain scrolling first reveals its clipped edge in that direction, then scrolls the page. A trackpad gesture keeps its first owner through momentum; start another gesture after revealing the edge.
   With a mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included.
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
   A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).

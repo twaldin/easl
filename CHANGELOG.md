@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Plain wheel scrolling over oversized browser tiles reveals clipped edges before scrolling the page, including streamed browsers. Move-tool panning and Command-scroll zoom are unchanged.
+
 ## 0.3.2
 
 easl 0.3.2 adds teaching features contributed by @afowic: math in notes and HTML, knowledge and reasoning graph diagrams, graded questions with confidence, and HTML tiles you can type into. It also adds remote-tab listing, fixes cancelled middle-click pans, and makes relayed browser streaming steadier.

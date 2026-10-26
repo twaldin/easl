@@ -673,6 +673,19 @@ The drawing Mac keeps its own browser profile, cookies, page state and network r
 
 Every browser title bar shows its drawing machine. On easld boards its menu offers attached drawing Macs. After confirmation, an online move reads the current URL from the exact drawing Mac, revalidates the page and board incarnation, and writes URL plus `drawingMachine` together as an explicit update. An offline move explicitly confirms reloading the last saved URL. A failed online read aborts; it never silently uses stale metadata. The new Mac reloads in its own profile without copying cookies, logins, or unsaved state, and old streams end. Other tiles, including child pages, keep their assignments. Mac-hosted boards show their host but do not yet support moving drawing to a viewer.
 
+### Browser wheel input
+
+Plain wheel input over a live browser page larger than the clear canvas viewport first pans
+the viewer's canvas to reveal the clipped edge in that direction. The pan stops at that edge;
+later wheel steps scroll the page. This applies to local browsers, direct streams, and easld
+relays without changing tile frames or page viewport dimensions.
+The primary scroll axis decides whether reveal is needed. Minor sideways drift cannot claim
+a vertical page gesture after its bottom edge is visible.
+
+A phased gesture keeps the owner chosen by its first movement through momentum, including
+during browser resize. A gesture that began outside that browser page stays with the canvas.
+Move-tool wheel panning and Command-scroll zoom take precedence over browser reveal.
+
 ### Remote browser streams
 
 The drawing Mac owns the existing `WKWebView`, its network requests, and its browser profile. The viewer and agents act on that same page. Cookies, credentials, storage, and profile files stay on the drawing Mac. No profile is synchronized or recreated on a streaming viewer. A Mac host serves directly; easld relays the same methods and private event envelopes to and from its exact attached drawing Mac.

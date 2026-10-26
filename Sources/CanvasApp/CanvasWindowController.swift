@@ -1541,13 +1541,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
 /// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
-/// is on it, over a tile too; plain scrolling stays with the tile under the pointer. A middle-button
-/// drag pans it from anywhere on it the same way.
+/// is on it, over a tile too. Plain scrolling over an oversized browser first reveals its clipped
+/// edge, then scrolls the page. A middle-button drag pans the canvas from anywhere on it.
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
     private var discardingMiddleSequence = false
     private(set) var scrollSequence: UInt64 = 0
+    private var browserScroll = ScrollGesture()
+    private var browserScrollStart: (sequence: UInt64, tile: ObjectIdentifier)?
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
@@ -1597,21 +1599,68 @@ final class CanvasWindow: NSWindow {
         cancelMiddlePan()
     }
 
-    /// The canvas, when `point` (window coordinates) is on it, over a tile too.
-    private func canvas(at point: NSPoint) -> CanvasView? {
+    private func canvas(at point: NSPoint) -> (view: CanvasView, hit: NSView)? {
         guard let canvas = (windowController as? CanvasWindowController)?.canvas, let content = contentView,
-              content.hitTest(content.superview?.convert(point, from: nil) ?? point)?.isDescendant(of: canvas) == true else { return nil }
-        return canvas
+              let hit = content.hitTest(content.superview?.convert(point, from: nil) ?? point),
+              hit.isDescendant(of: canvas) else { return nil }
+        return (canvas, hit)
     }
 
     /// Called for both AppKit input and the development replay, which targets a view directly.
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
         let step = ScrollGesture.Step(event)
         if step == .began || step == nil { scrollSequence &+= 1 }
-        guard let canvas = (windowController as? CanvasWindowController)?.canvas,
-              canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              self.canvas(at: point) != nil else { return false }
-        canvas.scrollWheel(with: event)
+        guard let (canvas, hit) = canvas(at: point) else { return false }
+        if canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command {
+            canvas.scrollWheel(with: event)
+            return true
+        }
+        return revealBrowser(event, at: point, from: hit, on: canvas, step: step)
+    }
+
+    private func revealBrowser(_ event: NSEvent, at point: NSPoint, from hitView: NSView, on canvas: CanvasView, step: ScrollGesture.Step?) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+              let document = canvas.documentView else { return false }
+        var hit: NSView? = hitView
+        while let view = hit, !(view is TileFrameView) { hit = view.superview }
+        guard let tile = hit as? TileFrameView, tile.isLive,
+              tile.content is BrowserTile || tile.content is RemoteBrowserTile else { return false }
+        let browser = tile.content
+        let page = NSRect(x: 0, y: browser.headerHeight, width: browser.bounds.width,
+                          height: max(0, browser.bounds.height - browser.headerHeight))
+        guard page.contains(browser.convert(point, from: nil)) else { return false }
+        let rect = browser.convert(page, to: document)
+        let visible = canvas.clearVisibleRect(of: document)
+        let oversized = rect.width > visible.width || rect.height > visible.height
+        var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        if case .pan(let x, let y) = CanvasWheel.action(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas,
+                                                      command: false, shift: event.modifierFlags.contains(.shift)) {
+            dx = x
+            dy = y
+        }
+        func reveal(_ delta: CGFloat, min lower: CGFloat, max upper: CGFloat, visibleMin start: CGFloat, visibleMax end: CGFloat) -> CGFloat {
+            delta < 0 ? max(delta, -max(0, upper - end) * canvas.magnification)
+                : min(delta, max(0, start - lower) * canvas.magnification)
+        }
+        let pan = oversized
+            ? CGSize(width: reveal(dx, min: rect.minX, max: rect.maxX, visibleMin: visible.minX, visibleMax: visible.maxX),
+                     height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
+            : .zero
+        let revealsDirection = abs(dx) > abs(dy) ? pan.width != 0 : pan.height != 0
+        if let step {
+            if step == .began { browserScrollStart = (scrollSequence, ObjectIdentifier(tile)) }
+            guard browserScrollStart?.sequence == scrollSequence,
+                  browserScrollStart?.tile == ObjectIdentifier(tile) else {
+                canvas.scrollWheel(with: event)
+                return true
+            }
+            guard browserScroll.owner(of: step, sequence: scrollSequence, dx: dx, dy: dy,
+                                      tileTakes: !revealsDirection) == .canvas else { return false }
+            if step == .ended || step == .momentumEnded { return false }
+        } else if !revealsDirection {
+            return false
+        }
+        canvas.pan(by: pan)
         return true
     }
 

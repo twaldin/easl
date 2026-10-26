@@ -40,7 +40,7 @@ public enum CanvasBasics {
             Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects, and M moves tiles by dragging anywhere on them, a terminal's body too. Hyper-click a drawing to show the agent what it marks."),
         ]),
         Section(title: "Reading a board", items: [
-            Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%. Over terminals, vertical scrolling stays with the tile, focused or not; sideways pans. With Move on, scrolling pans the board over tiles too."),
+            Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%. Over terminals, vertical scrolling stays with the tile, focused or not; sideways pans. Over an oversized browser, scroll first reveals its clipped edge, then scrolls the page. A trackpad gesture keeps its first owner through momentum; start another gesture after revealing the edge. With Move on, scrolling pans the board over tiles too."),
             Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included."),
             Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
             Item(term: "Captions", text: "the line under a code tile's header says why those lines matter. The tile keeps them as code moves; \"⚠︎ stale\" in its header means they're gone."),
