@@ -318,9 +318,20 @@ public final class ApiRouter {
     /// (`agent.prompt` `message`) may name a message to each of several terminals.
     private var messageHolds: [MessageHold: SocketServer.Connection] = [:]
     private struct MessageHold: Hashable {
+        enum Kind: Hashable { case ordinary, pageData, pageNotice }
         let tile: ObjectID
         let message: String
-        var notice: Bool = false
+        let kind: Kind
+
+        init(tile: ObjectID, message: String, kind: Kind) {
+            self.tile = tile
+            self.message = message
+            self.kind = kind
+        }
+
+        init(tile: ObjectID, message: AgentMessage, wakeOnly: Bool) {
+            self.init(tile: tile, message: message.id, kind: message.html == nil ? .ordinary : wakeOnly ? .pageNotice : .pageData)
+        }
     }
     /// `agent.inbox` long polls waiting for a message to their terminal.
     private var inboxWaiters: [InboxWaiter] = []
@@ -1131,20 +1142,19 @@ public final class ApiRouter {
         let noticeAck = p["noticeAck"]?.array?.compactMap(\.string) ?? []
         var delivered = false
         if !ack.isEmpty {
-            let ordinary = ack.filter { id in board.messages[tile]?.contains { $0.id == id } == true }
-            delivered = !board.ackMessages(ordinary, of: tile).isEmpty
-            for message in ordinary { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
+            delivered = !board.ackMessages(ack, of: tile, pageData: false).isEmpty
+            for message in ack { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, kind: .ordinary)) }
             if !wakeOnly, protocolVersion >= PromptTarget.pageDataProtocol {
-                delivered = !board.ackMessages(ack, of: tile).isEmpty || delivered
+                delivered = !board.ackMessages(ack, of: tile, pageData: true).isEmpty || delivered
                 for message in ack {
-                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message))
-                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, notice: true))
+                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, kind: .pageData))
+                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, kind: .pageNotice))
                 }
             }
         }
         if !noticeAck.isEmpty {
             delivered = board.ackHtmlNotices(noticeAck, of: tile) || delivered
-            for message in noticeAck { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, notice: true)) }
+            for message in noticeAck { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, kind: .pageNotice)) }
         }
         if delivered { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         let offered = offer(tile, on: board, to: connection, protocolVersion: protocolVersion, wakeOnly: wakeOnly)
@@ -1170,22 +1180,22 @@ public final class ApiRouter {
         let pending = acceptsHtml ? board.pendingMessages(for: tile) : (board.messages[tile] ?? [])
         let free = pending.lazy.filter {
             (!wakeOnly || $0.html == nil || ($0.mayStartTurn == true && $0.noticeAcknowledged != true && board.validHtmlOrigin($0))) &&
-                self.messageHolds[MessageHold(tile: tile, message: $0.id, notice: wakeOnly && $0.html != nil)]?.isOpen != true
+                self.messageHolds[MessageHold(tile: tile, message: $0, wakeOnly: wakeOnly)]?.isOpen != true
         }
         let reserved = Array(free.prefix(HtmlSendBudget.inboxCount))
         for message in reserved {
-            messageHolds[MessageHold(tile: tile, message: message.id, notice: wakeOnly && message.html != nil)] = connection
+            messageHolds[MessageHold(tile: tile, message: message, wakeOnly: wakeOnly)] = connection
         }
         return reserved
     }
 
     private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection, wakeOnly: Bool) async -> JSONValue {
         var chosen: [JSONValue] = []
-        var kept: Set<String> = []
+        var kept: Set<MessageHold> = []
         defer {
-            for message in messages where !kept.contains(message.id) {
-                let key = MessageHold(tile: tile, message: message.id, notice: wakeOnly && message.html != nil)
-                if messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
+            for message in messages {
+                let key = MessageHold(tile: tile, message: message, wakeOnly: wakeOnly)
+                if !kept.contains(key), messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
             }
         }
         for message in messages {
@@ -1200,7 +1210,7 @@ public final class ApiRouter {
             if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes {
                 chosen.removeLast()
                 if chosen.isEmpty || HtmlSendBudget.responseBytes([item]) > HtmlSendBudget.inboxBytes {
-                    board.ackMessages([message.id], of: tile)
+                    board.ackMessages([message.id], of: tile, pageData: message.html != nil)
                     if message.html == nil {
                         bounce(MessageBounce(tile: tile, name: board.objects[tile].flatMap(AgentAddress.name(of:)), messages: [message], deleted: false),
                                on: board, reason: HtmlSendBudget.inboxBytesReason)
@@ -1213,7 +1223,7 @@ public final class ApiRouter {
                 }
                 break
             }
-            kept.insert(message.id)
+            kept.insert(MessageHold(tile: tile, message: message, wakeOnly: wakeOnly))
         }
         return .object(["messages": .array(chosen)])
     }
@@ -1309,7 +1319,7 @@ public final class ApiRouter {
         let receiver = board.objects[bounce.tile].map { AgentAddress.address(of: $0, on: board, among: boards) }
             ?? bounce.name.map { "\($0)@\(AgentAddress.boardName(board.root))" } ?? bounce.tile
         for message in bounce.messages where message.html == nil {
-            messageHolds.removeValue(forKey: MessageHold(tile: bounce.tile, message: message.id))
+            messageHolds.removeValue(forKey: MessageHold(tile: bounce.tile, message: message.id, kind: .ordinary))
             let notice: String
             if let reason {
                 // Legacy payloads can exceed the budget even in one grapheme. Quote only a bounded id.

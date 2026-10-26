@@ -175,20 +175,19 @@ extension Board {
         return mentions
     }
 
-    /// Drops the messages `ids` names from `terminal`'s queue (its integration delivered them);
-    /// returns those it dropped. Page messages ack the same way and stay out of the user queue.
     @discardableResult
-    public func ackMessages(_ ids: [String], of terminal: ObjectID) -> [AgentMessage] {
+    public func ackMessages(_ ids: [String], of terminal: ObjectID, pageData: Bool) -> [AgentMessage] {
         let wanted = Set(ids)
         guard !wanted.isEmpty else { return [] }
-        let ordinary = messages[terminal] ?? []
-        let pages = htmlMessages[terminal] ?? []
-        let acked = (ordinary + pages).filter { wanted.contains($0.id) }
+        let waiting = (pageData ? htmlMessages[terminal] : messages[terminal]) ?? []
+        let acked = waiting.filter { wanted.contains($0.id) }
         guard !acked.isEmpty else { return [] }
-        let ordinaryLeft = ordinary.filter { !wanted.contains($0.id) }
-        let pagesLeft = pages.filter { !wanted.contains($0.id) }
-        messages[terminal] = ordinaryLeft.isEmpty ? nil : ordinaryLeft
-        htmlMessages[terminal] = pagesLeft.isEmpty ? nil : pagesLeft
+        let left = waiting.filter { !wanted.contains($0.id) }
+        if pageData {
+            htmlMessages[terminal] = left.isEmpty ? nil : left
+        } else {
+            messages[terminal] = left.isEmpty ? nil : left
+        }
         onChange?()
         return acked
     }

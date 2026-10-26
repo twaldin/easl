@@ -202,7 +202,7 @@ struct HtmlSendBudgetTests {
         #expect(board.htmlMessages[host]?.count == HtmlSendBudget.rateCount)
         #expect(board.htmlMessages[host]?.contains { $0.text.contains("REFUSED-RATE") } != true)
         let ids = board.htmlMessages[host]?.map(\.id) ?? []
-        #expect(board.ackMessages(ids, of: host).count == ids.count)
+        #expect(board.ackMessages(ids, of: host, pageData: true).count == ids.count)
         var later = 0
         for _ in 0..<HtmlSendBudget.rateCount {
             _ = try await send(.string("later"), from: source, now: start.addingTimeInterval(HtmlSendBudget.rateWindow))
