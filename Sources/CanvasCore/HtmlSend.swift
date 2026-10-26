@@ -145,7 +145,6 @@ public enum HtmlSendBudget {
     }
 
     static func check(page: ObjectID, destination: ObjectID, bytes: Int, queues: [ObjectID: [AgentMessage]], rate: inout HtmlSendRateBook, now: Date) throws {
-        if bytes > Self.pageBytes { throw HtmlError.overBudget(pageBytesReason) }
         if bytes > Self.messageBytes { throw HtmlError.overBudget(inboxBytesReason) }
         var pageCount = 0
         var pageBytes = 0

@@ -1091,7 +1091,7 @@
       "type": "object",
       "required": ["id", "text", "from", "attribution", "when", "queuedAt"],
       "properties": {
-        "id": { "$ref": "#/definitions/MessageId", "description": "`msg_…`; ack it (agent.inbox `ack`) once the agent has it" },
+        "id": { "$ref": "#/definitions/MessageId", "description": "`msg_…`; acknowledge consumed ordinary messages and explicitly read page data with agent.inbox `ack`; acknowledge HTML notices with `noticeAck`, which retains their payloads" },
         "text": { "type": "string", "description": "ordinary message text, escaped single-line JSON for html-page-data, or the empty string for html-submission-notice. Page data is never included in a notice." },
         "from": { "$ref": "#/definitions/MessageSender" },
         "attribution": { "enum": ["agent", "user", "html"], "description": "agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`), untrusted page content, never the user; user: a script with no tile (its `from` label), on the user's behalf" },

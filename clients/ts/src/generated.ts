@@ -987,7 +987,7 @@ export type Agent = {
 
 /** An out-of-band message queued for a terminal. HTML attribution stays html. A native gesture permits an ID-only wake notice, not payload trust. Notice ACK persists independently and retains the full payload until an explicit data ACK. */
 export type AgentMessage = {
-  /** `msg_…`; ack it (agent.inbox `ack`) once the agent has it */
+  /** `msg_…`; acknowledge consumed ordinary messages and explicitly read page data with agent.inbox `ack`; acknowledge HTML notices with `noticeAck`, which retains their payloads */
   id: MessageId;
   /** ordinary message text, escaped single-line JSON for html-page-data, or the empty string for html-submission-notice. Page data is never included in a notice. */
   text: string;

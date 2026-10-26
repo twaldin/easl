@@ -1275,4 +1275,55 @@ final class AgentMessageTests {
         }
     }
 
+    @Test(arguments: ["protocol-string", "protocol-fraction", "wake-string", "wake-number", "receipt-string", "receipt-object", "receipt-element", "receipt-mixed"])
+    func malformedInboxNegotiationCannotAcknowledgeOrReleaseHolds(kind: String) async throws {
+        let host = terminal("typed-inbox")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
+        let page = board.create(type: .html, props: .object(["html": "<p>typed inbox</p>"]), caller: host)
+        let sent = try await HtmlChannel.handle(.send(payload: "retained page data"), tile: page.id, board: board, mayStartTurn: true)
+        let id = try #require(sent["message"])
+        let ordinary = AgentMessage(text: "retained ordinary data", from: nil, label: "script", when: .now, mentions: [])
+        try board.queueMessage(ordinary, to: host)
+        let owner = try connect(), reader = try connect(), invalid = try connect(), other = try connect()
+        let wake: [String: JSONValue] = ["tile": .string(host), "protocol": 3, "wakeOnly": .bool(true)]
+        let data: [String: JSONValue] = ["tile": .string(host), "protocol": 2]
+        let held = try await call(owner, "agent.inbox", wake)
+        #expect(held["result"]?["messages"]?.array?.count == 2)
+        #expect(try await call(reader, "agent.inbox", data)["result"]?["messages"]?.array?.first?["id"] == id)
+        var params = wake
+        params["ack"] = [.string(ordinary.id)]
+        switch kind {
+        case "protocol-string": params["protocol"] = "3"
+        case "protocol-fraction": params["protocol"] = .number(3.5)
+        case "wake-string": params["wakeOnly"] = "true"
+        case "wake-number": params["wakeOnly"] = 1
+        case "receipt-string": params["noticeAck"] = id
+        case "receipt-object": params["noticeAck"] = .object([:])
+        case "receipt-element": params["noticeAck"] = [1]
+        default: params["noticeAck"] = [id, 1]
+        }
+        let refused = try await call(invalid, "agent.inbox", params)
+        #expect(refused["error"]?["code"] == "invalid_params")
+        #expect(board.messages[host]?.map(\.id) == [ordinary.id])
+        #expect(board.htmlMessages[host]?.first?.noticeAcknowledged == false)
+        #expect(try await call(other, "agent.inbox", wake)["result"]?["messages"] == .array([]))
+        #expect(try await call(other, "agent.inbox", data)["result"]?["messages"] == .array([]))
+        _ = try await call(owner, "agent.inbox", wake.merging(["ack": [.string(ordinary.id)], "noticeAck": [id]]) { _, new in new })
+        #expect(board.messages[host] == nil && board.htmlMessages[host]?.first?.noticeAcknowledged == true)
+        _ = try await call(reader, "agent.inbox", data.merging(["ack": [id]]) { _, new in new })
+        #expect(board.htmlMessages[host] == nil)
+    }
+
+    @Test(arguments: [Double.greatestFiniteMagnitude, Double(Int.max), -Double.greatestFiniteMagnitude])
+    func unrepresentableInboxProtocolsRefuseWithoutConsumingMessages(version: Double) async throws {
+        let host = terminal("protocol-range")
+        let ordinary = AgentMessage(text: "retained", from: nil, label: "script", when: .now, mentions: [])
+        try board.queueMessage(ordinary, to: host)
+        let refused = try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": .number(version), "ack": [.string(ordinary.id)]])
+        #expect(refused["error"]?["code"] == "invalid_params")
+        #expect(board.messages[host]?.map(\.id) == [ordinary.id])
+        let delivered = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        #expect(delivered["result"]?["messages"]?.array?.first?["text"] == .string(ordinary.text))
+    }
+
 }

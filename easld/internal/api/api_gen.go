@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "d3cca9a6122b10c6"
+const SchemaHash = "6d33a2d579c5e710"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -1214,7 +1214,7 @@ type Agent struct {
 
 // AgentMessage: An out-of-band message queued for a terminal. HTML attribution stays html. A native gesture permits an ID-only wake notice, not payload trust. Notice ACK persists independently and retains the full payload until an explicit data ACK.
 type AgentMessage struct {
-	// `msg_…`; ack it (agent.inbox `ack`) once the agent has it
+	// `msg_…`; acknowledge consumed ordinary messages and explicitly read page data with agent.inbox `ack`; acknowledge HTML notices with `noticeAck`, which retains their payloads
 	ID MessageId `json:"id"`
 	// ordinary message text, escaped single-line JSON for html-page-data, or the empty string for html-submission-notice. Page data is never included in a notice.
 	Text string        `json:"text"`

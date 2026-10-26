@@ -1131,8 +1131,24 @@ public final class ApiRouter {
         guard board.objects[tile]?.type == .terminal else { throw Failure("invalid_params", "\(tile) is not a terminal tile") }
         let waitMs = p["waitMs"]?.int ?? 0
         guard (0...60_000).contains(waitMs) else { throw Failure("invalid_params", "waitMs is from 0 to 60000") }
-        let protocolVersion = p["protocol"]?.int ?? 1
+        let protocolVersion: Int
+        if let value = p["protocol"], value != .null {
+            guard let number = value.number, let integer = Int(exactly: number) else {
+                throw Failure("invalid_params", "protocol must be a representable integer")
+            }
+            protocolVersion = integer
+        } else {
+            protocolVersion = 1
+        }
         guard protocolVersion >= 1 else { throw Failure("invalid_params", "protocol is at least 1") }
+        if let value = p["wakeOnly"], value != .null, value.bool == nil {
+            throw Failure("invalid_params", "wakeOnly must be a boolean")
+        }
+        if let value = p["noticeAck"], value != .null {
+            guard let ids = value.array, ids.allSatisfy({ $0.string != nil }) else {
+                throw Failure("invalid_params", "noticeAck must be an array of message ids")
+            }
+        }
         let wakeOnly = p["wakeOnly"]?.bool == true
         if p["noticeAck"] != nil, !wakeOnly || protocolVersion < PromptTarget.pageNoticeProtocol {
             throw Failure("invalid_params", "noticeAck requires wakeOnly: true and protocol ≥ 3")
