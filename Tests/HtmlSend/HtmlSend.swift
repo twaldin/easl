@@ -72,6 +72,55 @@ private enum HtmlSend {
         return point
     }
 
+    private static func traceClickState(_ stage: String, web: WKWebView, tile: NSView, window: NSWindow) {
+        let point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
+        let hit = window.contentView.flatMap { $0.hitTest($0.convert(point, from: nil)) }
+        func view(_ value: NSView) -> [String: Any] {
+            [
+                "class": NSStringFromClass(type(of: value)),
+                "identity": String(describing: ObjectIdentifier(value)),
+                "frame": NSStringFromRect(value.frame),
+                "bounds": NSStringFromRect(value.bounds),
+                "hidden": value.isHidden,
+                "hiddenAncestor": value.isHiddenOrHasHiddenAncestor,
+                "window": value.window?.windowNumber ?? -1,
+                "needsLayout": value.needsLayout,
+            ]
+        }
+        var ancestors: [[String: Any]] = []
+        var ancestor = hit
+        while let current = ancestor {
+            ancestors.append(view(current))
+            ancestor = current.superview
+        }
+        let state: [String: Any] = [
+            "stage": stage,
+            "uptime": ProcessInfo.processInfo.systemUptime,
+            "loading": web.isLoading,
+            "progress": web.estimatedProgress,
+            "url": web.url?.absoluteString ?? "",
+            "web": view(web),
+            "tile": view(tile),
+            "tileChildren": tile.subviews.map(view),
+            "clickPoint": NSStringFromPoint(point),
+            "hitAncestors": ancestors,
+            "hitWeb": hit.map { $0 === web || $0.isDescendant(of: web) } ?? false,
+            "window": [
+                "number": window.windowNumber,
+                "visible": window.isVisible,
+                "key": window.isKeyWindow,
+                "main": window.isMainWindow,
+                "miniaturized": window.isMiniaturized,
+                "occlusion": window.occlusionState.rawValue,
+                "frame": NSStringFromRect(window.frame),
+                "content": window.contentView.map(view) ?? [:],
+            ],
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
+            FileHandle.standardOutput.write(Data("READINESS ".utf8) + data + Data("\n".utf8))
+        }
+    }
+
     private static func mouse(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow) -> NSEvent {
         NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
@@ -155,6 +204,8 @@ private enum HtmlSend {
         check("outside click did not authorize")
         try await Task.sleep(for: .seconds(10))
 
+        traceClickState("before-reload", web: web, tile: tile, window: window)
+
         let reloadGestureAt = ContinuousClock.now
         NSApp.sendEvent(mouse(.leftMouseDown, at: inside, in: window))
         try board.update(object.id, props: .object(["html": .string(pageHTML(marker: "GEN2", autoSend: false))]))
@@ -166,11 +217,17 @@ private enum HtmlSend {
         check("reload reset the permit")
 
         var replacementPoint: NSPoint?
+        var nextTrace = ContinuousClock.now
         try await wait(until: {
             replacementPoint = nativeClickPoint(in: web, window: window)
+            if ContinuousClock.now >= nextTrace {
+                traceClickState("replacement-wait", web: web, tile: tile, window: window)
+                nextTrace = ContinuousClock.now + .milliseconds(500)
+            }
             return replacementPoint != nil
         }, "the replacement document must be natively clickable before a fresh click")
         guard let replacementPoint else { throw Failure(message: "the replacement click target disappeared") }
+        traceClickState("replacement-click", web: web, tile: tile, window: window)
         NSApp.sendEvent(mouse(.leftMouseDown, at: replacementPoint, in: window))
         try await pageSend(web, "after-reload")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == true, "a new native click in the replacement document must authorize again")
