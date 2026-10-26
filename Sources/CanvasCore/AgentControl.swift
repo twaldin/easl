@@ -309,9 +309,13 @@ extension ApiRouter {
             throw Failure("conflict", "\(terminal.id) was just prompted and hasn't started that turn: restarting would lose the prompt. Wait for it (agent.wait), or force: true restarts anyway")
         }
         // A message its integration hasn't taken yet: its turn hasn't started, as agent.wait
-        // counts it. A restart would bounce it (`Board.endAgentSession`).
+        // counts it. A restart would bounce an ordinary message. A page message is dropped, not
+        // bounced as the user, but it is still lost.
         if board.messages[terminal.id]?.isEmpty == false {
             throw Failure("conflict", "\(terminal.id) has a message queued that its agent hasn't taken yet: restarting would bounce it. Wait for it (agent.wait), or force: true restarts anyway (the message bounces)")
+        }
+        if board.htmlMessages[terminal.id]?.isEmpty == false {
+            throw Failure("conflict", "\(terminal.id) has a page message queued that its agent hasn't taken yet: restarting would drop it. Read and ack it via agent.inbox with protocol: 2, or force: true restarts anyway")
         }
         switch terminal.props["agent"]?["draft"]?.bool {
         case true?:

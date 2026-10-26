@@ -6,7 +6,7 @@
 //    unsent draft, and omp's pid
 //  - adds the board's standing orders (its note keyed `rules`, read each turn) to the system prompt
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
-//  - takes the messages other agents and scripts send this tile (agent.prompt, agent.inbox) and
+//  - takes ordinary messages (agent.prompt) and ID-only HTML submission notices (agent.inbox) and
 //    hands them to omp without touching the editor; `write agent://<name>` that omp doesn't know
 //    is delivered through easl (docs/contracts.md, Peer messages)
 //  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { COALESCE_MS, card, EASL_MESSAGE, GUIDANCE_BLOCK, guided, PROTOCOL, peerAddress, plan, recordedIds, renderCard, sender, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
+import { acceptHeld, COALESCE_MS, deliveryCards, EASL_MESSAGE, forOmp, GUIDANCE_BLOCK, guided, messageKey, type MessageIdentity, noticeIds, isHtmlMessage, noticeLabel, peerAddress, plan, PROTOCOL, recordedKeys, renderCard, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -34,7 +34,7 @@ const PEER_PROMPT_TIMEOUT_MS = 20_000;
 // How a server from before agent.prompt took `message` refuses it: before it queues anything,
 // so sending again without it can't make a second message.
 const NO_MESSAGE_IDS = "unknown param message;";
-// The session entries that list the messages omp recorded (`{ ids }`), for a restarted omp.
+// Session receipts keep ordinary `ids` separate from HTML submission `noticeIds`.
 const RECORDED_ENTRY = "easl.messages";
 // How often the editor, model and thinking level are looked at (agent.report `draft`,
 // agent.report_session `model`, `thinking`), and how long an unacknowledged session report waits
@@ -359,7 +359,7 @@ export default function canvas(pi: ExtensionAPI): void {
     await reported;
     switching = false;
     // What this connection held is gone from easl's queue; the next poll takes this session's.
-    inbox.close();
+    closeInbox();
   });
 
   pi.on("session_shutdown", () => {
@@ -373,7 +373,7 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = false;
     // Ends the long poll; what this session never recorded bounces with a release, else stays
     // queued for the resumed session.
-    inbox.close();
+    closeInbox();
   });
 
   pi.on("agent_start", () => {
@@ -407,19 +407,46 @@ export default function canvas(pi: ExtensionAPI): void {
   // tile instead of typing into it, and the root session takes them with one long poll and hands
   // them to omp as cards (easl's own custom messages, drawn as omp draws its IRC messages), so the
   // editor (a half-typed draft) and an open question or approval stay as they are, and the
-  // session tells them from the user's prompts. A message is acked once omp has recorded it (the
-  // card carrying its id, `message_end`); until then easl keeps it. Polls and acks go over the
-  // inbox connection only: what easl answers is held by that connection, and any call on it
-  // that fails closes it, so easl offers what it held again.
+  // session tells them from the user's prompts. A message is acked once omp has recorded its
+  // card; until then easl keeps it. Polls and acks use the inbox connection: a failed call closes
+  // it, so easl offers what it held again. Inert HTML stays native for manual agent.inbox reads.
   const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
+  let inboxCapability = { legacy: false };
+
+  function closeInbox(): void {
+    inbox.close();
+    inboxCapability = { legacy: false };
+  }
+
+  async function readInbox(params: Omit<Parameters<typeof inbox.api.agent.inbox>[0], "tile" | "protocol" | "wakeOnly"> = {}): Promise<{ messages: AgentMessage[]; acceptsHtml: boolean }> {
+    const capability = inboxCapability;
+    // Reprobe long polls too: CanvasClient can reconnect transparently after a server upgrade.
+    if (params.waitMs || !capability.legacy) {
+      try {
+        const reply = await inbox.api.agent.inbox({ ...params, tile: tile!, protocol: PROTOCOL, wakeOnly: true });
+        capability.legacy = false;
+        return { messages: reply.messages, acceptsHtml: true };
+      } catch (error) {
+        // Both 0.3.2 routers reject unknown params before applying acks or holding messages.
+        if (!(error instanceof CanvasError) || error.code !== "invalid_params" || !/^(?:unknown (?:param (?:noticeAck|protocol|wakeOnly)|params (?:protocol, wakeOnly|noticeAck, protocol, wakeOnly)); agent\.inbox takes |unknown params noticeAck; easld does not support HTML submission notices$)/.test(error.message)) throw error;
+        capability.legacy = true;
+      }
+    }
+    const { noticeAck, ...ordinary } = params;
+    const reply = await inbox.api.agent.inbox({ ...ordinary, tile: tile! });
+    for (const id of noticeAck ?? []) {
+      const receipt: MessageIdentity = { id, kind: "html-submission-notice" };
+      unacked.set(messageKey(receipt), receipt);
+    }
+    return { messages: reply.messages, acceptsHtml: false };
+  }
   const wakes = new WakeBudget();
   // The session (with a UI) messages go into: whether omp streams, or holds queued messages.
   let session: ExtensionContext | undefined;
-  // Messages this session took that omp hasn't recorded yet, by id: held below, or handed to omp
-  // (`handed`). One easl offers again (a new connection) is not delivered twice.
+  // Messages this session took that omp hasn't recorded yet, by projection: held below, or handed
+  // to omp (`handed`). One easl offers again (a new connection) is not delivered twice.
   const waiting = new Map<string, AgentMessage>();
-  // Handed to omp and not recorded yet: whether that delivery started a turn, and when it went.
-  const handed = new Map<string, { started: boolean; at: number }>();
+  const handed = new Map<string, { how: "steer" | "turn" | "aside"; at: number }>();
   // What omp recorded in this session (its `easl.messages` entries): offered again (easl never
   // took the ack: a lost connection, a restart), it is acked, not delivered.
   let recorded = new Set<string>();
@@ -427,8 +454,10 @@ export default function canvas(pi: ExtensionAPI): void {
   let afterTurn: AgentMessage[] = [];
   // Messages over their senders' wake bound while nothing streams, riding the next turn that starts.
   let nextStart: AgentMessage[] = [];
-  // Acks easl didn't take: sent with the next poll.
-  let unacked: string[] = [];
+  let coalescing: AgentMessage[] = [];
+  let holdoff = false;
+  // Failed receipts retain their kind so a notice can never become a payload ACK.
+  let unacked = new Map<string, MessageIdentity>();
   let polling = false;
   // A session switch whose report easl hasn't answered yet: messages arriving meanwhile were the old session's.
   let switching = false;
@@ -457,11 +486,21 @@ export default function canvas(pi: ExtensionAPI): void {
     handed.clear();
     afterTurn = [];
     nextStart = [];
+    coalescing = [];
     marked.clear();
     prepared = false;
     policy = undefined;
     recorded = new Set(
-      ctx.sessionManager.getEntries().flatMap((entry) => (entry.type === "custom" && entry.customType === RECORDED_ENTRY ? ((entry.data as { ids?: string[] } | undefined)?.ids ?? []) : [])),
+      ctx.sessionManager.getEntries().flatMap((entry) => {
+        if (entry.type === "custom" && entry.customType === RECORDED_ENTRY) {
+          const data = entry.data as { ids?: string[]; noticeIds?: string[] } | undefined;
+          return [
+            ...(data?.ids ?? []).map((id) => messageKey({ id })),
+            ...(data?.noticeIds ?? []).map((id) => messageKey({ id, kind: "html-submission-notice" })),
+          ];
+        }
+        return entry.type === "custom_message" && (entry.details as { kind?: unknown } | undefined)?.kind === "html-submission-notice" ? recordedKeys({ role: "custom", ...entry }) : [];
+      }),
     );
   }
 
@@ -469,57 +508,110 @@ export default function canvas(pi: ExtensionAPI): void {
     if (polling) return;
     polling = true;
     while (reporting) {
-      const ack = unacked;
-      unacked = [];
+      if (holdoff) {
+        holdoff = false;
+        if (reporting) await Bun.sleep(INBOX_RETRY_MS);
+        if (!reporting) break;
+      }
+      const receipts = unacked;
+      unacked = new Map();
+      const ackIds = [...receipts.values()].filter((receipt) => receipt.kind !== "html-submission-notice").map((receipt) => receipt.id);
+      const noticeAck = [...receipts.values()].filter((receipt) => receipt.kind === "html-submission-notice").map((receipt) => receipt.id);
       let first: AgentMessage[];
+      let acceptsHtml: boolean;
       try {
-        first = (await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ack.length ? ack : undefined })).messages;
+        const reply = await readInbox({ waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined, noticeAck: noticeAck.length ? noticeAck : undefined });
+        first = reply.messages;
+        acceptsHtml = reply.acceptsHtml;
       } catch {
-        unacked.push(...ack);
-        inbox.close();
+        for (const [key, receipt] of receipts) unacked.set(key, receipt);
+        closeInbox();
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
         continue;
       }
       if (first.length === 0) continue;
-      // A burst (several senders, or one sending several) goes in as one delivery; a follow-up
-      // that fails loses nothing already here.
-      await Bun.sleep(COALESCE_MS);
-      const more = await inbox.api.agent.inbox({ tile: tile! }).then(
-        (reply) => reply.messages,
-        () => {
-          inbox.close();
-          return [];
-        },
-      );
-      receive([...first, ...more]);
+      coalescing = first;
+      const firstIds = new Set(first.map(messageKey));
+      const firstFits = acceptHeld(heldMessages().filter((message) => !firstIds.has(messageKey(message))), first).leave.length === 0;
+      let more: AgentMessage[] = [];
+      if (firstFits) {
+        await Bun.sleep(COALESCE_MS);
+        more = await readInbox().then(
+          (reply) => {
+            acceptsHtml &&= reply.acceptsHtml;
+            return reply.messages;
+          },
+          () => {
+            closeInbox();
+            return [];
+          },
+        );
+        coalescing = [...first, ...more];
+      }
+      const refused = receive(coalescing, acceptsHtml);
+      coalescing = [];
+      if (refused) {
+        closeInbox();
+        holdoff = true;
+      }
     }
     polling = false;
   }
 
-  function receive(messages: readonly AgentMessage[]): void {
-    if (switching) return;
-    ack(messages.filter((message) => recorded.has(message.id)).map((message) => message.id), false);
-    const fresh = messages.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
-    for (const message of fresh) waiting.set(message.id, message);
-    deliver(fresh);
+  function receive(messages: readonly AgentMessage[], acceptsHtml: boolean): boolean {
+    if (switching) return false;
+    const eligible = messages.filter((message) => !isHtmlMessage(message) || (acceptsHtml && noticeIds(message) !== undefined));
+    const receipts = eligible.filter((message) => recorded.has(messageKey(message)));
+    ack(receipts, false);
+    const incoming = eligible.filter((message) => !recorded.has(messageKey(message)) && !waiting.has(messageKey(message)));
+    const incomingIds = new Set(incoming.map(messageKey));
+    const { take, leave } = acceptHeld(
+      heldMessages().filter((message) => !incomingIds.has(messageKey(message))),
+      incoming,
+    );
+    for (const message of take) waiting.set(messageKey(message), message);
+    if (take.length > 0) deliver(take);
+    return leave.length > 0 || eligible.length !== messages.length;
+  }
+
+  function heldMessages(): AgentMessage[] {
+    const byId = new Map<string, AgentMessage>();
+    for (const message of coalescing) byId.set(messageKey(message), message);
+    for (const message of waiting.values()) byId.set(messageKey(message), message);
+    for (const message of afterTurn) byId.set(messageKey(message), message);
+    for (const message of nextStart) byId.set(messageKey(message), message);
+    for (const id of handed.keys()) {
+      const message = waiting.get(id);
+      if (message) byId.set(id, message);
+    }
+    return [...byId.values()];
   }
 
   // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
-  function ack(ids: readonly string[], started: boolean): void {
-    if (ids.length === 0) return;
-    inbox.api.agent.inbox({ tile: tile!, ack: [...ids], started }).then(
-      (reply) => receive(reply.messages),
+  function ack(candidates: readonly MessageIdentity[], started: boolean): void {
+    if (candidates.length === 0) return;
+    const receipts = candidates.map(({ id, kind }) => ({ id, kind }));
+    const ordinary = receipts.filter((receipt) => receipt.kind !== "html-submission-notice").map((receipt) => receipt.id);
+    const notices = receipts.filter((receipt) => receipt.kind === "html-submission-notice").map((receipt) => receipt.id);
+    readInbox({ ack: ordinary.length ? ordinary : undefined, noticeAck: notices.length ? notices : undefined, started }).then(
+      (reply) => {
+        if (receive(reply.messages, reply.acceptsHtml)) {
+          closeInbox();
+          holdoff = true;
+        }
+      },
       () => {
-        unacked.push(...ids);
-        inbox.close();
+        for (const { id, kind } of receipts) {
+          const receipt = { id, kind };
+          unacked.set(messageKey(receipt), receipt);
+        }
+        closeInbox();
       },
     );
   }
 
-  // `now`: a steer while omp works (a question or approval keeps waiting, the message comes after
-  // it), else a new turn; `next-turn`: held until the running turn ends. A sender past its wake
-  // bound joins the step omp is streaming without interrupting it, or waits for the next turn to
-  // start (omp idle, or awaiting background work).
+  // `now`: a steer while omp works, else a new turn; `next-turn`: held until the running turn ends.
+  // A sender past its wake bound joins the step omp is streaming, or waits for the next turn to start.
   function deliver(messages: readonly AgentMessage[]): void {
     const steer: AgentMessage[] = [];
     const turn: AgentMessage[] = [];
@@ -552,20 +644,20 @@ export default function canvas(pi: ExtensionAPI): void {
   function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
     if (messages.length === 0) return;
     if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
-    const ids = messages.map((message) => message.id);
     // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
-    // cut short. An omp streaming nothing (idle, or awaiting background work) starts a turn with
-    // the card instead (`triggerTurn`), one it doesn't prepare: whatever omp prepared before (a
-    // turn now paused, a preparation the user cancelled) is over. `aside` joins the step omp
-    // streams without interrupting it.
+    // cut short. An omp streaming nothing starts a turn with the card instead (`triggerTurn`).
+    // `aside` joins the step omp streams without interrupting it. Each HTML message is its own card.
     if (session ? session.isIdle() : !active) {
       prepared = false;
       policy = undefined;
     }
-    mark(ids);
-    pi.sendMessage(card(messages), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
     const at = Date.now();
-    for (const id of ids) handed.set(id, { started: how === "turn", at });
+    for (const item of deliveryCards(messages)) {
+      const keys = recordedKeys({ role: "custom", ...item });
+      mark(keys);
+      for (const key of keys) handed.set(key, { how, at });
+      pi.sendMessage(forOmp(item), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
+    }
     recordCheck ??= setTimeout(unrecorded, RECORD_MS);
   }
 
@@ -587,21 +679,27 @@ export default function canvas(pi: ExtensionAPI): void {
   // text omp put back in the editor) are in its session now. Their ids go into it too (a restarted
   // omp offered them again acks them), then easl gets the ack.
   pi.on("message_end", (event) => {
-    if (waiting.size === 0) return;
-    const ids = [...new Set(recordedIds(event.message))].filter((id) => waiting.has(id));
-    if (ids.length === 0) return;
-    const started = ids.filter((id) => handed.get(id)?.started);
-    for (const id of ids) {
-      waiting.delete(id);
-      handed.delete(id);
-      recorded.add(id);
-    }
-    afterTurn = afterTurn.filter((held) => waiting.has(held.id));
-    nextStart = nextStart.filter((held) => waiting.has(held.id));
-    pi.appendEntry(RECORDED_ENTRY, { ids });
-    ack(started, true);
-    ack(ids.filter((id) => !started.includes(id)), false);
+    recordReceipts(recordedKeys(event.message));
   });
+
+  function recordReceipts(candidates: readonly string[]): void {
+    const keys = [...new Set(candidates)].filter((key) => waiting.has(key));
+    if (keys.length === 0) return;
+    const started = keys.filter((key) => handed.get(key)?.how === "turn");
+    const receipts = keys.map((key) => waiting.get(key)!);
+    const ids = receipts.filter((message) => !isHtmlMessage(message)).map((message) => message.id);
+    const noticeIds = receipts.filter(isHtmlMessage).map((message) => message.id);
+    for (const key of keys) {
+      waiting.delete(key);
+      handed.delete(key);
+      recorded.add(key);
+    }
+    afterTurn = afterTurn.filter((held) => waiting.has(messageKey(held)));
+    nextStart = nextStart.filter((held) => waiting.has(messageKey(held)));
+    pi.appendEntry(RECORDED_ENTRY, { ids, ...(noticeIds.length ? { noticeIds } : {}) });
+    ack(receipts.filter((message) => started.includes(messageKey(message))), true);
+    ack(receipts.filter((message) => !started.includes(messageKey(message))), false);
+  }
 
   // Handed over RECORD_MS ago and still not recorded, with omp neither streaming nor holding
   // queued messages: it never went in (omp couldn't start the turn: no model, say). It goes in
@@ -613,11 +711,11 @@ export default function canvas(pi: ExtensionAPI): void {
     if (session.isIdle() && !session.hasPendingMessages()) {
       const due = Date.now() - RECORD_MS;
       const lost = [...handed].filter(([, sent]) => sent.at <= due).map(([id]) => waiting.get(id)!);
-      for (const message of lost) handed.delete(message.id);
+      for (const message of lost) handed.delete(messageKey(message));
       nextStart.push(...lost);
       if (lost.length > 0) {
-        for (const message of lost) marked.delete(message.id);
-        const senders = [...new Set(lost.map(sender))].join(", ");
+        for (const message of lost) marked.delete(messageKey(message));
+        const senders = [...new Set(lost.map(noticeLabel))].join(", ");
         const what = lost.length === 1 ? "the message" : `${lost.length} messages`;
         session.ui.notify(`easl: omp started no turn with ${what} from ${senders}; easl keeps ${lost.length === 1 ? "it" : "them"} for the next turn that starts`, "warning");
       }

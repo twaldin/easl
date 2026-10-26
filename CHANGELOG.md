@@ -5,6 +5,9 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Plain wheel scrolling over oversized browser tiles reveals clipped edges before scrolling the page, including streamed browsers. Move-tool panning and Command-scroll zoom are unchanged.
+- Restore afowic's `canvasKit.send` for agent-created local HTML tiles. One send per fresh native gesture can wake the creating agent with an ID-only notice. Page content is read only through an explicit labelled, escaped inbox tool result, never a custom message. Notice acknowledgement retains the payload; native retention, send rate, inbox batches and integration queues have explicit limits.
+- The native app refuses ordinary `agent.prompt` messages that cannot fit its 256 KiB inbox-response budget. Easld and older apps may still accept larger messages; ordinary items over the omp extension's 1 MiB hold limit remain queued rather than bypassing that limit.
+- Reject malformed native inbox negotiation and notice receipts before changing acknowledgements or holds. Oversized HTML singletons report their inbox-message budget rather than a full page queue.
 
 ## 0.3.2
 

@@ -400,22 +400,34 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
-        guard let tile, message.frameInfo.securityOrigin.protocol == HtmlKit.scheme,
+        let origin = message.frameInfo.securityOrigin
+        guard let tile, origin.protocol == HtmlKit.scheme,
               let source = message.webView, source === tile.webView || source === tile.renderWebView else { return (nil, "not allowed") }
         guard let body = message.body as? [String: Any] else { return (nil, HtmlError.malformed("message must be an object").description) }
         if body["type"] as? String == "network.url" {
             guard body.count == 2, let value = body["url"] as? String, value.utf8.count <= 8192,
                   let original = URL(string: value),
                   let handler = source.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler,
-                  let proxy = handler.networkURL(original, from: message.frameInfo.securityOrigin.host) else { return (nil, "not allowed") }
+                  let proxy = handler.networkURL(original, from: origin.host) else { return (nil, "not allowed") }
             return (["url": proxy.absoluteString], nil)
         }
-        guard message.frameInfo.isMainFrame else { return (nil, "not allowed") }
+        // Consume before any await. The work queue can sit behind other page work, and a second
+        // send must not see the same arm.
+        var mayStartTurn = false
+        if body["type"] as? String == "send" {
+            do {
+                mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+            } catch {
+                return (nil, error.description)
+            }
+        } else {
+            guard message.frameInfo.isMainFrame else { return (nil, "not allowed") }
+        }
         guard JSONSerialization.isValidJSONObject(body),
               let data = try? JSONSerialization.data(withJSONObject: body) else { return (nil, HtmlError.malformed("message must be an object").description) }
         do {
             let parsed = try HtmlMessage.parse(data)
-            let reply = try await tile.handle(parsed, rendering: source === tile.renderWebView, priority: priority)
+            let reply = try await tile.handle(parsed, rendering: source === tile.renderWebView, priority: priority, mayStartTurn: mayStartTurn)
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reply), options: .fragmentsAllowed)
             return (object, nil)
         } catch let error as HtmlError {
@@ -436,6 +448,13 @@ final class HtmlWebView: WKWebView {
     static let nativeMouseDown = Notification.Name("HtmlWebView.nativeMouseDown")
     private static let clickWorld = WKContentWorld.world(name: "canvas-html-keyboard")
     private static let clickGrantLifetime: TimeInterval = 0.3
+    /// One monitor for every HTML web view. `mouseDown` on this class misses WebKit's descendant
+    /// views, so a click in the page would never arm a permit.
+    private static var sendMonitor: Any?
+
+    /// The live tile's page. An offscreen render leaves this false and cannot arm a permit.
+    var acceptsSendGestures = false
+    private var sendPermit = HtmlGesturePermit(url: "")
 
     private enum KeyboardAuthorization {
         case denied
@@ -501,6 +520,7 @@ final class HtmlWebView: WKWebView {
     override init(frame: NSRect, configuration: WKWebViewConfiguration) {
         super.init(frame: frame, configuration: configuration)
         Self.suppressPageFocusChanges(in: self)
+        Self.installSendMonitor()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -546,6 +566,7 @@ final class HtmlWebView: WKWebView {
 
     func resetKeyboardAuthorization() {
         keyboardAuthorization = .denied
+        revokeSendPermit()
         guard let window, ownsKeyboard(in: window) else { return }
         onEscape?()
         if ownsKeyboard(in: window) { window.makeFirstResponder(nil) }
@@ -557,8 +578,78 @@ final class HtmlWebView: WKWebView {
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if window !== newWindow { keyboardAuthorization = .denied }
+        if window !== newWindow {
+            keyboardAuthorization = .denied
+            revokeSendPermit()
+        }
         super.viewWillMove(toWindow: newWindow)
+    }
+
+    func bindSendDocument(_ url: String) {
+        sendPermit.noteURL(url)
+    }
+
+    func revokeSendPermit() {
+        sendPermit.reset()
+    }
+
+    /// False when the page is parked, hidden, or not the live tile. A hidden page can still queue
+    /// inert data; it cannot spend a permit.
+    func consumeSendPermit(at time: TimeInterval) -> Bool {
+        guard acceptsSendGestures, isLiveVisible else {
+            revokeSendPermit()
+            return false
+        }
+        return sendPermit.consume(at: time)
+    }
+
+    private var isLiveVisible: Bool {
+        guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { return false }
+        return true
+    }
+
+    private static func installSendMonitor() {
+        guard sendMonitor == nil else { return }
+        sendMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { event in
+            MainActor.assumeIsolated { observeSendGesture(event) }
+            return event
+        }
+    }
+
+    private static func observeSendGesture(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            guard let web = webView(hitBy: event), web.acceptsSendGestures, web.isLiveVisible else { return }
+            web.sendPermit.arm(at: event.timestamp)
+        case .keyDown:
+            guard !event.isARepeat, let window = event.window,
+                  let web = webView(owningKeyboardIn: window), web.acceptsSendGestures, web.isLiveVisible else { return }
+            web.sendPermit.arm(at: event.timestamp)
+        default:
+            break
+        }
+    }
+
+    private static func webView(hitBy event: NSEvent) -> HtmlWebView? {
+        guard let content = event.window?.contentView else { return nil }
+        let point = content.convert(event.locationInWindow, from: nil)
+        guard let hit = content.hitTest(point), let web = ancestorWebView(of: hit) else { return nil }
+        guard web.bounds.contains(web.convert(event.locationInWindow, from: nil)) else { return nil }
+        return web
+    }
+
+    private static func webView(owningKeyboardIn window: NSWindow) -> HtmlWebView? {
+        guard let responder = window.firstResponder as? NSView, let web = ancestorWebView(of: responder), web.ownsKeyboard(in: window) else { return nil }
+        return web
+    }
+
+    private static func ancestorWebView(of view: NSView) -> HtmlWebView? {
+        var current: NSView? = view
+        while let view = current {
+            if let web = view as? HtmlWebView { return web }
+            current = view.superview
+        }
+        return nil
     }
 
     private func cancelKeyboardClick() {

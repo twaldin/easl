@@ -245,6 +245,7 @@ For "show me who calls X" (or what X calls), create a live call graph from the l
 Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, draw Mermaid diagrams with the vendored Mermaid.js build (offline, strict security, light or dark theme), and provide grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
 Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting code.
 Read `references/html-explainers.md` before building an explainer: components, playbooks for plans, walkthroughs, comparisons and decisions, and Mermaid pitfalls.
+The page can send JSON data with `canvasKit.send(payload)` within the 64 KiB bridge limit. Only a fresh native click or key permits one ID-only submission notice within 1.5 seconds. omp wakes with constant text and native IDs, attributed `agent`, never with page text or a user instruction. Read the data explicitly with `easl agent.inbox --protocol 2` without `wakeOnly`, answer from the tool result, and acknowledge after consumption. Every data item carries an easl-written `untrustedLabel` beside escaped JSON. Notice acknowledgement retains the payload; load and timer sends never wake or enter context automatically. Native caps and refusals still apply. See `references/html-explainers.md`. Use `easl ask` when a decision must block you or reach the user's needs-you list.
 
 ### Shapes and arrows
 

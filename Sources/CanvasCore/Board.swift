@@ -81,6 +81,9 @@ public struct BoardSnapshot: Codable, Sendable {
     /// Peer messages their integrations haven't acked yet (`Board.messages`); optional so older
     /// board files still load.
     public var messages: [ObjectID: [AgentMessage]]?
+    /// Page messages (`canvasKit.send`), outside `messages` so a 0.3.2 app skips the key instead
+    /// of reading a page payload as a user script. Optional so older board files still load.
+    public var htmlMessages: [ObjectID: [AgentMessage]]? = nil
     /// Terminals whose relaunched agent (agent.restart) hasn't reported yet
     /// (`Board.relaunchedAgents`); optional so older board files still load.
     public var relaunchedAgents: [ObjectID]?
@@ -157,6 +160,10 @@ public final class Board {
     /// Out-of-band messages queued for each terminal, oldest first, until its integration acks
     /// them (AgentMessages.swift); saved with the board.
     public internal(set) var messages: [ObjectID: [AgentMessage]] = [:]
+    /// Page messages waiting for each terminal (`htmlMessages` in the board file). Not part of
+    /// `messages`: a bounce of that queue would notify the page as the user.
+    public internal(set) var htmlMessages: [ObjectID: [AgentMessage]] = [:]
+    var htmlSendRate = HtmlSendRateBook()
     /// Each terminal's agent session generation (`agentSession(of:)`); in memory: what a restart
     /// keeps queued belongs to the session there now.
     var agentSessions: [ObjectID: Int] = [:]
@@ -180,6 +187,9 @@ public final class Board {
     /// Messages whose receiver's agent session ended before its integration took them: the
     /// registry's router sends them back or logs them (`ApiRouter.bounce`).
     public var onMessagesBounced: ((MessageBounce) -> Void)?
+    /// A message reached `terminal`'s queue: the registry's router hands it to a waiting
+    /// `agent.inbox` long poll (`ApiRouter.serveInbox`).
+    public var onMessageQueued: ((ObjectID) -> Void)?
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -231,6 +241,7 @@ public final class Board {
         onEvent = nil
         onTerminalsEnded = nil
         onMessagesBounced = nil
+        onMessageQueued = nil
         viewport = { nil }
         arrowPath = nil
         settleArrows = nil
@@ -391,7 +402,9 @@ public final class Board {
         turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
         aliases = (snapshot.aliases ?? [:]).filter { objects[$0.value]?.type == .terminal }
-        messages = (snapshot.messages ?? [:]).filter { objects[$0.key]?.type == .terminal && !$0.value.isEmpty }
+        let restored = HtmlSendBudget.restore(ordinary: snapshot.messages ?? [:], html: snapshot.htmlMessages ?? [:], objects: objects)
+        messages = restored.ordinary
+        htmlMessages = restored.html
         relaunchedAgents = Set((snapshot.relaunchedAgents ?? []).filter { objects[$0]?.type == .terminal })
         repo = snapshot.repo
     }
@@ -402,7 +415,8 @@ public final class Board {
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
                       lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo, aliases: aliases.isEmpty ? nil : aliases,
-                      messages: messages.isEmpty ? nil : messages, relaunchedAgents: relaunchedAgents.isEmpty ? nil : relaunchedAgents.sorted())
+                      messages: messages.isEmpty ? nil : messages, htmlMessages: htmlMessages.isEmpty ? nil : htmlMessages,
+                      relaunchedAgents: relaunchedAgents.isEmpty ? nil : relaunchedAgents.sorted())
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -772,6 +786,8 @@ public final class Board {
         history.begin()
         let mark = history.mark()
         let (handed, queued, named) = (handoffs, messages, aliases)
+        let pages = htmlMessages
+        let rates = htmlSendRate
         let prompts = composerPrompts
         let notices = composerNotices
         defer {
@@ -790,6 +806,8 @@ public final class Board {
             revert(history.discard(from: mark))
             handoffs = handed
             messages = queued
+            htmlMessages = pages
+            htmlSendRate = rates
             aliases = named
             composerPrompts = prompts
             composerNotices = notices

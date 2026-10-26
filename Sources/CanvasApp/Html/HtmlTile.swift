@@ -217,6 +217,8 @@ final class HtmlTile: NSView, TileContent {
             guard let self, let web, self.webView === web else { return }
             self.leaveKeyboard()
         }
+        web.acceptsSendGestures = true
+        web.bindSendDocument(pageURL.absoluteString)
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
@@ -332,8 +334,8 @@ final class HtmlTile: NSView, TileContent {
     // MARK: Channel
 
     /// `rendering`: from the offscreen page `render(_:)` loads, which may read (excerpts, state)
-    /// but never act for the user.
-    func handle(_ message: HtmlMessage, rendering: Bool, priority: HostReadPriority = .interactive) async throws -> JSONValue {
+    /// but never act for the user. `mayStartTurn` is the permit the bridge already consumed.
+    func handle(_ message: HtmlMessage, rendering: Bool, priority: HostReadPriority = .interactive, mayStartTurn: Bool = false) async throws -> JSONValue {
         guard !hostBoardClosed, !board.isClosed else { throw HtmlError.unavailable("host closed this board") }
         if rendering {
             switch message {
@@ -343,7 +345,7 @@ final class HtmlTile: NSView, TileContent {
             case .getState(let key):
                 // The page being rendered or measured is this object's (which may not be on the board yet).
                 return HtmlChannel.state(object.props, key: key)
-            case .openCode, .setState:
+            case .openCode, .setState, .send:
                 throw HtmlError.malformed("not available while the page renders offscreen")
             default:
                 break
@@ -355,11 +357,24 @@ final class HtmlTile: NSView, TileContent {
         let files = rendering ? files?.prioritized(priority) : files
         let result = try await work.perform { [object, board, files] in
             try Task.checkCancellation()
-            return try await HtmlChannel.handle(message, tile: object.id, board: board, files: files)
+            return try await HtmlChannel.handle(message, tile: object.id, board: board, files: files, mayStartTurn: mayStartTurn)
         }
         guard !hostBoardClosed, !board.isClosed else { throw HtmlError.cancelled }
         if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened, result["existing"] == .bool(true)) }
         return result
+    }
+
+    /// Decides a `canvasKit.send` at bridge receipt, before the channel's work queue. A refusal
+    /// does not consume the permit. Success is whether this document's permit was spent.
+    func beginPageSend(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) -> Bool {
+        if hostBoardClosed || board.isClosed { throw .unavailable("host closed this board") }
+        if isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
+        if webView !== self.webView { throw .malformed("not available while the page renders offscreen") }
+        guard HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
+                                      isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {
+            throw .unavailable("not allowed")
+        }
+        return (webView as? HtmlWebView)?.consumeSendPermit(at: time) == true
     }
 
     // MARK: Snapshots
@@ -426,6 +441,7 @@ final class HtmlTile: NSView, TileContent {
         self.live = live
         if !live {
             leaveKeyboard()
+            webView?.revokeSendPermit()
             suspendAssetWatch()
             webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         }
