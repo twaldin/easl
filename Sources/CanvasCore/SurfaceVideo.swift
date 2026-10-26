@@ -645,7 +645,6 @@ public final class SurfaceVideoDecoder: @unchecked Sendable {
             if changed || session == nil || packet.keyframe {
                 let nextFormat = try packet.format(width: width, height: height)
                 clear()
-                SurfaceVideoCompressionSessions.waitForRetirements()
                 try videoCheck(VTDecompressionSessionCreate(allocator: nil, formatDescription: nextFormat,
                     decoderSpecification: [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true] as CFDictionary,
                     imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
