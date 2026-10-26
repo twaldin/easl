@@ -62,6 +62,16 @@ private enum HtmlSend {
         throw Failure(message: "the replacement document must load")
     }
 
+    private static func nativeClickPoint(in web: WKWebView, window: NSWindow) -> NSPoint? {
+        window.layoutIfNeeded()
+        guard !web.isLoading, web.window === window, !web.isHiddenOrHasHiddenAncestor,
+              let content = window.contentView else { return nil }
+        let point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
+        guard let hit = content.hitTest(content.convert(point, from: nil)),
+              hit === web || hit.isDescendant(of: web) else { return nil }
+        return point
+    }
+
     private static func mouse(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow) -> NSEvent {
         NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
@@ -155,7 +165,13 @@ private enum HtmlSend {
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "a reload must drop the previous document's permit")
         check("reload reset the permit")
 
-        NSApp.sendEvent(mouse(.leftMouseDown, at: inside, in: window))
+        var replacementPoint: NSPoint?
+        try await wait(until: {
+            replacementPoint = nativeClickPoint(in: web, window: window)
+            return replacementPoint != nil
+        }, "the replacement document must be natively clickable before a fresh click")
+        guard let replacementPoint else { throw Failure(message: "the replacement click target disappeared") }
+        NSApp.sendEvent(mouse(.leftMouseDown, at: replacementPoint, in: window))
         try await pageSend(web, "after-reload")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == true, "a new native click in the replacement document must authorize again")
         check("a fresh click authorized the replacement document")
