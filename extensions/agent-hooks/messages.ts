@@ -127,10 +127,8 @@ export type CardDetails = {
   untrustedPageContent?: true;
 };
 
-/** One delivery as the hooks card. `forOmp` maps html to agent at `pi.sendMessage`. */
 export type Card = { customType: typeof EASL_MESSAGE; content: string; display: true; details: CardDetails; attribution: AgentMessage["attribution"] };
 
-/** omp's `pi.sendMessage` takes user or agent. A page card is agent here, never user. */
 export type OmpCard = Omit<Card, "attribution"> & { attribution: "user" | "agent" };
 
 export function forOmp(delivered: Card): OmpCard {

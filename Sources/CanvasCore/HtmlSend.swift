@@ -83,6 +83,12 @@ public enum HtmlSendBudget {
     public static let inboxCount = 32
     public static let inboxBytes = 256 * 1024
 
+    public static let senderNameBytes = 256
+    // A 256-byte title needs at most 1536 JSON bytes. The remainder covers native sender
+    // ids, attribution, turn flags and the reply wrapper, including a later title change.
+    static let messageBytes = inboxBytes - 4096
+    public static let inboxBytesReason = "this message cannot fit the \(inboxBytes)-byte inbox batch limit"
+
     public static let pageCountReason = "this page already has \(pageCount) messages waiting"
     public static let pageBytesReason = "this page's waiting messages are at \(pageBytes) bytes"
     public static let destinationCountReason = "the terminal that created this page already has \(destinationCount) messages waiting"
@@ -92,6 +98,15 @@ public enum HtmlSendBudget {
     /// What the board file stores for one message. Queue bytes use this, not the raw payload.
     public static func retainedBytes(_ message: AgentMessage) -> Int {
         (try? BoardStore.encoder.encode(message).count) ?? Int.max
+    }
+
+    static func senderName(_ title: String) -> String {
+        guard title.utf8.count > senderNameBytes else { return title }
+        var bytes = title.utf8.prefix(senderNameBytes)
+        while true {
+            if let name = String(bytes: bytes, encoding: .utf8) { return name }
+            bytes = bytes.dropLast()
+        }
     }
 
     /// The inbox `result` object, sorted keys, which is the batch the integration receives.
@@ -131,6 +146,7 @@ public enum HtmlSendBudget {
 
     static func check(page: ObjectID, destination: ObjectID, bytes: Int, queues: [ObjectID: [AgentMessage]], rate: inout HtmlSendRateBook, now: Date) throws {
         if bytes > Self.pageBytes { throw HtmlError.overBudget(pageBytesReason) }
+        if bytes > Self.messageBytes { throw HtmlError.overBudget(inboxBytesReason) }
         var pageCount = 0
         var pageBytes = 0
         var destinationCount = 0
@@ -192,7 +208,7 @@ public enum HtmlSendBudget {
             for message in queues[terminal] ?? [] {
                 guard let page = message.html else { continue }
                 let bytes = retainedBytes(message)
-                if bytes > Self.pageBytes || bytes > destinationBytes { continue }
+                if bytes > Self.messageBytes || bytes > destinationBytes { continue }
                 if pageCount[page, default: 0] + 1 > Self.pageCount { continue }
                 if pageBytes[page, default: 0] + bytes > Self.pageBytes { continue }
                 if destCount + 1 > destinationCount { continue }

@@ -601,19 +601,137 @@ final class AgentMessageTests {
         #expect(legacyReply["result"]?["messages"]?.array?.first?["attribution"] == "user")
     }
 
-    @Test func anOversizeInboxItemIsRefusedWithoutSendingAnUnboundedBatchOrDroppingIt() async throws {
+    @Test func anUnrenderableOrdinaryPromptIsExplicitlyRefusedBeforeRetention() async throws {
         let host = terminal("oversize-host")
         try omp(host, .idle, seq: 1)
-        let oversized = AgentMessage(text: String(repeating: "x", count: HtmlSendBudget.inboxBytes), from: nil, label: "script", when: .now, mentions: [])
+        let sender = try connect()
+        let attempts: [[String: JSONValue]] = [
+            ["target": .string(host), "text": .string(String(repeating: "x", count: 256 * 1024))],
+            ["target": .string(host), "text": "small body", "from": .string(String(repeating: "x", count: 256 * 1024))],
+        ]
+        for params in attempts {
+            let refused = try await call(sender, "agent.prompt", params)
+            #expect(refused["error"]?["code"] == "invalid_params")
+            #expect(board.messages[host] == nil)
+        }
+        let sent = try await call(sender, "agent.prompt", ["target": .string(host), "text": "still available"])
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        #expect(taken["result"]?["messages"]?.array?.map { $0["id"] } == [sent["result"]?["message"]])
+        #expect(taken["result"]?["messages"]?.array?.first?["text"] == "still available")
+    }
+
+    @Test func legacyOversizeMessagesCannotStarveFollowingOrdinaryMessages() async throws {
+        let host = terminal("legacy-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>legacy</p>"]), caller: host)
+        let oldPage = AgentMessage(text: String(repeating: "\\u003c", count: 37_300), from: nil, html: page.id, label: nil, when: .now, mentions: [], mayStartTurn: true)
+        let oldOrdinary = AgentMessage(text: String(repeating: "x", count: 256 * 1024), from: nil, label: "script", when: .now, mentions: [])
         let small = AgentMessage(text: "still available", from: nil, label: "script", when: .now, mentions: [])
-        try board.queueMessage(oversized, to: host)
-        try board.queueMessage(small, to: host)
+        var snapshot = board.snapshot
+        snapshot.messages = [host: [oldOrdinary, small]]
+        snapshot.htmlMessages = [host: [oldPage]]
+        let store = BoardStore(directory: dir.appendingPathComponent("legacy-boards"))
+        store.save(Board(snapshot: snapshot))
+        let restoredRegistry = BoardRegistry(store: store)
+        let restored = try await restoredRegistry.open(root: board.root)
+        #expect(restored.htmlMessages[host] == nil)
+        #expect(restored.messages[host]?.map(\.id) == [oldOrdinary.id, small.id])
+        let restoredRouter = ApiRouter(registry: restoredRegistry)
+        let path = dir.appendingPathComponent("legacy.sock").path
+        let restoredServer = SocketServer(path: path) { request, connection in
+            await restoredRouter.handle(request, connection: connection)
+        }
+        try restoredServer.start()
+        defer { restoredServer.stop() }
+        let client = try LineClient(path: path)
+        let taken = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        let result = try #require(taken["result"])
+        #expect(try JSONEncoder().encode(result).count <= 256 * 1024)
+        #expect(result["messages"]?.array?.map { $0["id"] } == [.string(small.id)])
+        #expect(result["messages"]?.array?.first?["attribution"] == "user")
+        #expect(restored.messages[host]?.map(\.id) == [small.id])
+        let history = restored.activity.query(since: nil, limit: 100, kinds: [.message]).entries
+        #expect(history.contains { $0.summary.contains(oldOrdinary.id) && $0.summary.contains("dropped") })
+        #expect(history.allSatisfy { !$0.summary.contains(oldPage.text) })
+        let empty = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": [.string(small.id)]])
+        #expect(empty["result"]?["messages"] == .array([]))
+        #expect(restored.messages[host] == nil && restored.htmlMessages[host] == nil)
+    }
+
+    @Test func hostileExpansionIsRefusedWithoutKeepingOrBlockingOrdinaryMessages() async throws {
+        let host = terminal("expansion-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>hostile</p>"]), caller: host)
+        let payload = JSONValue.string(String(repeating: "<", count: 37_300))
+        let parsed = try HtmlMessage.parse(.object(["type": "send", "payload": payload]))
+        #expect(try JSONEncoder().encode(payload).count < 64 * 1024)
+        await #expect(throws: HtmlError.overBudget(HtmlSendBudget.inboxBytesReason)) {
+            try await HtmlChannel.handle(parsed, tile: page.id, board: board)
+        }
+        #expect(board.htmlMessages[host] == nil && board.messages[host] == nil)
+        let ordinary = AgentMessage(text: "not starved", from: nil, label: "script", when: .now, mentions: [])
+        try board.queueMessage(ordinary, to: host)
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": 2])
+        #expect(taken["result"]?["messages"]?.array?.map { $0["id"] } == [.string(ordinary.id)])
+        #expect(try JSONEncoder().encode(try #require(taken["result"])).count <= 256 * 1024)
+        let now = Date()
+        for _ in 0..<8 {
+            _ = try await HtmlChannel.handle(.send(payload: "small after refusal"), tile: page.id, board: board, now: now)
+        }
+        #expect(board.htmlMessages[host]?.count == 8)
+    }
+
+    @Test func actualWireBytesSplitBatchesWithoutDroppingValidMessages() async throws {
+        let host = terminal("wire-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        var ids: [String] = []
+        for index in 0..<4 {
+            let page = board.create(type: .html, props: .object(["html": "<p>wire</p>", "title": .string("Page \(index)")]), caller: host)
+            let sent = try await HtmlChannel.handle(.send(payload: .string(String(repeating: "<", count: 36_000))), tile: page.id, board: board)
+            ids.append(try #require(sent["message"]?.string))
+        }
         let client = try connect()
-        let refused = try await call(client, "agent.inbox", ["tile": .string(host)])
-        #expect(refused["error"]?["code"] == .string("unavailable"))
-        #expect(board.messages[host]?.map(\.id) == [oversized.id, small.id])
-        let next = try await call(client, "agent.inbox", ["tile": .string(host), "ack": .array([.string(oversized.id)])])
-        #expect(next["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } == [small.id])
+        var received: [String] = []
+        for _ in 0..<4 {
+            let reply = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2])
+            let result = try #require(reply["result"])
+            #expect(try JSONEncoder().encode(result).count <= 256 * 1024)
+            let messages = try #require(result["messages"]?.array)
+            #expect(messages.count == 1)
+            #expect(messages.first?["attribution"] == "html")
+            received.append(contentsOf: messages.compactMap { $0["id"]?.string })
+        }
+        #expect(Set(received) == Set(ids) && received.count == ids.count)
+        #expect(board.htmlMessages[host]?.count == 4)
+        let acked = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": .array(ids.map(JSONValue.string))])
+        #expect(acked["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host] == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func hugePageTitlesStayBoundedBeforeAndAfterEnqueue(growing: Bool) async throws {
+        let host = terminal("title-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let title = String(repeating: "\u{1F98A}\u{0001}", count: 60_000)
+        let page = board.create(type: .html, props: .object(["html": "<p>title</p>", "title": .string(growing ? "short" : title)]), caller: host)
+        let payload = JSONValue.string(String(repeating: "<", count: 36_000))
+        let sent = try await HtmlChannel.handle(.send(payload: payload), tile: page.id, board: board)
+        if growing { try board.update(page.id, props: .object(["title": .string(title)])) }
+        let ordinary = AgentMessage(text: "ordinary after page", from: nil, label: "script", when: .now, mentions: [])
+        try board.queueMessage(ordinary, to: host)
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": 2])
+        let result = try #require(taken["result"])
+        #expect(try JSONEncoder().encode(result).count <= 256 * 1024)
+        let messages = try #require(result["messages"]?.array)
+        let html = try #require(messages.first { $0["id"] == sent["message"] })
+        let name = try #require(html["from"]?["name"]?.string)
+        #expect(name.utf8.count <= 256 && !name.isEmpty)
+        #expect(title.hasPrefix(name))
+        #expect(!name.contains("\u{FFFD}"))
+        #expect(html["attribution"] == "html" && html["untrustedPageContent"] == .bool(true))
+        #expect(html["from"]?["html"] == .string(page.id) && html["from"]?["board"] == .string(board.id))
+        #expect(html["text"] == .string("\"" + String(repeating: "\\u003c", count: 36_000) + "\""))
+        #expect(messages.contains { $0["id"] == .string(ordinary.id) && $0["text"] == "ordinary after page" && $0["attribution"] == "user" })
     }
 
 }

@@ -922,26 +922,32 @@ function passiveOmp(easl: { socketPath: string }, entries: Params[] = []) {
     asides: [] as Params[],
     context: entries.filter((entry) => entry.type === "custom_message").map((entry) => ({ ...entry, role: "custom" })),
     scheduledTurns: 0,
-    messageEnds: 0,
     persist(message: Params): void {
       grow(omp.branch(), { ...message, type: "custom_message" });
       omp.entries.push(omp.branch().at(-1)!);
       passive.context.push({ ...message, role: "custom" });
     },
     async independentTurn(prompt = "Continue independently."): Promise<Params[]> {
-      const hidden = passive.hidden.splice(0);
-      omp.state.pending = false;
-      for (const message of hidden) {
+      for (const message of passive.hidden.splice(0)) {
         passive.persist(message);
-        passive.messageEnds++;
         await omp.record(message);
       }
+      omp.state.pending = false;
       await omp.prepare(prompt);
       omp.state.streaming = true;
       await omp.emit("agent_start");
       return omp.request([...passive.context, { role: "user", content: prompt }]);
     },
-    async end(willContinue = false): Promise<void> {
+    async extensionTurn(index = omp.delivered.length - 1): Promise<Params[]> {
+      const { message } = omp.delivered[index];
+      omp.state.streaming = true;
+      await omp.emit("agent_start");
+      passive.persist(message);
+      await omp.record(message);
+      return omp.request([...passive.context]);
+    },
+    async end(willContinue = false, answered = true): Promise<void> {
+      if (answered) await omp.emit("message_end", { message: { role: "assistant", stopReason: "stop", content: [] } });
       omp.state.streaming = false;
       await omp.emit("agent_end", { willContinue, messages: [] });
       if (passive.asides.length > 0) {
@@ -977,10 +983,13 @@ function passiveOmp(easl: { socketPath: string }, entries: Params[] = []) {
 
 test("every inbox request opts into protocol 2, including coalescing, acknowledgements and retry", async () => {
   const easl = fakeEasl();
-  const { omp } = passiveOmp(easl);
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
   easl.failing = (params) => params.ack?.length > 0;
   easl.queue.push(pageMessage("passive receipt"));
   await omp.emit("session_start");
+  await until(() => easl.polls() >= 3);
+  await passive.independentTurn();
   await until(() => easl.queue.length === 0 && easl.acks.length > 0);
   await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.protocol === 2));
   const inbox = easl.calls.filter((call) => call.method === "agent.inbox");
@@ -1022,7 +1031,7 @@ test("a hostile page's exact text at pi.sendMessage is easl's frame, attributed 
   });
 });
 
-test("inert page content does not wake an idle agent, and is already in its next independent turn", async () => {
+test("inert page content stays passive while idle and reaches the next independent turn as separate non-user cards", async () => {
   const easl = fakeEasl();
   const passive = passiveOmp(easl);
   const { omp } = passive;
@@ -1031,22 +1040,22 @@ test("inert page content does not wake an idle agent, and is already in its next
   const falsy = pageMessage("from a timer", { mayStartTurn: false });
   easl.queue.push(absent, falsy);
   await omp.emit("session_start");
-  await until(() => passive.context.length === 2 && easl.queue.length === 0);
+  await until(() => easl.polls() >= 3);
+  await settle(6_000);
   expect(passive.scheduledTurns).toBe(0);
-  expect(passive.messageEnds).toBe(0);
-  expect(omp.delivered.map((item) => item.options)).toEqual([
-    { deliverAs: "nextTurn", triggerTurn: false },
-    { deliverAs: "nextTurn", triggerTurn: false },
-  ]);
+  expect(omp.delivered).toEqual([]);
+  expect(new Set(easl.acks.flatMap((ack) => ack.ids))).toEqual(new Set([absent.id, falsy.id]));
   const request = await passive.independentTurn();
   const pages = request.filter((item) => item.customType === "easl:message");
   expect(pages.map((item) => item.attribution)).toEqual(["agent", "agent"]);
   expect(pages.map((item) => item.details.ids)).toEqual([[absent.id], [falsy.id]]);
   expect(pages.every((item) => item.details.untrustedPageContent && item.details.from.html === "obj_quiz" && item.display === true)).toBe(true);
-  expect(omp.delivered).toHaveLength(2);
+  expect(request.at(-1)).toEqual({ role: "user", content: "Continue independently." });
+  await until(() => easl.queue.length === 0);
+  expect(easl.acks.every((ack) => ack.started === false)).toBe(true);
 });
 
-test("inert page content stays hidden across active continuations and normal turn completion without scheduling a run", async () => {
+test("mid-stream inert content waits across continuations, then reaches the next peer-started turn without waking", async () => {
   const easl = fakeEasl();
   const passive = passiveOmp(easl);
   const { omp } = passive;
@@ -1054,29 +1063,87 @@ test("inert page content stays hidden across active continuations and normal tur
   await passive.independentTurn();
   const sent = pageMessage("while working", { when: "next-turn" });
   easl.send(sent);
-  await until(() => passive.hidden.length === 1);
-  expect(passive.context).toEqual([]);
-  expect(easl.acks).toEqual([]);
+  await until(() => easl.polls() >= 3);
+  expect(await omp.request([...passive.context])).toEqual([]);
+  await until(() => easl.queue.length === 0);
+  expect(easl.acks.every((ack) => ack.started === false)).toBe(true);
   await passive.end(true);
   omp.state.streaming = true;
   await omp.emit("agent_start");
-  expect(passive.context).toEqual([]);
+  expect(await omp.request([...passive.context])).toEqual([]);
   await passive.end();
   await settle(6_000);
   expect(passive.scheduledTurns).toBe(0);
-  expect(omp.delivered).toHaveLength(1);
-  expect(easl.queue.map((item) => item.id)).toEqual([sent.id]);
-  const request = await passive.independentTurn();
+  expect(omp.delivered).toEqual([]);
+  expect(easl.queue).toEqual([]);
+  const peer = message("Use the page's progress.");
+  easl.send(peer);
+  await until(() => omp.delivered.length === 1);
+  const request = await passive.extensionTurn();
   expect(request.filter((item) => item.customType === "easl:message")).toMatchObject([
     { attribution: "agent", details: { ids: [sent.id], untrustedPageContent: true, from: sent.from } },
+    { attribution: "agent", details: { ids: [peer.id] } },
   ]);
   await until(() => easl.queue.length === 0);
-  expect(easl.acks).toHaveLength(1);
-  expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: false });
-  expect(omp.delivered).toHaveLength(1);
+  expect(easl.acks.find((ack) => ack.ids.includes(sent.id))).toMatchObject({ started: false });
+  expect(easl.acks.find((ack) => ack.ids.includes(peer.id))).toMatchObject({ started: true });
+  expect(passive.hidden).toEqual([]);
 });
 
-test("delayed passive admission after normal turn completion cannot wake the agent or defer data another turn", async () => {
+test("mid-stream inert content is in the next native-gesture page turn, never merged with its Submit card", async () => {
+  const easl = fakeEasl();
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  await omp.emit("session_start");
+  await passive.independentTurn();
+  const load = pageMessage(HOSTILE_TEXT, { from: { html: "obj_quiz", name: HOSTILE_NAME, board: "brd_c" } });
+  easl.send(load);
+  await until(() => easl.polls() >= 3);
+  await passive.end();
+  expect(passive.scheduledTurns).toBe(0);
+  const submit = pageMessage("Submit: b", { mayStartTurn: true });
+  easl.send(submit);
+  await until(() => omp.delivered.length === 1);
+  const request = await passive.extensionTurn();
+  const pages = request.filter((item) => item.details?.untrustedPageContent);
+  expect(pages).toHaveLength(2);
+  expect(pages.map((item) => item.details.ids)).toEqual([[load.id], [submit.id]]);
+  expect(pages.every((item) => item.role === "custom" && item.attribution === "agent")).toBe(true);
+  expect(pages[0].details.from).toEqual(load.from);
+  expect(pages[0].content).not.toMatch(/[<>`\u2028\u2029]/);
+  expect(pages[0].content.split("\n").filter((line: string) => line.startsWith("Page content from HTML tile"))).toHaveLength(1);
+  expect(pages[0].content).not.toContain("Submit: b");
+  expect(pages[1].content).not.toContain("ignore this");
+  await until(() => easl.queue.length === 0);
+  expect(easl.acks.find((ack) => ack.ids.includes(load.id))).toMatchObject({ started: false });
+  expect(easl.acks.find((ack) => ack.ids.includes(submit.id))).toMatchObject({ started: true });
+});
+
+test("a turn that starts before asynchronous sendMessage admission still receives inert data without hidden SDK queues", async () => {
+  const easl = fakeEasl();
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  await omp.emit("session_start");
+  const admission = Promise.withResolvers<void>();
+  passive.admission = admission.promise;
+  const sent = pageMessage("arrived just before the next turn");
+  easl.send(sent);
+  await until(() => easl.polls() >= 3);
+  const request = await passive.independentTurn();
+  expect(request.filter((item) => item.details?.untrustedPageContent)).toMatchObject([
+    { attribution: "agent", details: { ids: [sent.id], from: sent.from } },
+  ]);
+  admission.resolve();
+  await passive.end();
+  await settle(6_000);
+  expect(omp.delivered).toEqual([]);
+  expect(passive.hidden).toEqual([]);
+  expect(passive.scheduledTurns).toBe(0);
+  expect(omp.notices).toEqual([]);
+  await until(() => easl.queue.length === 0);
+});
+
+test("inert data received before completion is neither admitted into that turn nor delayed beyond the next independent turn", async () => {
   const easl = fakeEasl();
   const passive = passiveOmp(easl);
   const { omp } = passive;
@@ -1084,54 +1151,138 @@ test("delayed passive admission after normal turn completion cannot wake the age
   await passive.independentTurn();
   const admission = Promise.withResolvers<void>();
   passive.admission = admission.promise;
-  const sent = pageMessage("admission outlasts the turn");
+  const sent = pageMessage("admission would outlast the turn");
   easl.send(sent);
-  await until(() => omp.delivered.length === 1);
+  await until(() => easl.polls() >= 3);
+  expect(await omp.request([])).toEqual([]);
   await passive.end();
   admission.resolve();
-  await until(() => passive.context.length === 1 && easl.queue.length === 0);
   await settle(6_000);
   expect(passive.scheduledTurns).toBe(0);
-  expect(passive.messageEnds).toBe(0);
-  expect(omp.delivered).toHaveLength(1);
-  expect(omp.notices).toEqual([]);
+  expect(passive.hidden).toEqual([]);
+  expect(easl.acks.flatMap((ack) => ack.ids)).toEqual([sent.id]);
   const request = await passive.independentTurn();
-  expect(request.filter((item) => item.customType === "easl:message")).toMatchObject([
-    { attribution: "agent", display: true, details: { ids: [sent.id], from: sent.from, untrustedPageContent: true } },
+  expect(request.filter((item) => item.details?.untrustedPageContent)).toMatchObject([
+    { attribution: "agent", details: { ids: [sent.id], from: sent.from } },
   ]);
-  expect(easl.acks).toHaveLength(1);
-  expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: false });
+  await until(() => easl.queue.length === 0);
 });
 
-test("a passive card persisted without message_end is recovered after restart before its receipt was reconciled", async () => {
+test("a persisted passive projection survives a lost receipt and restart without redelivery or losing next-turn context", async () => {
   const easl = fakeEasl();
   const passive = passiveOmp(easl);
   const { omp } = passive;
   await omp.emit("session_start");
-  const persist = passive.persist;
-  const stopped = Promise.withResolvers<void>();
-  passive.persist = (message) => {
-    persist(message);
-    void omp.emit("session_shutdown").then(stopped.resolve);
-  };
-  const sent = pageMessage("persisted before reconciliation");
+  const sent = pageMessage("persisted before the receipt");
+  easl.failing = (params) => params.ack?.includes(sent.id);
   easl.send(sent);
-  await until(() => passive.context.length === 1);
-  expect(passive.messageEnds).toBe(0);
-  expect(omp.entries.some((entry) => entry.customType === "easl.messages")).toBe(false);
-  expect(easl.acks).toEqual([]);
-  await stopped.promise;
+  await until(() => easl.closed.length > 0);
+  expect(omp.entries).toContainEqual({ type: "custom", customType: "easl.passive", data: { type: "retained", messages: [sent] } });
+  expect(omp.delivered).toEqual([]);
+  expect(easl.queue).toEqual([sent]);
+  await omp.emit("session_shutdown");
   const restarted = passiveOmp(easl, omp.entries);
   await restarted.omp.emit("session_start");
   await until(() => easl.queue.length === 0);
   expect(restarted.omp.delivered).toEqual([]);
   expect(restarted.scheduledTurns).toBe(0);
-  expect(easl.acks).toHaveLength(1);
-  expect(easl.acks[0]).toMatchObject({ ids: [sent.id], started: false });
   const request = await restarted.independentTurn();
-  expect(request.filter((item) => item.customType === "easl:message")).toMatchObject([
+  expect(request.filter((item) => item.details?.untrustedPageContent)).toMatchObject([
     { attribution: "agent", details: { ids: [sent.id], from: sent.from, untrustedPageContent: true } },
   ]);
+  expect(restarted.omp.entries.filter((entry) => entry.customType === "easl.passive" && entry.data.type === "retained")).toHaveLength(1);
+  await restarted.end();
+  await restarted.omp.emit("session_shutdown");
+  easl.queue.push(sent);
+  const settled = passiveOmp(easl, omp.entries);
+  await settled.omp.emit("session_start");
+  await until(() => easl.queue.length === 0);
+  expect((await settled.independentTurn()).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+  expect(settled.omp.delivered).toEqual([]);
+});
+
+test("a failed independent turn retains its passive projection for the next peer turn and successful settlement", async () => {
+  const easl = fakeEasl();
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  easl.queue.push(pageMessage("keep this if the provider fails"));
+  await omp.emit("session_start");
+  await until(() => easl.polls() >= 3);
+  const first = await passive.independentTurn();
+  await until(() => easl.queue.length === 0);
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "error", content: [] } });
+  await passive.end(false, false);
+  easl.send(message("Retry independently."));
+  await until(() => omp.delivered.length === 1);
+  const retried = await passive.extensionTurn();
+  expect(retried.filter((item) => item.details?.untrustedPageContent)).toEqual(first.filter((item) => item.details?.untrustedPageContent));
+  await passive.end();
+  expect((await passive.independentTurn()).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+});
+
+test("a passive context preparation that crosses completion cannot consume or lose the next independent turn's pages", async () => {
+  const easl = fakeEasl();
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  const sent = pageMessage("survive asynchronous context preparation");
+  easl.queue.push(sent);
+  await omp.emit("session_start");
+  await until(() => easl.queue.length === 0);
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  const preparing = omp.request([]);
+  await passive.end(false, false);
+  expect((await preparing).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+  expect(omp.delivered).toEqual([]);
+  expect(passive.scheduledTurns).toBe(0);
+  const next = await passive.independentTurn();
+  expect(next.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual([sent.id]);
+  await passive.end();
+  expect((await passive.independentTurn()).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+});
+
+test("an older asynchronous context request cannot project pages into the wrong independent run", async () => {
+  const easl = fakeEasl();
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  const sent = pageMessage("use the next live request");
+  easl.queue.push(sent);
+  await omp.emit("session_start");
+  await until(() => easl.queue.length === 0);
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  const older = omp.request([]);
+  await passive.end(false, false);
+  omp.state.streaming = true;
+  await omp.emit("agent_start");
+  const current = omp.request([]);
+  expect((await older).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+  expect((await current).filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual([sent.id]);
+  expect(passive.scheduledTurns).toBe(0);
+  await passive.end();
+  expect((await passive.independentTurn()).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+});
+
+test("durable bounded retention frees native page slots before a gesture Submit starts the next turn", async () => {
+  const easl = fakeEasl(32);
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  await omp.emit("session_start");
+  await passive.independentTurn();
+  const queued = Array.from({ length: 32 }, (_, index) => pageMessage(`progress ${index}`));
+  for (const message of queued) easl.send(message);
+  await until(() => easl.queue.length === 0);
+  expect(passive.scheduledTurns).toBe(0);
+  expect(omp.delivered).toEqual([]);
+  expect(easl.acks.every((ack) => ack.started === false)).toBe(true);
+  await passive.end();
+  const submit = pageMessage("Submit", { mayStartTurn: true });
+  easl.send(submit);
+  await until(() => omp.delivered.length === 1);
+  const request = await passive.extensionTurn();
+  expect(request.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual([...queued.map((item) => item.id), submit.id]);
+  await until(() => easl.queue.length === 0);
+  expect(easl.acks.find((ack) => ack.ids.includes(submit.id))).toMatchObject({ started: true });
 });
 
 test("authorized page content can wake, and still is not a user message", async () => {
@@ -1156,20 +1307,20 @@ test("a mixed burst does not promote page content into the user card, including 
   const page = pageMessage("Answer: b");
   easl.queue.push(peer, script, page);
   await omp.emit("session_start");
-  await until(() => omp.delivered.length === 2 && passive.context.length === 1);
-  expect(omp.delivered).toHaveLength(2);
+  await until(() => omp.delivered.length === 1);
+  expect(omp.delivered).toHaveLength(1);
   expect(omp.delivered[0].message.attribution).toBe("user");
   expect(omp.delivered[0].message.content).toContain("Check the key.");
   expect(omp.delivered[0].message.content).not.toContain("Answer: b");
-  const request = await passive.independentTurn();
-  expect(omp.delivered[1].message.attribution).toBe("agent");
-  expect(omp.delivered[1].options).toEqual({ deliverAs: "nextTurn", triggerTurn: false });
-  expect(omp.delivered[1].message.content).toContain("Answer: b");
-  expect(omp.delivered[1].message.content).not.toContain("Check the key.");
-  expect(omp.delivered[1].message.content).not.toContain("user's answer");
-  expect(request.filter((item) => item.customType === "easl:message")).toMatchObject([
+  const request = await passive.extensionTurn();
+  const pages = request.filter((item) => item.details?.untrustedPageContent);
+  expect(pages).toMatchObject([
     { attribution: "agent", details: { ids: [page.id], from: page.from, untrustedPageContent: true } },
   ]);
+  expect(pages[0].content).toContain("Answer: b");
+  expect(pages[0].content).not.toContain("Check the key.");
+  expect(pages[0].content).not.toContain("user's answer");
+  expect(request.filter((item) => item.attribution === "user").map((item) => item.content)).toEqual([omp.delivered[0].message.content]);
 });
 
 test("an authorized page past the wake bound rides the next turn instead of starting one", async () => {
@@ -1258,45 +1409,78 @@ test("the accumulated hold stops at 1MiB and releases backpressure after recordi
   await until(() => easl.queue.length === 0);
 });
 
-test("idle passive receipts reconcile without message_end and release the bounded hold without resending", async () => {
+test("idle passive retention stays bounded after durable receipts and through the next independent request", async () => {
   const easl = fakeEasl(32);
   const passive = passiveOmp(easl);
   const { omp } = passive;
-  const queued = Array.from({ length: 160 }, (_, index) => pageMessage(`idle page ${index}`));
+  const queued = Array.from({ length: 129 }, (_, index) => pageMessage(`idle page ${index}`));
   easl.queue.push(...queued);
   await omp.emit("session_start");
-  await until(() => easl.queue.length === 0 && passive.context.length === queued.length);
+  await until(() => easl.closed.length > 0);
   await settle(6_000);
+  expect(omp.delivered).toEqual([]);
+  expect(new Set(easl.acks.flatMap((ack) => ack.ids))).toEqual(new Set(queued.slice(0, 128).map((item) => item.id)));
   expect(passive.scheduledTurns).toBe(0);
-  expect(passive.messageEnds).toBe(0);
-  expect(omp.notices).toEqual([]);
-  expect(omp.delivered).toHaveLength(queued.length);
-  expect(new Set(omp.delivered.flatMap((item) => item.message.details.ids)).size).toBe(queued.length);
-  expect(easl.acks.every((ack) => ack.started === false)).toBe(true);
+  await omp.emit("session_shutdown");
+  const resumed = passiveOmp(easl, omp.entries);
+  await resumed.omp.emit("session_start");
+  const request = await resumed.independentTurn();
+  expect(request.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual(queued.slice(0, 128).map((item) => item.id));
+  await until(() => easl.queue.length === 1);
+  await settle(3_000);
+  expect((await resumed.omp.request([])).filter((item) => item.details?.untrustedPageContent)).toHaveLength(128);
+  expect(easl.queue.map((item) => item.id)).toEqual([queued[128].id]);
+  await resumed.end();
+  await until(() => easl.queue.length === 0);
+  const next = await resumed.independentTurn();
+  expect(next.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual([queued[128].id]);
+  await until(() => easl.queue.length === 0);
   expect(new Set(easl.acks.flatMap((ack) => ack.ids))).toEqual(new Set(queued.map((item) => item.id)));
+  expect(easl.acks.every((ack) => ack.started === false)).toBe(true);
+  expect(resumed.hidden).toEqual([]);
 });
 
-test("hidden passive messages stop at 128 until the next independent turn records them", async () => {
+test("127 retained mid-stream pages leave room for the next peer-started turn within the 128-message hold", async () => {
   const easl = fakeEasl(32);
   const passive = passiveOmp(easl);
   const { omp } = passive;
   await omp.emit("session_start");
   await passive.independentTurn();
-  const queued = Array.from({ length: 129 }, (_, index) => pageMessage(`hidden page ${index}`));
+  const queued = Array.from({ length: 127 }, (_, index) => pageMessage(`streamed page ${index}`));
   for (const message of queued) easl.send(message);
-  await until(() => passive.hidden.length === 128);
+  await until(() => easl.queue.length === 0);
   await passive.end();
   await settle(6_000);
-  expect(omp.delivered).toHaveLength(128);
-  expect(easl.acks).toEqual([]);
-  expect(easl.queue).toHaveLength(129);
+  expect(omp.delivered).toEqual([]);
   expect(passive.scheduledTurns).toBe(0);
-  await passive.independentTurn();
-  await until(() => omp.delivered.length === 129);
-  await passive.end();
-  await passive.independentTurn();
+  easl.send(message("Use all the page progress."));
+  await until(() => omp.delivered.length === 1);
+  const request = await passive.extensionTurn();
+  expect(new Set(request.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id))).toEqual(new Set(queued.map((item) => item.id)));
   await until(() => easl.queue.length === 0);
-  expect(omp.delivered).toHaveLength(129);
-  expect(new Set(passive.context.flatMap((item) => item.details.ids)).size).toBe(129);
+  expect(passive.hidden).toEqual([]);
+  await passive.end();
+  expect((await passive.independentTurn()).filter((item) => item.details?.untrustedPageContent)).toEqual([]);
+});
+
+test("pending and acknowledged passive projections share the 1MiB hold until successful settlement", async () => {
+  const easl = fakeEasl(3);
+  const passive = passiveOmp(easl);
+  const { omp } = passive;
+  const queued = Array.from({ length: 20 }, (_, index) => pageMessage(`${index}:` + "x".repeat(65_000)));
+  easl.queue.push(...queued);
+  await omp.emit("session_start");
+  await until(() => easl.queue.length === 4);
+  const request = await passive.independentTurn();
+  expect(new Set(request.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id))).toEqual(new Set(queued.slice(0, 16).map((item) => item.id)));
+  await settle(3_000);
+  expect((await omp.request([])).filter((item) => item.details?.untrustedPageContent)).toHaveLength(16);
+  expect(easl.queue).toEqual(queued.slice(16));
+  await passive.end();
+  await until(() => easl.queue.length === 0);
+  const next = await passive.independentTurn();
+  expect(next.filter((item) => item.details?.untrustedPageContent).map((item) => item.details.id)).toEqual(queued.slice(16).map((item) => item.id));
+  await until(() => easl.queue.length === 0);
   expect(passive.scheduledTurns).toBe(0);
+  expect(omp.delivered).toEqual([]);
 });

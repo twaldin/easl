@@ -177,6 +177,7 @@ public final class BoardStore {
         snapshot.repo = nil
         snapshot.messages = nil
         snapshot.htmlMessages = nil
+        snapshot.relaunchedAgents = nil
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

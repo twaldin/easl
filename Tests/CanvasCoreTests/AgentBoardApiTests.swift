@@ -400,6 +400,32 @@ final class AgentBoardApiTests {
         #expect(restored.objects[note.id]?.createdBy == .agent(tile: tile))
     }
 
+    @Test func exportExcludesPendingRelaunchesAndBothMessageQueues() async throws {
+        let tile = terminal(name: "export-host")
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>keep this page</p>", "title": "Export quiz"]), caller: tile)
+        _ = try await HtmlChannel.handle(.send(payload: .string("private page payload")), tile: page.id, board: board)
+        try board.queueMessage(AgentMessage(text: "private ordinary payload", from: nil, label: "script", when: .now, mentions: []), to: tile)
+        try board.restartedAgent(tile: tile, command: ["omp"], agent: try #require(board.objects[tile]?.props["agent"]))
+        #expect(board.snapshot.relaunchedAgents == [tile])
+        #expect(board.snapshot.htmlMessages?[tile]?.count == 1)
+        #expect(board.snapshot.messages?[tile]?.count == 1)
+
+        let reply = try await call("board.export")
+        let path = try #require(reply["result"]?["path"]?.string)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(BoardSnapshot.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        #expect(snapshot.relaunchedAgents == nil)
+        #expect(snapshot.htmlMessages == nil && snapshot.messages == nil)
+        let restored = Board(snapshot: snapshot)
+        #expect(restored.objects[page.id]?.props["html"] == "<p>keep this page</p>")
+        try restored.releaseAgent(tile: tile)
+        #expect(restored.objects[tile]?.props["agent"] == nil)
+        #expect(board.snapshot.relaunchedAgents == [tile])
+        #expect(board.htmlMessages[tile]?.count == 1 && board.messages[tile]?.count == 1)
+    }
+
     @Test func exportHonorsRelativeAndAbsolutePaths() async throws {
         board.create(type: .note, props: .object(["markdown": .string("x")]))
         let relative = try await call("board.export", #"{"path":"docs/canvas.json"}"#)

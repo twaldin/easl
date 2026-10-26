@@ -105,6 +105,9 @@ extension Board {
         guard message.html == nil else { throw BoardError.invalidParams("a page message is not a user or agent message") }
         let tile = try object(terminal)
         guard tile.type == .terminal else { throw BoardError.invalidParams("\(terminal) is not a terminal tile") }
+        guard HtmlSendBudget.responseBytes([.object(["text": .string(message.text), "from": .object(["name": .string(message.label ?? AgentMessage.scriptName)])])]) <= HtmlSendBudget.inboxBytes else {
+            throw BoardError.invalidParams(HtmlSendBudget.inboxBytesReason + "; nothing was queued")
+        }
         messages[terminal, default: []].append(message)
         onChange?()
         onMessageQueued?(terminal)
@@ -250,7 +253,7 @@ extension Board {
         if let page = message.html {
             from["html"] = .string(page)
             if let board = boards.first(where: { $0.objects[page] != nil }), let tile = board.objects[page] {
-                senderName = HtmlChannel.title(of: tile)
+                senderName = HtmlSendBudget.senderName(HtmlChannel.title(of: tile))
                 from["name"] = .string(senderName!)
                 from["board"] = .string(board.id)
             } else {

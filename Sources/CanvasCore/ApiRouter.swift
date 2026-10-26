@@ -1058,8 +1058,13 @@ public final class ApiRouter {
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         let attached = try board.messageMentions(try mentions.map { try HandoffMention(json: $0).target(on: board) })
         let sender = caller.flatMap { caller in registry.boards.values.contains { $0.objects[caller]?.type == .terminal } ? caller : nil }
+        let message = AgentMessage(id: id ?? IDs.make("msg"), text: text, from: sender, label: label, when: when, mentions: attached)
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
+        let rendered = await board.delivered(message, to: terminal.id, boards: Array(registry.boards.values))
+        guard HtmlSendBudget.responseBytes([rendered]) <= HtmlSendBudget.inboxBytes else {
+            throw Failure("invalid_params", HtmlSendBudget.inboxBytesReason + "; nothing was queued")
+        }
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
         if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
@@ -1069,7 +1074,6 @@ public final class ApiRouter {
             throw Failure("unavailable", "\(terminal.id)'s agent session ended while the message was being sent (its agent was released, exited, "
                 + "or another session took the terminal), so nothing was queued; agent.list shows what runs there now")
         }
-        let message = AgentMessage(id: id ?? IDs.make("msg"), text: text, from: sender, label: label, when: when, mentions: attached)
         try board.queueMessage(message, to: terminal.id)
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         return try messageResult(message, to: current, on: board, duplicate: false)
@@ -1123,7 +1127,7 @@ public final class ApiRouter {
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
         let offered = offer(tile, on: board, to: connection, protocolVersion: protocolVersion)
-        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, try await inboxResult(offered, to: tile, on: board, connection: connection)) }
+        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, await inboxResult(offered, to: tile, on: board, connection: connection)) }
         let waiter = InboxWaiter(id: id, connection: connection, tile: tile, protocolVersion: protocolVersion)
         inboxWaiters.append(waiter)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
@@ -1148,11 +1152,11 @@ public final class ApiRouter {
         return reserved
     }
 
-    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async throws -> JSONValue {
+    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async -> JSONValue {
         var chosen: [JSONValue] = []
-        var kept = 0
+        var kept: Set<String> = []
         defer {
-            for message in messages.dropFirst(kept) {
+            for message in messages where !kept.contains(message.id) {
                 let key = MessageHold(tile: tile, message: message.id)
                 if messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
             }
@@ -1162,12 +1166,16 @@ public final class ApiRouter {
             chosen.append(item)
             if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes {
                 chosen.removeLast()
-                if chosen.isEmpty {
-                    throw Failure("unavailable", "an inbox message exceeds the \(HtmlSendBudget.inboxBytes)-byte batch limit")
+                if chosen.isEmpty || HtmlSendBudget.responseBytes([item]) > HtmlSendBudget.inboxBytes {
+                    board.ackMessages([message.id], of: tile)
+                    board.activity.record(.message, actor: .system, rev: board.revision, id: tile, type: .terminal,
+                                          summary: "undelivered message \(message.id) to \(tile): exceeded the \(HtmlSendBudget.inboxBytes)-byte inbox batch limit; dropped")
+                    for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
+                    continue
                 }
                 break
             }
-            kept += 1
+            kept.insert(message.id)
         }
         return .object(["messages": .array(chosen)])
     }
@@ -1189,12 +1197,8 @@ public final class ApiRouter {
         }
         guard let (waiter, offered) = selected else { return }
         Task { @MainActor in
-            do {
-                let result = try await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
-                waiter.connection.send(Self.ok(waiter.id, result))
-            } catch {
-                waiter.connection.send(Self.error(waiter.id, Self.failure(for: error)))
-            }
+            let result = await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
+            waiter.connection.send(Self.ok(waiter.id, result))
         }
     }
 
