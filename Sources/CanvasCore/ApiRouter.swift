@@ -329,6 +329,7 @@ public final class ApiRouter {
         let id: JSONValue
         let connection: SocketServer.Connection
         let tile: ObjectID
+        let protocolVersion: Int
     }
 
     /// agent.list's closed boards (`StoredTerminals`), by board file name, reread when a file changes.
@@ -1113,15 +1114,17 @@ public final class ApiRouter {
         guard board.objects[tile]?.type == .terminal else { throw Failure("invalid_params", "\(tile) is not a terminal tile") }
         let waitMs = p["waitMs"]?.int ?? 0
         guard (0...60_000).contains(waitMs) else { throw Failure("invalid_params", "waitMs is from 0 to 60000") }
+        let protocolVersion = p["protocol"]?.int ?? 1
+        guard protocolVersion >= 1 else { throw Failure("invalid_params", "protocol is at least 1") }
         messageHolds = messageHolds.filter { $0.value.isOpen }
         let ack = p["ack"]?.array?.compactMap(\.string) ?? []
         if !ack.isEmpty {
             for message in ack { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
             if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         }
-        let offered = offer(tile, on: board, to: connection)
+        let offered = offer(tile, on: board, to: connection, protocolVersion: protocolVersion)
         guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, try await inboxResult(offered, to: tile, on: board, connection: connection)) }
-        let waiter = InboxWaiter(id: id, connection: connection, tile: tile)
+        let waiter = InboxWaiter(id: id, connection: connection, tile: tile, protocolVersion: protocolVersion)
         inboxWaiters.append(waiter)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
             MainActor.assumeIsolated {
@@ -1136,9 +1139,10 @@ public final class ApiRouter {
     /// The messages for `tile` no open connection holds, now held by `connection`, at most one
     /// inbox batch. The rest stay free for the next poll. None while agent.restart kills and
     /// relaunches it (`restarting`).
-    private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection) -> [AgentMessage] {
+    private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection, protocolVersion: Int) -> [AgentMessage] {
         guard !restarting.contains(tile) else { return [] }
-        let free = board.pendingMessages(for: tile).filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
+        let pending = protocolVersion >= PromptTarget.pageMessageProtocol ? board.pendingMessages(for: tile) : (board.messages[tile] ?? [])
+        let free = pending.filter { messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true }
         let reserved = Array(free.prefix(HtmlSendBudget.inboxCount))
         for message in reserved { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
         return reserved
@@ -1172,9 +1176,18 @@ public final class ApiRouter {
     /// poll for it takes it.
     func serveInbox(_ tile: ObjectID, on board: Board) {
         inboxWaiters.removeAll { !$0.connection.isOpen }
-        guard !restarting.contains(tile), let index = inboxWaiters.firstIndex(where: { $0.tile == tile }) else { return }
-        let waiter = inboxWaiters.remove(at: index)
-        let offered = offer(tile, on: board, to: waiter.connection)
+        guard !restarting.contains(tile) else { return }
+        var selected: (InboxWaiter, [AgentMessage])?
+        for index in inboxWaiters.indices where inboxWaiters[index].tile == tile {
+            let waiter = inboxWaiters[index]
+            let offered = offer(tile, on: board, to: waiter.connection, protocolVersion: waiter.protocolVersion)
+            if !offered.isEmpty {
+                inboxWaiters.remove(at: index)
+                selected = (waiter, offered)
+                break
+            }
+        }
+        guard let (waiter, offered) = selected else { return }
         Task { @MainActor in
             do {
                 let result = try await inboxResult(offered, to: tile, on: board, connection: waiter.connection)

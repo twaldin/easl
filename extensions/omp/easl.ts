@@ -206,6 +206,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const ctx = sessionCtx;
     if (!reporting || !ctx) return;
     const now = editorDraft(ctx);
+    reconcilePassiveReceipts();
     if (now !== draft) {
       draft = now;
       publish();
@@ -383,9 +384,8 @@ export default function canvas(pi: ExtensionAPI): void {
     staged = staged.filter((entry) => !entry.committed);
     publish();
     // Messages over their senders' wake bound ride this turn, without interrupting it.
-    // Inert page messages that arrived during the turn already running stay until a later start.
-    const riding = nextStart.filter((message) => !inertAwaitingTurnEnd.has(message.id));
-    nextStart = nextStart.filter((message) => inertAwaitingTurnEnd.has(message.id));
+    const riding = nextStart;
+    nextStart = [];
     send(riding, "aside");
   });
 
@@ -402,7 +402,6 @@ export default function canvas(pi: ExtensionAPI): void {
     }
     publish();
     if (!active) {
-      inertAwaitingTurnEnd.clear();
       setTimeout(releaseAfterTurn, 0);
     }
   });
@@ -412,7 +411,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // them to omp as cards (easl's own custom messages, drawn as omp draws its IRC messages), so the
   // editor (a half-typed draft) and an open question or approval stay as they are, and the
   // session tells them from the user's prompts. A message is acked once omp has recorded it (the
-  // card carrying its id, `message_end`); until then easl keeps it. Polls and acks go over the
+  // card carrying its id, via message_end or a persisted passive entry); until then easl keeps it. Polls and acks go over the
   // inbox connection only: what easl answers is held by that connection, and any call on it
   // that fails closes it, so easl offers what it held again.
   const inbox = new CanvasClient({ timeoutMs: INBOX_WAIT_MS + 15_000, reconnectTimeoutMs: 0 });
@@ -422,8 +421,9 @@ export default function canvas(pi: ExtensionAPI): void {
   // Messages this session took that omp hasn't recorded yet, by id: held below, or handed to omp
   // (`handed`). One easl offers again (a new connection) is not delivered twice.
   const waiting = new Map<string, AgentMessage>();
-  // Handed to omp and not recorded yet: whether that delivery started a turn, and when it went.
-  const handed = new Map<string, { started: boolean; at: number }>();
+  // Handed to omp and not recorded yet. Passive deliveries cannot wake or be retried as asides.
+  const handed = new Map<string, { how: "steer" | "turn" | "aside" | "passive"; at: number }>();
+  let receiptLeaf: string | null | undefined;
   // What omp recorded in this session (its `easl.messages` entries): offered again (easl never
   // took the ack: a lost connection, a restart), it is acked, not delivered.
   let recorded = new Set<string>();
@@ -433,8 +433,6 @@ export default function canvas(pi: ExtensionAPI): void {
   let nextStart: AgentMessage[] = [];
   let coalescing: AgentMessage[] = [];
   let holdoff = false;
-  // Inert page messages that arrived while a turn was already running. They join only a start after that turn ends.
-  const inertAwaitingTurnEnd = new Set<string>();
   // Acks easl didn't take: sent with the next poll.
   let unacked: string[] = [];
   let polling = false;
@@ -465,13 +463,16 @@ export default function canvas(pi: ExtensionAPI): void {
     handed.clear();
     afterTurn = [];
     nextStart = [];
-    inertAwaitingTurnEnd.clear();
     coalescing = [];
     marked.clear();
     prepared = false;
     policy = undefined;
+    receiptLeaf = ctx.sessionManager.getLeafId();
     recorded = new Set(
-      ctx.sessionManager.getEntries().flatMap((entry) => (entry.type === "custom" && entry.customType === RECORDED_ENTRY ? ((entry.data as { ids?: string[] } | undefined)?.ids ?? []) : [])),
+      ctx.sessionManager.getEntries().flatMap((entry) => {
+        if (entry.type === "custom" && entry.customType === RECORDED_ENTRY) return (entry.data as { ids?: string[] } | undefined)?.ids ?? [];
+        return entry.type === "custom_message" && (entry.details as { untrustedPageContent?: unknown } | undefined)?.untrustedPageContent === true ? recordedIds({ role: "custom", ...entry }) : [];
+      }),
     );
   }
 
@@ -488,7 +489,7 @@ export default function canvas(pi: ExtensionAPI): void {
       unacked = [];
       let first: AgentMessage[];
       try {
-        first = (await inbox.api.agent.inbox({ tile: tile!, waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined })).messages;
+        first = (await inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL, waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined })).messages;
       } catch {
         unacked.push(...ackIds);
         inbox.close();
@@ -502,7 +503,7 @@ export default function canvas(pi: ExtensionAPI): void {
       let more: AgentMessage[] = [];
       if (firstFits) {
         await Bun.sleep(COALESCE_MS);
-        more = await inbox.api.agent.inbox({ tile: tile! }).then(
+        more = await inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL }).then(
           (reply) => reply.messages,
           () => {
             inbox.close();
@@ -551,7 +552,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
   function ack(ids: readonly string[], started: boolean): void {
     if (ids.length === 0) return;
-    inbox.api.agent.inbox({ tile: tile!, ack: [...ids], started }).then(
+    inbox.api.agent.inbox({ tile: tile!, protocol: PROTOCOL, ack: [...ids], started }).then(
       (reply) => {
         if (receive(reply.messages)) {
           inbox.close();
@@ -567,16 +568,16 @@ export default function canvas(pi: ExtensionAPI): void {
 
   // `now`: a steer while omp works, else a new turn; `next-turn`: held until the running turn ends.
   // A sender past its wake bound joins the step omp is streaming, or waits for the next turn to start.
-  // Inert HTML never wakes or steers, including when a turn ends. It joins the next start that is not this one.
+  // Inert HTML is admitted immediately as passive next-turn context, never through a wake-capable aside.
   function deliver(messages: readonly AgentMessage[]): void {
     const steer: AgentMessage[] = [];
     const turn: AgentMessage[] = [];
     const aside: AgentMessage[] = [];
+    const passive: AgentMessage[] = [];
     const streaming = session ? !session.isIdle() : active;
     for (const message of messages) {
       if (isHtmlMessage(message) && !htmlMayStartTurn(message)) {
-        nextStart.push(message);
-        if (active) inertAwaitingTurnEnd.add(message.id);
+        passive.push(message);
         continue;
       }
       switch (plan(message.when, { turn: active, streaming, mayWake: wakes.allows([senderKey(message)]) })) {
@@ -600,14 +601,16 @@ export default function canvas(pi: ExtensionAPI): void {
     send(steer, "steer");
     send(turn, "turn");
     send(aside, "aside");
+    send(passive, "passive");
   }
 
-  function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside"): void {
+  function send(messages: readonly AgentMessage[], how: "steer" | "turn" | "aside" | "passive"): void {
     if (messages.length === 0) return;
-    if (how !== "aside") wakes.spend(new Set(messages.map(senderKey)));
+    if (how === "steer" || how === "turn") wakes.spend(new Set(messages.map(senderKey)));
     // `steer` and `turn` go in as a steer: at the running turn's next step, an interruptible wait
     // cut short. An omp streaming nothing starts a turn with the card instead (`triggerTurn`).
     // `aside` joins the step omp streams without interrupting it. Each HTML message is its own card.
+    // omp 18.12.6 nextTurn/false never schedules a run, even if asynchronous admission lands idle.
     if (session ? session.isIdle() : !active) {
       prepared = false;
       policy = undefined;
@@ -615,10 +618,10 @@ export default function canvas(pi: ExtensionAPI): void {
     const at = Date.now();
     for (const item of deliveryCards(messages)) {
       mark(item.details.ids);
-      pi.sendMessage(forOmp(item), how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
-      for (const id of item.details.ids) handed.set(id, { started: how === "turn", at });
+      for (const id of item.details.ids) handed.set(id, { how, at });
+      pi.sendMessage(forOmp(item), how === "passive" ? { deliverAs: "nextTurn", triggerTurn: false } : how === "aside" ? { deliverAs: "aside" } : { deliverAs: "steer", triggerTurn: true });
     }
-    recordCheck ??= setTimeout(unrecorded, RECORD_MS);
+    if (how !== "passive") recordCheck ??= setTimeout(unrecorded, RECORD_MS);
   }
 
   // A card may start a turn omp doesn't prepare: now, or by being left in omp's queue at a run's
@@ -638,23 +641,39 @@ export default function canvas(pi: ExtensionAPI): void {
   // omp recorded a message: the easl messages it carries (a card, or a user message with a card's
   // text omp put back in the editor) are in its session now. Their ids go into it too (a restarted
   // omp offered them again acks them), then easl gets the ack.
-  pi.on("message_end", (event) => {
-    if (waiting.size === 0) return;
-    const ids = [...new Set(recordedIds(event.message))].filter((id) => waiting.has(id));
+  pi.on("message_end", (event) => recordReceipts(recordedIds(event.message)));
+
+  function recordReceipts(candidates: readonly string[]): void {
+    const ids = [...new Set(candidates)].filter((id) => waiting.has(id));
     if (ids.length === 0) return;
-    const started = ids.filter((id) => handed.get(id)?.started);
+    const started = ids.filter((id) => handed.get(id)?.how === "turn");
     for (const id of ids) {
       waiting.delete(id);
       handed.delete(id);
       recorded.add(id);
-      inertAwaitingTurnEnd.delete(id);
     }
     afterTurn = afterTurn.filter((held) => waiting.has(held.id));
     nextStart = nextStart.filter((held) => waiting.has(held.id));
     pi.appendEntry(RECORDED_ENTRY, { ids });
     ack(started, true);
     ack(ids.filter((id) => !started.includes(id)), false);
-  });
+  }
+
+  // Idle nextTurn appends persist without message_end in omp 18.12.6. Read only newly
+  // appended session entries while passive receipts are outstanding, including after admission delays.
+  function reconcilePassiveReceipts(): void {
+    if (!session || ![...handed.values()].some((sent) => sent.how === "passive")) return;
+    const manager = session.sessionManager;
+    const leaf = manager.getLeafId();
+    if (leaf === receiptLeaf) return;
+    const ids: string[] = [];
+    for (let entry = manager.getLeafEntry(); entry; entry = entry.parentId ? manager.getEntry(entry.parentId) : undefined) {
+      if (entry.id === receiptLeaf) break;
+      if (entry.type === "custom_message") ids.push(...recordedIds({ role: "custom", ...entry }).filter((id) => handed.get(id)?.how === "passive"));
+    }
+    receiptLeaf = leaf;
+    recordReceipts(ids);
+  }
 
   // Handed over RECORD_MS ago and still not recorded, with omp neither streaming nor holding
   // queued messages: it never went in (omp couldn't start the turn: no model, say). It goes in
@@ -663,9 +682,10 @@ export default function canvas(pi: ExtensionAPI): void {
   function unrecorded(): void {
     recordCheck = undefined;
     if (handed.size === 0 || !session) return;
+    reconcilePassiveReceipts();
     if (session.isIdle() && !session.hasPendingMessages()) {
       const due = Date.now() - RECORD_MS;
-      const lost = [...handed].filter(([, sent]) => sent.at <= due).map(([id]) => waiting.get(id)!);
+      const lost = [...handed].filter(([, sent]) => sent.how !== "passive" && sent.at <= due).map(([id]) => waiting.get(id)!);
       for (const message of lost) handed.delete(message.id);
       nextStart.push(...lost);
       if (lost.length > 0) {
@@ -675,7 +695,7 @@ export default function canvas(pi: ExtensionAPI): void {
         session.ui.notify(`easl: omp started no turn with ${what} from ${senders}; easl keeps ${lost.length === 1 ? "it" : "them"} for the next turn that starts`, "warning");
       }
     }
-    if (handed.size > 0) recordCheck = setTimeout(unrecorded, RECORD_MS);
+    if ([...handed.values()].some((sent) => sent.how !== "passive")) recordCheck = setTimeout(unrecorded, RECORD_MS);
   }
 
   // The turn ended: held `next-turn` messages go in as a new turn once omp is idle, unless another

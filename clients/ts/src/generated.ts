@@ -2054,6 +2054,8 @@ export type AgentReadResult = {
 export type AgentInboxParams = {
   /** the integration's own terminal (EASL_TILE_ID) */
   tile: Id;
+  /** receiving capability for this request only, including its long poll or ack reply; 1 or omitted: ordinary agent and user messages only; 2 and later: also untrusted HTML page messages. Must be sent on every request that accepts HTML, regardless of the terminal's persisted agent.report protocol */
+  protocol?: number;
   /** messages this integration has handed to its agent */
   ack?: MessageId[];
   /** with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one */

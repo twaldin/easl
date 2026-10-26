@@ -101,7 +101,7 @@ final class AgentMessageTests {
         try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
         let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: host)
         let integration = try connect()
-        integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(host)","waitMs":5000}}"#)
+        integration.send(#"{"id":"poll","method":"agent.inbox","params":{"tile":"\#(host)","protocol":2,"waitMs":5000}}"#)
         integration.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
         #expect(try await integration.next()["id"] == .string("ping"), "nothing waits yet")
 
@@ -452,7 +452,7 @@ final class AgentMessageTests {
         let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: host)
         _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": .string("user-said-this"), "from": .string("machine-watch")])
         _ = try await HtmlChannel.handle(.send(payload: .string("page-said-this")), tile: page.id, board: board, mayStartTurn: true)
-        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host)])
+        let taken = try await call(try connect(), "agent.inbox", ["tile": .string(host), "protocol": 2])
         let messages = try #require(taken["result"]?["messages"]?.array)
         #expect(messages.count == 2)
         let user = try #require(messages.first { $0["attribution"] == .string("user") })
@@ -479,10 +479,10 @@ final class AgentMessageTests {
             }
         }
         let countInbox = try connect()
-        let first = try await call(countInbox, "agent.inbox", ["tile": .string(host)])
+        let first = try await call(countInbox, "agent.inbox", ["tile": .string(host), "protocol": 2])
         let firstIds = first["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
         #expect(firstIds.count == HtmlSendBudget.inboxCount)
-        let second = try await call(countInbox, "agent.inbox", ["tile": .string(host)])
+        let second = try await call(countInbox, "agent.inbox", ["tile": .string(host), "protocol": 2])
         let secondIds = second["result"]?["messages"]?.array?.compactMap { $0["id"]?.string } ?? []
         #expect(Set(firstIds + secondIds) == Set(ids))
         #expect(board.htmlMessages[host]?.count == ids.count)
@@ -500,19 +500,105 @@ final class AgentMessageTests {
             }
         }
         let byteInbox = try connect()
-        let batch = try await call(byteInbox, "agent.inbox", ["tile": .string(wide)])
+        let batch = try await call(byteInbox, "agent.inbox", ["tile": .string(wide), "protocol": 2])
         let rendered = try #require(batch["result"]?["messages"]?.array)
         #expect(rendered.count < heavyIds.count)
         #expect(HtmlSendBudget.responseBytes(rendered) <= HtmlSendBudget.inboxBytes)
         var received = rendered.compactMap { $0["id"]?.string }
         for _ in 0..<heavyIds.count where received.count < heavyIds.count {
-            let rest = try await call(byteInbox, "agent.inbox", ["tile": .string(wide)])
+            let rest = try await call(byteInbox, "agent.inbox", ["tile": .string(wide), "protocol": 2])
             let items = try #require(rest["result"]?["messages"]?.array)
             #expect(HtmlSendBudget.responseBytes(items) <= HtmlSendBudget.inboxBytes)
             received.append(contentsOf: items.compactMap { $0["id"]?.string })
         }
         #expect(Set(received) == Set(heavyIds))
         #expect(board.htmlMessages[wide]?.count == heavyIds.count)
+    }
+
+    @Test func aRestoredProtocolTwoDoesNotAuthorizeALegacyInboxBeforeAnyReport() async throws {
+        let host = terminal("restored-host")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>retained</p>"]), caller: host)
+        let reply = try await HtmlChannel.handle(.send(payload: .string("retained-page")), tile: page.id, board: board)
+        let pageId = try #require(reply["message"]?.string)
+        _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary-user"])
+        registry.store.save(board)
+
+        let restoredRegistry = BoardRegistry(store: registry.store)
+        let restored = try await restoredRegistry.open(root: board.root)
+        #expect(restored.objects[host]?.props["agent"]?["protocol"] == 2)
+        let restoredRouter = ApiRouter(registry: restoredRegistry)
+        let path = dir.appendingPathComponent("restored.sock").path
+        let restoredServer = SocketServer(path: path) { request, connection in
+            await restoredRouter.handle(request, connection: connection)
+        }
+        try restoredServer.start()
+        defer { restoredServer.stop() }
+        let client = try LineClient(path: path)
+        let legacy = try await call(client, "agent.inbox", ["tile": .string(host)])
+        let ordinary = try #require(legacy["result"]?["messages"]?.array)
+        #expect(ordinary.count == 1)
+        #expect(ordinary.first?["text"] == "ordinary-user")
+        #expect(ordinary.first?["attribution"] == "user")
+        #expect(restored.htmlMessages[host]?.map(\.id) == [pageId])
+        let modern = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        #expect(modern["result"]?["messages"]?.array?.map { $0["id"] } == [.string(pageId)])
+        #expect(modern["result"]?["messages"]?.array?.first?["attribution"] == "html")
+    }
+
+    @Test func inboxCapabilitiesDoNotPersistAcrossAckDowngradeAndSameSessionResume() async throws {
+        let host = terminal("downgrade-host")
+        try board.reportSession(tile: host, kind: "omp", sessionId: "same-session", sessionPath: nil)
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>retained</p>"]), caller: host)
+        let first = try await HtmlChannel.handle(.send(payload: .string("first-page")), tile: page.id, board: board)
+        let firstId = try #require(first["message"]?.string)
+        let client = try connect()
+        let optedIn = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2])
+        #expect(optedIn["result"]?["messages"]?.array?.map { $0["id"] } == [.string(firstId)])
+        let second = try await HtmlChannel.handle(.send(payload: .string("second-page")), tile: page.id, board: board)
+        let secondId = try #require(second["message"]?.string)
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", protocol: 1)
+        try board.reportSession(tile: host, kind: "omp", sessionId: "same-session", sessionPath: nil)
+        _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary-during-downgrade"])
+        let ack = try await call(client, "agent.inbox", ["tile": .string(host), "ack": [.string(firstId)]])
+        let ordinary = try #require(ack["result"]?["messages"]?.array)
+        #expect(ordinary.count == 1)
+        #expect(ordinary.first?["text"] == "ordinary-during-downgrade")
+        #expect(ordinary.first?["attribution"] == "user")
+        #expect(board.htmlMessages[host]?.map(\.id) == [secondId])
+        let explicitLegacy = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 1])
+        #expect(explicitLegacy["result"]?["messages"] == .array([]))
+        let resumed = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": .array(ordinary.compactMap { $0["id"] })])
+        #expect(resumed["result"]?["messages"]?.array?.map { $0["id"] } == [.string(secondId)])
+        let finished = try await call(client, "agent.inbox", ["tile": .string(host), "protocol": 2, "ack": [.string(secondId)]])
+        #expect(finished["result"]?["messages"] == .array([]))
+        #expect(board.htmlMessages[host] == nil && board.messages[host] == nil)
+    }
+
+    @Test func aLegacyLongPollSkipsPagesWithoutBlockingAnOptedInPoll() async throws {
+        let host = terminal("poll-capabilities")
+        try board.reportLifecycle(tile: host, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        let page = board.create(type: .html, props: .object(["html": "<p>poll</p>"]), caller: host)
+        let legacy = try connect(), modern = try connect()
+        legacy.send(#"{"id":"legacy","method":"agent.inbox","params":{"tile":"\#(host)","waitMs":5000}}"#)
+        legacy.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await legacy.next()["id"] == "ready")
+        modern.send(#"{"id":"modern","method":"agent.inbox","params":{"tile":"\#(host)","protocol":2,"waitMs":5000}}"#)
+        modern.send(#"{"id":"ready","method":"system.ping","params":{}}"#)
+        #expect(try await modern.next()["id"] == "ready")
+        let queued = try await HtmlChannel.handle(.send(payload: .string("page-only")), tile: page.id, board: board)
+        let modernReply = try await modern.next()
+        #expect(modernReply["id"] == "modern")
+        #expect(modernReply["result"]?["messages"]?.array?.map { $0["id"] } == [queued["message"]])
+        legacy.send(#"{"id":"still-waiting","method":"system.ping","params":{}}"#)
+        #expect(try await legacy.next()["id"] == "still-waiting")
+        _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary-wakes-legacy"])
+        let legacyReply = try await legacy.next()
+        #expect(legacyReply["id"] == "legacy")
+        #expect(legacyReply["result"]?["messages"]?.array?.count == 1)
+        #expect(legacyReply["result"]?["messages"]?.array?.first?["text"] == "ordinary-wakes-legacy")
+        #expect(legacyReply["result"]?["messages"]?.array?.first?["attribution"] == "user")
     }
 
     @Test func anOversizeInboxItemIsRefusedWithoutSendingAnUnboundedBatchOrDroppingIt() async throws {

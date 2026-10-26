@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "843e6240788d7408"
+const SchemaHash = "8b6ec28a5f6873c3"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -233,7 +233,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"target"},
 	},
 	"agent.inbox": {
-		Accepted: []string{"tile", "ack", "started", "waitMs"},
+		Accepted: []string{"tile", "protocol", "ack", "started", "waitMs"},
 		Required: []string{"tile"},
 	},
 	"agent.restart": {

@@ -2180,6 +2180,7 @@
         "required": ["tile"],
         "properties": {
           "tile": { "$ref": "#/definitions/Id", "description": "the integration's own terminal (EASL_TILE_ID)" },
+          "protocol": { "type": "integer", "minimum": 1, "default": 1, "description": "receiving capability for this request only, including its long poll or ack reply; 1 or omitted: ordinary agent and user messages only; 2 and later: also untrusted HTML page messages. Must be sent on every request that accepts HTML, regardless of the terminal's persisted agent.report protocol" },
           "ack": { "type": "array", "items": { "$ref": "#/definitions/MessageId" }, "description": "messages this integration has handed to its agent" },
           "started": { "type": "boolean", "default": false, "description": "with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one" },
           "waitMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 0, "description": "wait this long for a message when none waits" }
