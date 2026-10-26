@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "e700fa904a8661b0"
+    static let schemaHash = "d3cca9a6122b10c6"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
@@ -55,7 +55,7 @@ enum ApiParams {
         "agent.prompt": (["target", "text", "mentions", "staged", "viewer", "caller", "from", "when", "message", "force", "composer", "submission", "reconcile", "answer"], ["target", "text"]),
         "agent.wait": (["target", "caller", "until", "timeoutMs"], ["target"]),
         "agent.read": (["target", "caller", "lines", "since", "block", "final"], ["target"]),
-        "agent.inbox": (["tile", "protocol", "wakeOnly", "ack", "started", "waitMs"], ["tile"]),
+        "agent.inbox": (["tile", "protocol", "wakeOnly", "ack", "noticeAck", "started", "waitMs"], ["tile"]),
         "agent.restart": (["target", "caller", "mode", "args", "force"], ["target", "mode"]),
         "follow.report": (["tile", "path", "range", "changes", "action"], ["tile", "path", "action"]),
         "view.seen": (["id", "rev", "marker"], ["id"]),

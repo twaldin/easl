@@ -178,7 +178,9 @@ public enum HtmlSendBudget {
         var pages: [ObjectID: [AgentMessage]] = [:]
         var seen: [ObjectID: Set<String>] = [:]
         func terminal(_ id: ObjectID) -> Bool { objects[id]?.type == .terminal }
-        func take(_ message: AgentMessage, terminal id: ObjectID) {
+        func take(_ stored: AgentMessage, terminal id: ObjectID) {
+            var message = stored
+            message.noticeAcknowledged = stored.noticeAcknowledged ?? false
             guard message.html != nil, !seen[id, default: []].contains(message.id) else { return }
             seen[id, default: []].insert(message.id)
             pages[id, default: []].append(message)

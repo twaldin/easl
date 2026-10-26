@@ -402,7 +402,7 @@ final class AgentBoardApiTests {
 
     @Test func exportExcludesPendingRelaunchesAndBothMessageQueues() async throws {
         let tile = terminal(name: "export-host")
-        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
         let page = board.create(type: .html, props: .object(["html": "<p>keep this page</p>", "title": "Export quiz"]), caller: tile)
         _ = try await HtmlChannel.handle(.send(payload: .string("private page payload")), tile: page.id, board: board)
         try board.queueMessage(AgentMessage(text: "private ordinary payload", from: nil, label: "script", when: .now, mentions: []), to: tile)

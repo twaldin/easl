@@ -450,7 +450,7 @@ struct HtmlChannelTests {
 
     @Test func aPagesSendReachesTheAgentTerminalThatCreatedIt() async throws {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
         let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: terminal)
 
         let reply = try await HtmlChannel.handle(.send(payload: .object(["answer": .string("b"), "question": .number(2)])), tile: page.id, board: board)

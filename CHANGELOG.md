@@ -5,7 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Plain wheel scrolling over oversized browser tiles reveals clipped edges before scrolling the page, including streamed browsers. Move-tool panning and Command-scroll zoom are unchanged.
-- Restore afowic's `canvasKit.send` for agent-created local HTML tiles. Page content stays untrusted; only one send per fresh native gesture can start a turn, and native retention, send rate, inbox batches and integration queues have explicit limits.
+- Restore afowic's `canvasKit.send` for agent-created local HTML tiles. One send per fresh native gesture can wake the creating agent with an ID-only notice. Page content is read only through an explicit labelled, escaped inbox tool result, never a custom message. Notice acknowledgement retains the payload; native retention, send rate, inbox batches and integration queues have explicit limits.
 
 ## 0.3.2
 

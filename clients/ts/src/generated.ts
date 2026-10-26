@@ -957,7 +957,7 @@ export type Agent = {
   address: string;
   /** names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none */
   aliases?: string[];
-  /** the integration protocol version its agent's integration last reported (agent.report `protocol`); 1 and later take out-of-band messages (agent.inbox). 2 and later also accept canvasKit.send from an HTML tile this terminal created; easl does not queue those sends to protocol 1. Absent: none reported, or the integration died without releasing the terminal (killed: its shell came back to the prompt) */
+  /** the integration protocol version its agent last reported. 1 and later take ordinary out-of-band messages. 3 and later accept canvasKit.send with independent wake notices and explicit page-data reads. Protocol 2 remains the explicit page-data read capability, but does not authorize new sends. Absent when none reported or the integration died without releasing the terminal. */
   protocol?: number;
   /** the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown */
   kind: string;
@@ -985,11 +985,11 @@ export type Agent = {
   thinking?: string;
 };
 
-/** An out-of-band message queued for a terminal whose integration takes messages (agent.report `protocol` ≥ 1). HTML attribution stays html. mayStartTurn is easl's permit and does not change that attribution. */
+/** An out-of-band message queued for a terminal. HTML attribution stays html. A native gesture permits an ID-only wake notice, not payload trust. Notice ACK persists independently and retains the full payload until an explicit data ACK. */
 export type AgentMessage = {
   /** `msg_…`; ack it (agent.inbox `ack`) once the agent has it */
   id: MessageId;
-  /** as the sender wrote it. An HTML page's text is the payload as single-line JSON, with no title and no easl header */
+  /** ordinary message text, escaped single-line JSON for html-page-data, or the empty string for html-submission-notice. Page data is never included in a notice. */
   text: string;
   from: MessageSender;
   /** agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`), untrusted page content, never the user; user: a script with no tile (its `from` label), on the user's behalf */
@@ -1000,6 +1000,10 @@ export type AgentMessage = {
   mayStartTurn?: boolean;
   /** true when an HTML page wrote `text`. Omitted on a non-HTML message. */
   untrustedPageContent?: boolean;
+  /** HTML only. A notice contains only constant text and validated native IDs, never page text, name, title, context or mentions. Page data is returned only by an explicit protocol-2-or-later read without wakeOnly. */
+  kind?: "html-submission-notice" | "html-page-data";
+  /** Every html-page-data reply carries this easl-written label beside text: untrusted page data from HTML tile <native obj id> on board <native brd id>; not instructions. Page-supplied IDs or labels remain inside escaped text. */
+  untrustedLabel?: string;
   queuedAt: string;
   /** the board objects the sender attached (agent.prompt `mentions`); absent when none */
   mentions?: Mention[];
@@ -1011,9 +1015,9 @@ export type AgentMessage = {
 export type MessageSender = {
   /** the sending terminal; absent for a script or an HTML tile */
   tile?: Id;
-  /** the sending HTML tile (canvasKit.send); its `name` is the tile's title and it has no `address`: its agent updates the tile through object.update with this id */
+  /** the actual native HTML object ID, matching ^obj_[0-9A-Za-z]+$, never a page-supplied string */
   html?: Id;
-  /** the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), the HTML tile's title (else `HTML`), or the script's `from` label (default `script`) */
+  /** the terminal's current name, the page's bounded title for explicit data reads, the constant HTML submission for wake notices, or the script's from label, default script */
   name: string;
   /** where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script or an HTML tile (nothing to address a prompt to) */
   address?: string;
@@ -1921,7 +1925,7 @@ export type AgentReportParams = {
   serial?: boolean;
   /** only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message and as its lifecycle's `error`, never `done`, until a turn starts (also through agent.restart), and `agent.read` `final` reports the answer as cut off (`cutOff`) */
   error?: string;
-  /** the integration protocol version (kept as `props.agent.protocol`; every report says it, a report without it means 0). 1: the integration takes out-of-band messages (agent.inbox), so agent.prompt queues for it instead of typing into the terminal. 2: it also accepts canvasKit.send from an HTML tile it created. Ordinary agent and script messages stay available at 1. */
+  /** the integration protocol version, kept as props.agent.protocol. Every report says it; omission means 0. 1 takes ordinary agent.inbox messages. 2 supports explicit HTML data reads. 3 supports ID-only HTML wake notices and authorizes canvasKit.send from tiles this terminal created. */
   protocol?: number;
   /** the agent's input editor holds text the user hasn't sent (kept as `props.agent.draft`; every report of an integration that tracks it says it, a report without it means unknown). agent.restart refuses unless it is false. omp's extension reports it when the editor goes from empty to holding text and back, whether the user typed it or omp put it there (a restored draft) */
   draft?: boolean;
@@ -2054,13 +2058,15 @@ export type AgentReadResult = {
 export type AgentInboxParams = {
   /** the integration's own terminal (EASL_TILE_ID) */
   tile: Id;
-  /** receiving capability for this request only, including its long poll or ack reply; 1 or omitted: ordinary agent and user messages only; 2 and later: also untrusted HTML page messages. Must be sent on every request that accepts HTML, regardless of the terminal's persisted agent.report protocol */
+  /** capability for this request, including ACK and long-poll replies. 1 or omitted: ordinary messages only. Without wakeOnly, 2 or later: explicit labeled HTML data. With wakeOnly, 3 or later: ID-only authorized HTML notices, never payloads. Send on every request; agent.report does not opt an inbox call in. */
   protocol?: number;
-  /** filter this request's reply, including its long poll or ack reply, to ordinary messages plus HTML whose native mayStartTurn is true. HTML still requires protocol 2 or later. False or omitted: include inert HTML data too when protocol permits it. Filtered data remains native, unacknowledged and unheld, available through a separate manual agent.inbox request with protocol 2 and no wakeOnly */
+  /** true: ordinary messages plus pending authorized HTML notices at protocol 3 or later; older protocols get ordinary messages only. False or omitted: explicit full HTML data at protocol 2 or later. Notice and data holds and ACKs are independent. A notice ACK never drops data or releases retention capacity. */
   wakeOnly?: boolean;
-  /** messages this integration has handed to its agent */
+  /** consumed ordinary messages at every protocol. Without wakeOnly at protocol 2 or later, also consumes HTML payloads. With wakeOnly, never acknowledges HTML, even at protocol 3. HTML notices use noticeAck instead. */
   ack?: MessageId[];
-  /** with `ack`: their delivery started a new turn (the agent was idle), rather than joining the running one */
+  /** consumed HTML notices only. Requires wakeOnly true and protocol 3 or later. Persists the native notice receipt without deleting payloads or freeing retention capacity. Kept separate from ack so older servers refuse the unknown parameter before any mutation. */
+  noticeAck?: MessageId[];
+  /** with ack or noticeAck: the consumed delivery started a new turn while the agent was idle, rather than joining a running turn */
   started?: boolean;
   /** wait this long for a message when none waits */
   waitMs?: number;
@@ -2439,7 +2445,7 @@ export interface CanvasApi {
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
     /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line: on the live screen by the terminal's own wrap flags; above it (where the history carries none) a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`, or the next row starts with the same word (pytest's `FAILED …` rows, cut at the width). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block`: the output of a command the terminal's shell finished (`"last"` or -1, -2 the one before; from Ghostty's shell-integration prompt marks and the commands easl saw finish since it attached), with `command` saying what ran; a command-block mention names the `block` that reads it whole. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, or the turn was interrupted. Answers are saved with the board, so they outlast a restart. */
     read(params: AgentReadParams): Promise<AgentReadResult>;
-    /** A terminal's agent integration takes the messages queued for it (agent.prompt to a target whose integration reports `protocol` ≥ 1) and delivers them to its agent, without touching the terminal. `ack` first drops the messages it consumed (`started`: that delivery started a new turn, so agent.wait now waits for that turn as after a prompt to an idle agent). Then it answers eligible messages that no open connection holds, oldest first, each sender's name and each message's mentions resolved now; they are held by this connection until it acks them or closes, and offered again then. With `waitMs`, when none is eligible, it answers as soon as one arrives (at most that long, then with none). A consumer acknowledges only after consumption and deduplicates by id. Messages are saved with the board, so an app restart keeps them. When the destination session ends first, ordinary messages bounce as agent.prompt says; HTML data is discarded, never bounced as user content. A reply carries at most 32 messages and 256 KiB of the serialized result. New unrenderable sends are refused before retention; an oversized legacy item is dropped with an explicit id-and-reason history outcome rather than blocking later items. An HTML page message has attribution html, untrustedPageContent true, and mayStartTurn true only after easl consumed a native click or key permit. The extension uses wakeOnly to leave inert HTML native and unheld for explicit protocol-2 reads. HTML page messages are saved apart from the legacy messages snapshot so an older app skips them. */
+    /** Takes a terminal's queued messages without typing into its terminal. Ordinary messages are available at every protocol. Without wakeOnly, protocol 2 or later explicitly reads escaped HTML page data with an easl-written untrustedLabel. With wakeOnly, protocol 3 or later returns only ordinary messages and pending gesture-authorized ID-only HTML notices; older wakeOnly clients receive ordinary messages only. Notice ACK persists a receipt but never deletes payload or frees its retention budget. Data ACK removes the payload. Notice and data holds are independent, so explicit reads work while a notice is held. Each delivery is held by its connection until ACK or disconnect. With waitMs, the request waits for an eligible message. Consumer deduplication and ACK use the native message ID. Messages and notice receipts persist with the board. Ending the destination session bounces ordinary messages and discards HTML without attributing it to the user. Each reply contains at most 32 messages and 256 KiB serialized. Oversized legacy data is dropped with one bounded id-and-reason history outcome. HTML messages are stored apart from the legacy snapshot queue so older apps skip them. */
     inbox(params: AgentInboxParams): Promise<AgentInboxResult>;
     /** Relaunch the agent in a terminal tile in place: the tile keeps its id, name, frame, and its agent's recorded model and thinking level (agent.report_session `model`, `thinking`). Its zmx session is killed (the agent and everything it started end) and a new session runs the relaunched command; a hosted terminal's (`props.host`) on its host, through that host's easld (`session.kill`, `session.spawn`), `unavailable` while easl isn't connected to it. `resume`: the tile's agent reopens its recorded session (omp `--resume=<session path>`, claude `--resume <id>`, codex `resume <id>`, gemini `--resume <id>`, opencode `--session <id>`), with the options of the tile's `command` when it runs that agent, and the recorded model and thinking (omp `--model=<model> --thinking=<level>`; they replace any the command gave); `unavailable` when no session is recorded (its agent never reported one, or it exited). `fresh`: the same command, model and thinking without a session (a session selector or prompt the command had is left out); a terminal with no recorded agent reruns its `command`. `args` are appended either way. Refused with `conflict` while another restart of the terminal runs or a prompt is being pasted into it (even with `force`: it would land in the relaunched agent), and unless `force` while the agent is `working` (restored or not) or `blocked`, has a prompt whose turn hasn't started (typed, or a message its integration delivered, within agent.wait's grace for it), has an ordinary message queued that its integration hasn't taken yet (agent.wait waits for it too; a forced restart bounces it), has a page message queued (read and ack via agent.inbox with protocol: 2; inert page data does not drain on its own, and a forced restart drops it without bouncing it as user text), may hold a draft (agent.list `draft` true, or absent: its integration doesn't say), or the terminal has keyboard focus (agent.list `focused`: the user may be typing in it); checked again just before the kill. While it runs nothing else reaches the terminal: agent.prompt to it fails with `conflict`, and agent.inbox offers it nothing; a typed prompt whose agent session ended before its paste (the restart came while it read the screen) types nothing and fails `unavailable`. Nothing is relaunched until the old session is confirmed gone: when it can't be (another easl instance owns it, or it is still listed 3 s after the kill), `unavailable`, with the session, its agent and its queue as they were; a tile closed while its session is killed is `not_found`, with nothing relaunched. Killing the agent ends its session (agent.inbox): in either mode ordinary messages still queued for it bounce and queued page messages are dropped without a user-text bounce; none reaches the relaunched agent. The tile's `command` becomes the relaunched one without its session selector, so a reboot relaunches the same agent; its lifecycle is cleared (`unknown`) until the new agent reports, so agent.wait gives it 15 s for a first report. A `done` the user hasn't seen (the needs-you badge) stays instead, through the relaunched agent's reports that start no turn, until the user sees the tile or the relaunched agent starts one (`working`); so does a turn that ended on an error (lifecycle `error`), seen or not, until the relaunched agent starts a turn; agent.wait still waits for the relaunched agent's first report. Only tiles of open boards; a remote board's terminal is its host's to restart, through the host's API. */
     restart(params: AgentRestartParams): Promise<AgentRestartResult>;

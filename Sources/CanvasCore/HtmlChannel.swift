@@ -111,7 +111,7 @@ public enum HtmlChannel {
             throw HtmlError.unavailable("the agent in terminal \(creator) that created this page takes no messages: it needs an integration that takes them (agent.report protocol ≥ 1)")
         }
         guard PromptTarget.takesPageMessages(creatorTile) else {
-            throw HtmlError.unavailable("the agent in terminal \(creator) that created this page does not take page messages: it needs an integration at protocol ≥ 2")
+            throw HtmlError.unavailable("the agent in terminal \(creator) that created this page does not take page messages: it needs an integration at protocol ≥ 3")
         }
         guard let text = HtmlSendBudget.payloadText(payload) else { throw HtmlError.malformed("the payload is not JSON") }
         let message = AgentMessage(text: text, from: nil, html: tile, label: nil, when: .now, mentions: [], mayStartTurn: mayStartTurn)

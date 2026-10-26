@@ -15,7 +15,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { type AgentMessage, CanvasClient, CanvasError } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { acceptHeld, COALESCE_MS, deliveryCards, EASL_MESSAGE, forOmp, GUIDANCE_BLOCK, guided, htmlMayStartTurn, isHtmlMessage, noticeLabel, peerAddress, plan, PROTOCOL, recordedIds, renderCard, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
+import { acceptHeld, COALESCE_MS, deliveryCards, EASL_MESSAGE, forOmp, GUIDANCE_BLOCK, guided, noticeIds, isHtmlMessage, noticeLabel, peerAddress, plan, PROTOCOL, recordedIds, renderCard, senderKey, WakeBudget, writeMessageId } from "../agent-hooks/messages";
 import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
@@ -428,11 +428,13 @@ export default function canvas(pi: ExtensionAPI): void {
         return { messages: reply.messages, acceptsHtml: true };
       } catch (error) {
         // Both 0.3.2 routers reject unknown params before applying acks or holding messages.
-        if (!(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:protocol|wakeOnly)|params protocol, wakeOnly); agent\.inbox takes /.test(error.message)) throw error;
+        if (!(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:noticeAck|protocol|wakeOnly)|params (?:protocol, wakeOnly|noticeAck, protocol, wakeOnly)); agent\.inbox takes /.test(error.message)) throw error;
         capability.legacy = true;
       }
     }
-    const reply = await inbox.api.agent.inbox({ ...params, tile: tile! });
+    const { noticeAck, ...ordinary } = params;
+    const reply = await inbox.api.agent.inbox({ ...ordinary, tile: tile! });
+    for (const id of noticeAck ?? []) unacked.set(id, true);
     return { messages: reply.messages, acceptsHtml: false };
   }
   const wakes = new WakeBudget();
@@ -451,8 +453,8 @@ export default function canvas(pi: ExtensionAPI): void {
   let nextStart: AgentMessage[] = [];
   let coalescing: AgentMessage[] = [];
   let holdoff = false;
-  // Acks easl didn't take: sent with the next poll.
-  let unacked: string[] = [];
+  // Failed receipts retain their kind so a notice can never become a payload ACK.
+  let unacked = new Map<string, boolean>();
   let polling = false;
   // A session switch whose report easl hasn't answered yet: messages arriving meanwhile were the old session's.
   let switching = false;
@@ -488,7 +490,7 @@ export default function canvas(pi: ExtensionAPI): void {
     recorded = new Set(
       ctx.sessionManager.getEntries().flatMap((entry) => {
         if (entry.type === "custom" && entry.customType === RECORDED_ENTRY) return (entry.data as { ids?: string[] } | undefined)?.ids ?? [];
-        return entry.type === "custom_message" && (entry.details as { untrustedPageContent?: unknown } | undefined)?.untrustedPageContent === true ? recordedIds({ role: "custom", ...entry }) : [];
+        return entry.type === "custom_message" && (entry.details as { kind?: unknown } | undefined)?.kind === "html-submission-notice" ? recordedIds({ role: "custom", ...entry }) : [];
       }),
     );
   }
@@ -502,16 +504,18 @@ export default function canvas(pi: ExtensionAPI): void {
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
         if (!reporting) break;
       }
-      const ackIds = unacked;
-      unacked = [];
+      const receipts = unacked;
+      unacked = new Map();
+      const ackIds = [...receipts].filter(([, notice]) => !notice).map(([id]) => id);
+      const noticeAck = [...receipts].filter(([, notice]) => notice).map(([id]) => id);
       let first: AgentMessage[];
       let acceptsHtml: boolean;
       try {
-        const reply = await readInbox({ waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined });
+        const reply = await readInbox({ waitMs: INBOX_WAIT_MS, ack: ackIds.length ? ackIds : undefined, noticeAck: noticeAck.length ? noticeAck : undefined });
         first = reply.messages;
         acceptsHtml = reply.acceptsHtml;
       } catch {
-        unacked.push(...ackIds);
+        for (const [id, notice] of receipts) unacked.set(id, notice);
         closeInbox();
         if (reporting) await Bun.sleep(INBOX_RETRY_MS);
         continue;
@@ -547,8 +551,9 @@ export default function canvas(pi: ExtensionAPI): void {
 
   function receive(messages: readonly AgentMessage[], acceptsHtml: boolean): boolean {
     if (switching) return false;
-    const eligible = messages.filter((message) => !isHtmlMessage(message) || (acceptsHtml && htmlMayStartTurn(message)));
-    ack(eligible.filter((message) => recorded.has(message.id)).map((message) => message.id), false);
+    const eligible = messages.filter((message) => !isHtmlMessage(message) || (acceptsHtml && noticeIds(message) !== undefined));
+    const receipts = eligible.filter((message) => recorded.has(message.id));
+    ack(receipts.map((message) => message.id), false, receipts.filter(isHtmlMessage).map((message) => message.id));
     const incoming = eligible.filter((message) => !recorded.has(message.id) && !waiting.has(message.id));
     const incomingIds = new Set(incoming.map((message) => message.id));
     const { take, leave } = acceptHeld(
@@ -574,9 +579,11 @@ export default function canvas(pi: ExtensionAPI): void {
   }
 
   // `started`: their delivery started a turn (agent.wait waits for it), else it joined one.
-  function ack(ids: readonly string[], started: boolean): void {
+  function ack(ids: readonly string[], started: boolean, notices: readonly string[] = []): void {
     if (ids.length === 0) return;
-    readInbox({ ack: [...ids], started }).then(
+    const noticeIds = new Set(notices);
+    const ordinary = ids.filter((id) => !noticeIds.has(id));
+    readInbox({ ack: ordinary.length ? ordinary : undefined, noticeAck: notices.length ? [...notices] : undefined, started }).then(
       (reply) => {
         if (receive(reply.messages, reply.acceptsHtml)) {
           closeInbox();
@@ -584,7 +591,7 @@ export default function canvas(pi: ExtensionAPI): void {
         }
       },
       () => {
-        unacked.push(...ids);
+        for (const id of ids) unacked.set(id, noticeIds.has(id));
         closeInbox();
       },
     );
@@ -665,6 +672,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const ids = [...new Set(candidates)].filter((id) => waiting.has(id));
     if (ids.length === 0) return;
     const started = ids.filter((id) => handed.get(id)?.how === "turn");
+    const notices = ids.filter((id) => isHtmlMessage(waiting.get(id)!));
     for (const id of ids) {
       waiting.delete(id);
       handed.delete(id);
@@ -673,8 +681,8 @@ export default function canvas(pi: ExtensionAPI): void {
     afterTurn = afterTurn.filter((held) => waiting.has(held.id));
     nextStart = nextStart.filter((held) => waiting.has(held.id));
     pi.appendEntry(RECORDED_ENTRY, { ids });
-    ack(started, true);
-    ack(ids.filter((id) => !started.includes(id)), false);
+    ack(started, true, notices.filter((id) => started.includes(id)));
+    ack(ids.filter((id) => !started.includes(id)), false, notices.filter((id) => !started.includes(id)));
   }
 
   // Handed over RECORD_MS ago and still not recorded, with omp neither streaming nor holding

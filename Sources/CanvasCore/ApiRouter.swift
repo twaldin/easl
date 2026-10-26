@@ -320,6 +320,7 @@ public final class ApiRouter {
     private struct MessageHold: Hashable {
         let tile: ObjectID
         let message: String
+        var notice: Bool = false
     }
     /// `agent.inbox` long polls waiting for a message to their terminal.
     private var inboxWaiters: [InboxWaiter] = []
@@ -1063,11 +1064,11 @@ public final class ApiRouter {
         let session = board.agentSession(of: terminal.id)
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         let rendered = await board.delivered(message, to: terminal.id, boards: Array(registry.boards.values))
+        guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         guard HtmlSendBudget.responseBytes([rendered]) <= HtmlSendBudget.inboxBytes else {
             throw Failure("invalid_params", HtmlSendBudget.inboxBytesReason + "; nothing was queued")
         }
-        guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
-        if let queued = Self.queued(id, for: terminal.id, on: board) { return try messageResult(queued, to: current, on: board, duplicate: true) }
         if restarting.contains(terminal.id) { throw Self.restartingFailure(terminal.id) }
         try available(board)
         if board.agentExited(terminal.id) { throw Self.agentExited(current) }
@@ -1122,14 +1123,32 @@ public final class ApiRouter {
         let protocolVersion = p["protocol"]?.int ?? 1
         guard protocolVersion >= 1 else { throw Failure("invalid_params", "protocol is at least 1") }
         let wakeOnly = p["wakeOnly"]?.bool == true
+        if p["noticeAck"] != nil, !wakeOnly || protocolVersion < PromptTarget.pageNoticeProtocol {
+            throw Failure("invalid_params", "noticeAck requires wakeOnly: true and protocol ≥ 3")
+        }
         messageHolds = messageHolds.filter { $0.value.isOpen }
         let ack = p["ack"]?.array?.compactMap(\.string) ?? []
+        let noticeAck = p["noticeAck"]?.array?.compactMap(\.string) ?? []
+        var delivered = false
         if !ack.isEmpty {
-            for message in ack { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
-            if !board.ackMessages(ack, of: tile).isEmpty { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
+            let ordinary = ack.filter { id in board.messages[tile]?.contains { $0.id == id } == true }
+            delivered = !board.ackMessages(ordinary, of: tile).isEmpty
+            for message in ordinary { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message)) }
+            if !wakeOnly, protocolVersion >= PromptTarget.pageDataProtocol {
+                delivered = !board.ackMessages(ack, of: tile).isEmpty || delivered
+                for message in ack {
+                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message))
+                    messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, notice: true))
+                }
+            }
         }
+        if !noticeAck.isEmpty {
+            delivered = board.ackHtmlNotices(noticeAck, of: tile) || delivered
+            for message in noticeAck { messageHolds.removeValue(forKey: MessageHold(tile: tile, message: message, notice: true)) }
+        }
+        if delivered { messagesDelivered(to: tile, on: board, started: p["started"]?.bool == true) }
         let offered = offer(tile, on: board, to: connection, protocolVersion: protocolVersion, wakeOnly: wakeOnly)
-        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, await inboxResult(offered, to: tile, on: board, connection: connection)) }
+        guard offered.isEmpty, waitMs > 0 else { return Self.ok(id, await inboxResult(offered, to: tile, on: board, connection: connection, wakeOnly: wakeOnly)) }
         let waiter = InboxWaiter(id: id, connection: connection, tile: tile, protocolVersion: protocolVersion, wakeOnly: wakeOnly)
         inboxWaiters.append(waiter)
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(waitMs)) { [weak self] in
@@ -1147,38 +1166,47 @@ public final class ApiRouter {
     /// relaunches it (`restarting`).
     private func offer(_ tile: ObjectID, on board: Board, to connection: SocketServer.Connection, protocolVersion: Int, wakeOnly: Bool) -> [AgentMessage] {
         guard !restarting.contains(tile) else { return [] }
-        let pending = protocolVersion >= PromptTarget.pageMessageProtocol ? board.pendingMessages(for: tile) : (board.messages[tile] ?? [])
+        let acceptsHtml = wakeOnly ? protocolVersion >= PromptTarget.pageNoticeProtocol : protocolVersion >= PromptTarget.pageDataProtocol
+        let pending = acceptsHtml ? board.pendingMessages(for: tile) : (board.messages[tile] ?? [])
         let free = pending.lazy.filter {
-            (!wakeOnly || $0.html == nil || $0.mayStartTurn == true) &&
-                self.messageHolds[MessageHold(tile: tile, message: $0.id)]?.isOpen != true
+            (!wakeOnly || $0.html == nil || ($0.mayStartTurn == true && $0.noticeAcknowledged != true && board.validHtmlOrigin($0))) &&
+                self.messageHolds[MessageHold(tile: tile, message: $0.id, notice: wakeOnly && $0.html != nil)]?.isOpen != true
         }
         let reserved = Array(free.prefix(HtmlSendBudget.inboxCount))
-        for message in reserved { messageHolds[MessageHold(tile: tile, message: message.id)] = connection }
+        for message in reserved {
+            messageHolds[MessageHold(tile: tile, message: message.id, notice: wakeOnly && message.html != nil)] = connection
+        }
         return reserved
     }
 
-    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection) async -> JSONValue {
+    private func inboxResult(_ messages: [AgentMessage], to tile: ObjectID, on board: Board, connection: SocketServer.Connection, wakeOnly: Bool) async -> JSONValue {
         var chosen: [JSONValue] = []
         var kept: Set<String> = []
         defer {
             for message in messages where !kept.contains(message.id) {
-                let key = MessageHold(tile: tile, message: message.id)
+                let key = MessageHold(tile: tile, message: message.id, notice: wakeOnly && message.html != nil)
                 if messageHolds[key] === connection { messageHolds.removeValue(forKey: key) }
             }
         }
         for message in messages {
-            let item = await board.delivered(message, to: tile, boards: Array(registry.boards.values))
+            let item: JSONValue
+            if wakeOnly, message.html != nil {
+                guard board.validHtmlOrigin(message) else { continue }
+                item = board.htmlNotice(message)
+            } else {
+                item = await board.delivered(message, to: tile, boards: Array(registry.boards.values))
+            }
             chosen.append(item)
             if HtmlSendBudget.responseBytes(chosen) > HtmlSendBudget.inboxBytes {
                 chosen.removeLast()
                 if chosen.isEmpty || HtmlSendBudget.responseBytes([item]) > HtmlSendBudget.inboxBytes {
                     board.ackMessages([message.id], of: tile)
-                    board.activity.record(.message, actor: .system, rev: board.revision, id: tile, type: .terminal,
-                                          summary: "undelivered message \(message.id) to \(tile): exceeded the \(HtmlSendBudget.inboxBytes)-byte inbox batch limit; dropped")
                     if message.html == nil {
                         bounce(MessageBounce(tile: tile, name: board.objects[tile].flatMap(AgentAddress.name(of:)), messages: [message], deleted: false),
                                on: board, reason: HtmlSendBudget.inboxBytesReason)
                     } else {
+                        board.activity.record(.message, actor: .system, rev: board.revision, id: tile, type: .terminal,
+                                              summary: "undelivered page message \(message.id) to \(tile): exceeded the \(HtmlSendBudget.inboxBytes)-byte inbox batch limit; dropped")
                         for waiter in waiters where waiter.tile == tile { recheck(waiter.token) }
                     }
                     continue
@@ -1190,25 +1218,21 @@ public final class ApiRouter {
         return .object(["messages": .array(chosen)])
     }
 
-    /// A message reached `tile`'s queue (or agent.restart let it go again): the oldest open long
-    /// poll for it takes it.
+    /// Each pending delivery goes to the oldest eligible poll. Notice and data holds are independent.
     func serveInbox(_ tile: ObjectID, on board: Board) {
         inboxWaiters.removeAll { !$0.connection.isOpen }
         guard !restarting.contains(tile) else { return }
-        var selected: (InboxWaiter, [AgentMessage])?
-        for index in inboxWaiters.indices where inboxWaiters[index].tile == tile {
+        var index = 0
+        while index < inboxWaiters.count {
             let waiter = inboxWaiters[index]
+            guard waiter.tile == tile else { index += 1; continue }
             let offered = offer(tile, on: board, to: waiter.connection, protocolVersion: waiter.protocolVersion, wakeOnly: waiter.wakeOnly)
-            if !offered.isEmpty {
-                inboxWaiters.remove(at: index)
-                selected = (waiter, offered)
-                break
+            guard !offered.isEmpty else { index += 1; continue }
+            inboxWaiters.remove(at: index)
+            Task { @MainActor in
+                let result = await inboxResult(offered, to: tile, on: board, connection: waiter.connection, wakeOnly: waiter.wakeOnly)
+                waiter.connection.send(Self.ok(waiter.id, result))
             }
-        }
-        guard let (waiter, offered) = selected else { return }
-        Task { @MainActor in
-            let result = await inboxResult(offered, to: tile, on: board, connection: waiter.connection)
-            waiter.connection.send(Self.ok(waiter.id, result))
         }
     }
 
@@ -1297,6 +1321,9 @@ public final class ApiRouter {
             let home = message.from.flatMap { registry.board(containing: $0) }
             if let sender = message.from, let home, let tile = home.objects[sender], PromptTarget.takesMessages(tile),
                (try? home.queueMessage(AgentMessage(text: notice, from: nil, label: AgentMessage.bounceSender, when: .now, mentions: []), to: sender)) != nil {
+                if reason != nil {
+                    board.activity.record(.message, actor: .system, rev: board.revision, id: bounce.tile, type: .terminal, summary: "\(notice); dropped")
+                }
                 serveInbox(sender, on: home)
                 continue
             }

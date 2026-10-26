@@ -82,7 +82,7 @@ private enum HtmlSend {
         app.finishLaunching()
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("html-send-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let board = Board(id: "brd_html_send", root: root)
+        let board = Board(id: "brd_htmlsend", root: root)
         let canvas = CanvasView(board: board, viewport: nil, remote: nil)
         let window = CanvasWindow(contentRect: NSRect(x: 40, y: 40, width: 1000, height: 700),
                                   styleMask: [.titled], backing: .buffered, defer: false)
@@ -99,7 +99,7 @@ private enum HtmlSend {
         let frame = Frame(x: -350, y: -250, w: 700, h: 500)
         canvas.show(Viewport(rect: Frame(x: -410, y: -310, w: 820, h: 620), zoom: 1))
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
-        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 2)
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
         let object = board.create(type: .html, props: .object(["html": .string(pageHTML(marker: "GEN1", autoSend: true))]), frame: frame, caller: terminal.id)
         let tile = try await htmlTile(canvas, object.id)
         let web = try await page(in: tile)
