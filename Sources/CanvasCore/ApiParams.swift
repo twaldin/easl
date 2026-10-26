@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "a65f193730881ad4"
+    static let schemaHash = "f1b19a2befd92734"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
