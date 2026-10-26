@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "27c6cee4cc21dcc1"
+const SchemaHash = "9a9362fdcab146df"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -1219,7 +1219,7 @@ type AgentMessage struct {
 	// as the sender wrote it
 	Text string        `json:"text"`
 	From MessageSender `json:"from"`
-	// agent: a terminal sent it (`caller`); html: an HTML tile's page sent it (canvasKit.send, `from.html`); user: a script with no tile (its `from` label), on the user's behalf One of "agent", "user", "html".
+	// agent: a terminal sent it (`caller`); user: a script with no tile (its `from` label), on the user's behalf One of "agent", "user".
 	Attribution string `json:"attribution"`
 	// now: into the running turn (a steer) or a new turn when idle; next-turn: never into a running turn, only once it has ended One of "now", "next-turn".
 	When     string `json:"when"`
@@ -1232,15 +1232,13 @@ type AgentMessage struct {
 
 // MessageSender: Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name
 type MessageSender struct {
-	// the sending terminal; absent for a script or an HTML tile
+	// the sending terminal; absent for a script
 	Tile *Id `json:"tile,omitempty"`
-	// the sending HTML tile (canvasKit.send); its `name` is the tile's title and it has no `address`: its agent updates the tile through object.update with this id
-	HTML *Id `json:"html,omitempty"`
-	// the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), the HTML tile's title (else `HTML`), or the script's `from` label (default `script`)
+	// the sending terminal's name as the tray shows it now (its `name`, else its title, else `Terminal`), or the script's `from` label (default `script`)
 	Name string `json:"name"`
-	// where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script or an HTML tile (nothing to address a prompt to)
+	// where a reply goes: the sending terminal's address (as Agent's: `name@board`, `name@<board id>` or its tile id); absent for a script (nothing to reply to)
 	Address *string `json:"address,omitempty"`
-	// the sending terminal's or HTML tile's board
+	// the sending terminal's board
 	Board *Id `json:"board,omitempty"`
 }
 

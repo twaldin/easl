@@ -245,7 +245,6 @@ For "show me who calls X" (or what X calls), create a live call graph from the l
 Tiles are sandboxed (no network unless you list hosts in `allowNetwork`) and preload Tailwind themed to the app, draw Mermaid diagrams with the vendored Mermaid.js build (offline, strict security, light or dark theme), and provide grounded components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
 Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting code.
 Read `references/html-explainers.md` before building an explainer: components, playbooks for plans, walkthroughs, comparisons and decisions, and Mermaid pitfalls.
-The page can push an answer back to you with `canvasKit.send(payload)` (at most 64 KiB): it reaches this terminal as a message naming the tile, so update the tile with `object.update`. It works for quizzes, forms and confirmed decisions; use `easl ask` when a decision must block you or reach the user's needs-you list.
 
 ### Shapes and arrows
 

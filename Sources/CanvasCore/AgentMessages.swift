@@ -13,10 +13,8 @@ public struct AgentMessage: Codable, Equatable, Sendable {
 
     public var id: String
     public var text: String
-    /// The sending terminal; nil for a script or an HTML tile.
+    /// The sending terminal; nil for a script.
     public var from: ObjectID?
-    /// The sending HTML tile (`canvasKit.send`); nil unless a page sent it.
-    public var html: ObjectID?
     /// A script's sender label (`from`); set, the message is the user's even with a caller.
     public var label: String?
     public var when: When
@@ -24,23 +22,18 @@ public struct AgentMessage: Codable, Equatable, Sendable {
     public var mentions: [Mention]
     public var queuedAt: Date
 
-    public init(id: String = IDs.make("msg"), text: String, from: ObjectID?, html: ObjectID? = nil, label: String?, when: When, mentions: [Mention], queuedAt: Date = Date()) {
+    public init(id: String = IDs.make("msg"), text: String, from: ObjectID?, label: String?, when: When, mentions: [Mention], queuedAt: Date = Date()) {
         self.id = id
         self.text = text
         self.from = label == nil ? from : nil
-        self.html = label == nil ? html : nil
         self.label = label
         self.when = when
         self.mentions = mentions
         self.queuedAt = queuedAt
     }
 
-    /// `agent` when a terminal sent it, `html` when a page sent it (`canvasKit.send`), `user` for
-    /// a script (no tile, or a `from` label).
-    public var attribution: String {
-        if html != nil { return "html" }
-        return from == nil ? "user" : "agent"
-    }
+    /// `agent` when a terminal sent it, `user` for a script (no tile, or a `from` label).
+    public var attribution: String { from == nil ? "user" : "agent" }
 
     /// What a script with no label is called.
     public static let scriptName = "script"
@@ -94,7 +87,6 @@ extension Board {
         guard tile.type == .terminal else { throw BoardError.invalidParams("\(terminal) is not a terminal tile") }
         messages[terminal, default: []].append(message)
         onChange?()
-        onMessageQueued?(terminal)
     }
 
     /// The mentions `targets` name as a message carries them: one each, in order (a target given
@@ -174,17 +166,7 @@ extension Board {
     func delivered(_ message: AgentMessage, to terminal: ObjectID, boards: [Board]) async -> JSONValue {
         var from: [String: JSONValue] = [:]
         var senderName: String?
-        if let page = message.html {
-            from["html"] = .string(page)
-            if let board = boards.first(where: { $0.objects[page] != nil }), let tile = board.objects[page] {
-                senderName = HtmlChannel.title(of: tile)
-                from["name"] = .string(senderName!)
-                from["board"] = .string(board.id)
-            } else {
-                // Closed since it sent: its id still names it.
-                from["name"] = .string(page)
-            }
-        } else if let sender = message.from {
+        if let sender = message.from {
             from["tile"] = .string(sender)
             if let board = boards.first(where: { $0.objects[sender] != nil }), let tile = board.objects[sender] {
                 senderName = PromptTarget.label(tile, shownTitle: nil)

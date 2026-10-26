@@ -26,8 +26,6 @@ struct HtmlMessageTests {
         #expect(try message(#"{"type":"state.set","key":"plan","value":null}"#) == .setState(key: "plan", value: .null))
         #expect(try message(#"{"type":"state.get"}"#) == .getState(key: nil))
         #expect(try message(#"{"type":"view.rendered","scrollY":120}"#) == .rendered(scrollY: 120))
-        #expect(try message(#"{"type":"send","payload":{"choice":"b"}}"#) == .send(payload: .object(["choice": .string("b")])))
-        #expect(try message(#"{"type":"send","payload":null}"#) == .send(payload: .null))
     }
 
     @Test func rejectsUnknownTypesAndFields() {
@@ -36,18 +34,6 @@ struct HtmlMessageTests {
         #expect(rejection(#"{"path":"x"}"#) == .malformed("missing type"))
         #expect(rejection(#"["code.excerpt"]"#) == .malformed("message must be an object"))
         #expect(rejection("not json") == .malformed("not JSON"))
-        #expect(rejection(#"{"type":"send"}"#) == .invalidField("payload", "required"))
-        #expect(rejection(#"{"type":"send","payload":1,"to":"obj_x"}"#) == .unexpectedField("to"))
-    }
-
-    @Test func rejectsOversizePayloads() {
-        let payload = JSONValue.string(String(repeating: "z", count: HtmlMessage.maxMessageBytes))
-        do {
-            _ = try HtmlMessage.parse(.object(["type": .string("send"), "payload": payload]))
-            Issue.record("a payload over the byte cap must be rejected")
-        } catch {
-            #expect((error as? HtmlError) == .tooLarge(HtmlMessage.maxMessageBytes + 2, limit: HtmlMessage.maxMessageBytes))
-        }
     }
 
     @Test func rejectsMalformedFields() {
@@ -446,85 +432,5 @@ struct HtmlChannelTests {
                 _ = try await HtmlChannel.handle(.setState(key: "k\(index)", value: chunk), tile: html.id, board: board)
             }
         }
-    }
-
-    @Test func aPagesSendReachesTheAgentTerminalThatCreatedIt() async throws {
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>"), "title": .string("Quiz")]), caller: terminal)
-
-        let reply = try await HtmlChannel.handle(.send(payload: .object(["answer": .string("b"), "question": .number(2)])), tile: page.id, board: board)
-        #expect(reply["terminal"] == .string(terminal))
-        let queued = try #require(board.messages[terminal])
-        #expect(queued.count == 1)
-        let message = try #require(queued.first)
-        #expect(reply["message"] == .string(message.id))
-        #expect(message.from == nil && message.label == nil && message.html == page.id)
-        #expect(message.attribution == "html")
-        #expect(message.when == .now && message.mentions.isEmpty)
-        #expect(message.text == "HTML tile \(page.id) \"Quiz\" sent:\n{\"answer\":\"b\",\"question\":2}")
-    }
-
-    @Test func aSendIsRefusedWhenTheCreatingTerminalIsGone() async throws {
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]), caller: terminal)
-        try board.delete(terminal)
-
-        await #expect(throws: HtmlError.unavailable("the terminal that created this page (\(terminal)) is gone")) {
-            try await HtmlChannel.handle(.send(payload: .string("x")), tile: page.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
-    }
-
-    @Test func aSendIsRefusedWhenTheCreatingTileIsNotATerminal() async throws {
-        let note = board.create(type: .note, props: .object(["markdown": .string("Plan")])).id
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]), caller: note)
-
-        await #expect(throws: HtmlError.unavailable("the tile that created this page (\(note)) is not a terminal")) {
-            try await HtmlChannel.handle(.send(payload: .string("x")), tile: page.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
-    }
-
-    @Test func aSendIsRefusedWhenTheCreatingTerminalTakesNoMessages() async throws {
-        let shell = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]), caller: shell)
-
-        await #expect(throws: HtmlError.unavailable("the agent in terminal \(shell) that created this page takes no messages: it needs an integration that takes them (agent.report protocol ≥ 1)")) {
-            try await HtmlChannel.handle(.send(payload: .string("x")), tile: page.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
-    }
-
-    @Test func aSendIsRefusedWhenTheCreatingAgentExited() async throws {
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]), caller: terminal)
-        board.terminalProgram(terminal, is: nil)
-        #expect(board.agentExited(terminal))
-
-        await #expect(throws: HtmlError.unavailable("the agent in terminal \(terminal) that created this page exited: nothing takes its messages until an agent reports there again")) {
-            try await HtmlChannel.handle(.send(payload: .string("x")), tile: page.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
-    }
-
-    @Test func aSendFromAUsersTileIsRefused() async throws {
-        await #expect(throws: HtmlError.unavailable("this tile was made by the user, so canvasKit.send has no agent terminal to send to")) {
-            try await HtmlChannel.handle(.send(payload: .string("x")), tile: html.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
-    }
-
-    @Test func aSendIsRefusedWhenThePayloadIsOverTheMessageCap() async throws {
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
-        try board.reportLifecycle(tile: terminal, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 1)
-        let page = board.create(type: .html, props: .object(["html": .string("<p>quiz</p>")]), caller: terminal)
-
-        await #expect(throws: HtmlError.tooLarge(HtmlMessage.maxMessageBytes + 2, limit: HtmlMessage.maxMessageBytes)) {
-            try await HtmlChannel.handle(.send(payload: .string(String(repeating: "x", count: HtmlMessage.maxMessageBytes))), tile: page.id, board: board)
-        }
-        #expect(board.messages.isEmpty)
     }
 }

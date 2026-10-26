@@ -461,12 +461,11 @@ class Agent(TypedDict):
     model: NotRequired[str]
     thinking: NotRequired[str]
 
-AgentMessage = TypedDict("AgentMessage", {"id": Required["MessageId"], "text": Required[str], "from": Required["MessageSender"], "attribution": Required[Literal["agent", "user", "html"]], "when": Required[Literal["now", "next-turn"]], "queuedAt": Required[str], "mentions": NotRequired[list["Mention"]], "context": NotRequired[str]})
+AgentMessage = TypedDict("AgentMessage", {"id": Required["MessageId"], "text": Required[str], "from": Required["MessageSender"], "attribution": Required[Literal["agent", "user"]], "when": Required[Literal["now", "next-turn"]], "queuedAt": Required[str], "mentions": NotRequired[list["Mention"]], "context": NotRequired[str]})
 
 class MessageSender(TypedDict):
     """Who sent a message, resolved when it is taken (agent.inbox): a renamed sender shows its new name"""
     tile: NotRequired["Id"]
-    html: NotRequired["Id"]
     name: Required[str]
     address: NotRequired[str]
     board: NotRequired["Id"]

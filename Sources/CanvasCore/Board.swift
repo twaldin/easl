@@ -180,9 +180,6 @@ public final class Board {
     /// Messages whose receiver's agent session ended before its integration took them: the
     /// registry's router sends them back or logs them (`ApiRouter.bounce`).
     public var onMessagesBounced: ((MessageBounce) -> Void)?
-    /// A message reached `terminal`'s queue: the registry's router hands it to a waiting
-    /// `agent.inbox` long poll (`ApiRouter.serveInbox`).
-    public var onMessageQueued: ((ObjectID) -> Void)?
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -234,7 +231,6 @@ public final class Board {
         onEvent = nil
         onTerminalsEnded = nil
         onMessagesBounced = nil
-        onMessageQueued = nil
         viewport = { nil }
         arrowPath = nil
         settleArrows = nil

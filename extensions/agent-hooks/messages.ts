@@ -38,9 +38,9 @@ export function writeMessageId(details: unknown): string {
   return typeof given === "string" && MESSAGE_ID.test(given) ? given : `msg_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-/** Who sent `message`, for the wake bound: its terminal, its HTML tile, else the script's label. */
+/** Who sent `message`, for the wake bound: its terminal, else the script's label. */
 export function senderKey(message: AgentMessage): string {
-  return message.from.html ? `html:${message.from.html}` : message.from.tile ?? `script:${message.from.name}`;
+  return message.from.tile ?? `script:${message.from.name}`;
 }
 
 /**
@@ -79,13 +79,12 @@ export function card(messages: readonly AgentMessage[]): Card {
     content: messages.map(envelope).join("\n\n"),
     display: true,
     details: { id: ids[0], from: [...new Set(messages.map(sender))].join(", "), message: messages.map((message) => message.text.trim()).join("\n\n"), ids },
-    // A script's message is on the user's behalf, and a page's is the user acting in it: with one
-    // among them, the delivery is the user's.
-    attribution: messages.some((message) => message.attribution !== "agent") ? "user" : "agent",
+    // A script's message is on the user's behalf: with one among them, the delivery is the user's.
+    attribution: messages.some((message) => message.attribution === "user") ? "user" : "agent",
   };
 }
 
-/** Who sent a message: its terminal's address, else the page's title or the script's label or the closed terminal's id. */
+/** Who sent a message: its terminal's address, else the script's label or the closed terminal's id. */
 export function sender(message: AgentMessage): string {
   return message.from.address ?? message.from.name;
 }
@@ -98,20 +97,8 @@ export function sender(message: AgentMessage): string {
  */
 function envelope(message: AgentMessage): string {
   const from = message.from;
-  const who = from.html
-    ? `\`${from.name}\`, an HTML tile (${from.html})`
-    : !from.tile
-      ? `\`${from.name}\`, a script`
-      : !from.address
-        ? `terminal ${from.tile}, closed since it sent this`
-        : from.address === from.tile
-          ? `terminal ${from.tile}`
-          : `\`${from.address}\`, terminal ${from.tile}`;
-  const reply = from.html
-    ? `The page is the user's answer in it: update it with \`easl object.update --id ${from.html}\` (or a board call) when a response is expected.`
-    : from.tile && from.address
-      ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).`
-      : "It has no reply address.";
+  const who = !from.tile ? `\`${from.name}\`, a script` : !from.address ? `terminal ${from.tile}, closed since it sent this` : from.address === from.tile ? `terminal ${from.tile}` : `\`${from.address}\`, terminal ${from.tile}`;
+  const reply = from.tile && from.address ? `If a response is expected, reply via \`write\` (\`path: "${replyPath(from.address)}"\`, \`content: "…"\`).` : "It has no reply address.";
   // omp's escapeHarnessTags: what others wrote reaches the model as written, but for `<` of an
   // `irc` or `system-*` tag.
   const said = `Message from ${who}:\n\n${[message.text.trim(), message.context].filter(Boolean).join("\n\n")}`;

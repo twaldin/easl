@@ -1,8 +1,7 @@
 import Foundation
 
 /// Carries out validated HTML tile messages against the board. The only native capabilities a
-/// page has: read board files as excerpts, open code tiles, keep its own `props.state`, and hand
-/// the agent terminal that created it a JSON message (`canvasKit.send`).
+/// page has: read board files as excerpts, open code tiles, and keep its own `props.state`.
 @MainActor
 public enum HtmlChannel {
     public static let maxStateBytes = 256 * 1024
@@ -15,12 +14,7 @@ public enum HtmlChannel {
     /// worktree, else git objects at the ref's commit.
     public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board, files: HostFiles? = nil) async throws -> JSONValue {
         let object = board.objects[tile]
-        if board.isRemote {
-            // A page's messages are queued on this mirror, whose queue the host's integrations
-            // never drain: nothing here can hand one to a terminal on the board's host.
-            if case .send = message { throw HtmlError.unavailable("canvasKit.send is unsupported on remote boards") }
-            if files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
-        }
+        if board.isRemote, files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
         switch message {
         case .excerpt(let path, let lines, let symbol):
             if let files {
@@ -83,45 +77,7 @@ public enum HtmlChannel {
 
         case .rendered:
             return .object([:])
-
-        case .send(let payload):
-            return try send(payload, tile: tile, board: board)
         }
-    }
-
-    /// `canvasKit.send`: the page's JSON payload goes to the agent terminal that created the
-    /// tile, out of band (`Board.queueMessage`), so nothing is typed into its terminal. The
-    /// message names the tile; the reply names the queued message.
-    private static func send(_ payload: JSONValue, tile: ObjectID, board: Board) throws -> JSONValue {
-        try HtmlMessage.checkPayload(payload)
-        let object = try board.object(tile)
-        guard case .agent(let creator) = object.createdBy else {
-            throw HtmlError.unavailable("this tile was made by the user, so canvasKit.send has no agent terminal to send to")
-        }
-        guard let creatorTile = board.objects[creator] else {
-            throw HtmlError.unavailable("the terminal that created this page (\(creator)) is gone")
-        }
-        guard creatorTile.type == .terminal else {
-            throw HtmlError.unavailable("the tile that created this page (\(creator)) is not a terminal")
-        }
-        guard !board.agentExited(creator) else {
-            throw HtmlError.unavailable("the agent in terminal \(creator) that created this page exited: nothing takes its messages until an agent reports there again")
-        }
-        guard PromptTarget.takesMessages(creatorTile) else {
-            throw HtmlError.unavailable("the agent in terminal \(creator) that created this page takes no messages: it needs an integration that takes them (agent.report protocol ≥ 1)")
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(payload) else { throw HtmlError.malformed("the payload is not JSON") }
-        let text = "HTML tile \(tile) \"\(Self.title(of: object))\" sent:\n\(String(decoding: data, as: UTF8.self))"
-        let message = AgentMessage(text: text, from: nil, html: tile, label: nil, when: .now, mentions: [])
-        try board.queueMessage(message, to: creator)
-        return .object(["terminal": .string(creator), "message": .string(message.id)])
-    }
-
-    /// What a message from an HTML tile calls it: its title, else `HTML`, as its title bar shows.
-    static func title(of tile: CanvasObject) -> String {
-        tile.props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "HTML"
     }
 
     private static func localReading(object: CanvasObject?, board: Board) async -> LinkReading {

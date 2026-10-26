@@ -21,7 +21,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
   - **KaTeX**: `$…$` (inline) and `$$…$$` (display) typeset as math, as do `\(…\)` and `\[…\]`; KaTeX loads only when the page has a formula. `$5 and $10` stays prose (Pandoc's rule), `\$` is a dollar, and code/pre is untouched. Keep the text color inherited (`text-foreground`) so math follows dark mode.
   - **easl components** (below).
-- Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`, `.send(payload)`.
+- Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
 - Text fields work: the user presses Return on the selected tile or clicks an `<input>`, `<textarea>`, `<select>` or contenteditable element, then types; Esc (or a click on the board) gives the keyboard back. A page that focuses a field itself does not take the keyboard. Typed text lives only in the page while it is open, so persist it as it changes and restore it on load: `field.addEventListener('input', () => canvasKit.setState('answer', field.value))`, then `canvasKit.getState('answer')` (or `canvasKit.onState`) fills `field.value`. Read the answer with `object.get` `props.state.answer` before you act on it.
 
 ## Components
@@ -35,22 +35,6 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 
 Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references.
 Never paste code you could anchor: pasted code is a copy that falls behind silently, an anchored excerpt shows the file as it is now.
-
-## Sending an answer back
-
-A page can hand a JSON value to the agent terminal that created it:
-
-```js
-button.addEventListener('click', async () => {
-  const reply = await canvasKit.send({ question: 2, answer: 'b' });
-  // reply: {terminal, message}; the promise rejects with why it was refused
-});
-```
-
-- Any JSON value, at most 64 KiB. Delivery is out of band: nothing is typed into the terminal, and the agent gets it as a message naming the tile (its id and title), so it answers by updating the tile with `object.update`.
-- Use it for an answer the user gives on the page: a quiz choice, a form, a `<canvas-decisions>` pick the user confirms, or a "continue" the agent waits for.
-- It is refused (the promise rejects) when the user created the tile, the creating terminal is gone, its agent exited, or it takes no messages (only integrations reporting `agent.report` protocol ≥ 1, such as omp's), while the page renders offscreen, and on a remote board.
-- When a decision must block the agent or reach the user's needs-you list, use `easl ask` (SKILL.md, "Asking the user") instead: a page's send is only delivered to the terminal that built it.
 
 ## Style
 
