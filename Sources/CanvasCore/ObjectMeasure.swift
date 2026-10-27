@@ -203,15 +203,18 @@ public enum ObjectMeasure {
         let document = NoteMarkdown.parse(props["markdown"]?.string ?? "")
         let excerpts = await NoteSource.excerpts(for: NoteMarkdown.anchoredFences(in: document), root: root)
         let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
-        return note(document, markdown: props["markdown"]?.string ?? "", width: width, excerpts: excerpts, images: images)
+        let textWidth = (width ?? defaultNoteWidth) - 2 * noteInset.width
+        let diagrams = await NoteMermaid.resolve(document, width: textWidth, appearance: NoteMermaid.appearance())
+        return note(document, markdown: props["markdown"]?.string ?? "", width: width, excerpts: excerpts, images: images, diagrams: diagrams)
     }
 
     /// `note(_:width:root:)` once its fences' `excerpts` (by fence key) and its `images` (by
     /// destination) are read.
-    static func note(_ document: Document, markdown: String, width: CGFloat?, excerpts: [String: NoteExcerpt], images: [String: NSImage]) -> (size: CGSize, tableShortfall: CGFloat) {
+    static func note(_ document: Document, markdown: String, width: CGFloat?, excerpts: [String: NoteExcerpt], images: [String: NSImage],
+                     diagrams: [Int: NoteMermaid.Outcome] = [:]) -> (size: CGSize, tableShortfall: CGFloat) {
         let width = width ?? defaultNoteWidth
         let textWidth = width - 2 * noteInset.width
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth, diagrams: diagrams)
         let text = renderer.render(document, placeholder: notePlaceholder)
         let height = noteTextHeight(text, width: textWidth)
         return (CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up)), renderer.tableShortfall)
