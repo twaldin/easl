@@ -720,13 +720,15 @@ private final class NoteDiagramViewProvider: NSTextAttachmentViewProvider {
     }
 
     override func loadView() {
-        MainActor.assumeIsolated {
-            guard let image = textAttachment?.image else { return }
-            let imageView = ImageView(frame: NSRect(origin: .zero, size: image.size))
+        guard let image = textAttachment?.image else { return }
+        let size = image.size
+        let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        view = MainActor.assumeIsolated {
+            let imageView = ImageView(frame: NSRect(origin: .zero, size: size))
             imageView.wantsLayer = true
-            imageView.layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            imageView.layer?.contents = pixels
             imageView.layer?.contentsGravity = .resizeAspect
-            view = imageView
+            return imageView
         }
     }
 }
