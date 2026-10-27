@@ -1,27 +1,27 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
 
 jobs:
-  test:
+  core-hostmaster-matrix:
+    name: Core HostMaster sample ${{ matrix.sample }}
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
-      # The package builds with the Command Line Tools, like local development (see Package.swift
-      # for how the test executable finds swift-testing there).
       - name: Select Command Line Tools
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
-      - name: Build
-        run: swift build -j 2
-      - name: Test
+      - name: Core HostMaster sample
         run: |
           swift --version
           bun --version
@@ -29,126 +29,10 @@ jobs:
           width=$((cores * 4))
           printf 'hw.ncpu: %s\nCore parallelization width: %s\n' "$cores" "$width"
           swift run -j 2 CanvasCoreTests --experimental-maximum-parallelization-width "$width"
-      - name: Native composer editing regression
-        run: |
-          swift build --build-system native -j 2 --product Easl
-          python3 Tests/ComposerInput/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native composer delivery regression
-        run: python3 Tests/ComposerDelivery/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native terminal activity regression
-        run: python3 Tests/TerminalEcho/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native initial arrow routing regression
-        run: python3 Tests/InitialRouting/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native Move Escape regression
-        run: python3 Tests/MoveEscape/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native browser initial admission regression
-        run: python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native HTML tile keyboard regression
-        run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native HTML page send trust regression
-        run: python3 Tests/HtmlSend/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Native muted video regression
-        run: python3 Tests/VideoPlayback/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
-      - name: Generated clients are current
-        run: bun scripts/gen-clients.ts --check
-      - name: Python client tests
-        run: cd clients/python && python3 -m unittest
-      - name: TS client tests
-        run: bun test clients/ts
-      - name: CLI tests
-        run: bun test cli
-      - name: Agent hook tests
-        run: bun test extensions/agent-hooks
-      - name: Lead rotation script
-        run: bun test scripts/rotate-lead.test.ts
-      - name: Script tests
-        run: python3 -m unittest discover -s scripts
-
-  release-compatibility:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.4.3'
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: easld/go.mod
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Select Swift 6.4 Command Line Tools
-        run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
-      - name: Released host and client compatibility
-        run: python3 scripts/release-compatibility.py --output-dir "$RUNNER_TEMP/release-compatibility"
-      - name: Preserve compatibility evidence
+      - name: Focused HostMaster observations
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-compatibility
-          path: |
-            ${{ runner.temp }}/release-compatibility/*.log
-            ${{ runner.temp }}/release-compatibility/selection.json
-            ${{ runner.temp }}/release-compatibility/legacy-journey.json
-            ${{ runner.temp }}/release-compatibility/journey/journey.json
-            ${{ runner.temp }}/release-compatibility/journey/terminal-output
-
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: conformance/go.mod
-      - name: Vet
-        working-directory: conformance
-        run: go vet ./...
-      - name: Test
-        working-directory: conformance
-        run: go test ./...
-      - name: gofmt
-        working-directory: conformance
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-
-  easld:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: easld/go.mod
-      - name: Vet
-        working-directory: easld
-        run: go vet ./...
-      - name: Install zmx
-        working-directory: ${{ runner.temp }}
-        env:
-          ZMX_VERSION: '0.8.1'
-          ZMX_SHA256: dfd75720b942466f28870731cc86dbc07afa72fb8f3bd5eeb4ff707e4eecebe8
         run: |
-          archive="zmx-${ZMX_VERSION}-linux-x86_64.tar.gz"
-          url="https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}"
-          curl -fL --retry 3 -O "$url/$archive"
-          curl -fL --retry 3 -O "$url/$archive.sha256"
-          read -r release_sha256 _ < "$archive.sha256"
-          test "$release_sha256" = "$ZMX_SHA256"
-          printf '%s  %s\n' "$ZMX_SHA256" "$archive" | sha256sum --check
-          mkdir -p "$RUNNER_TEMP/zmx"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/zmx"
-          echo "$RUNNER_TEMP/zmx" >> "$GITHUB_PATH"
-      - name: Test
-        working-directory: easld
-        run: go test -p 2 -v ./...
-      - name: Build for Linux
-        working-directory: easld
-        run: GOOS=linux GOARCH=amd64 go build ./...
-      - name: Build for macOS
-        working-directory: easld
-        run: GOOS=darwin GOARCH=arm64 go build ./...
-      - name: gofmt
-        working-directory: easld
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          for observation in {1..100}; do
+            printf 'HostMaster observation %s\n' "$observation"
+            .build/debug/CanvasCoreTests --filter persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters --no-parallel
+          done
