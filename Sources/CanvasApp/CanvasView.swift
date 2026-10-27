@@ -1224,8 +1224,6 @@ final class CanvasView: NSScrollView {
         takeKeyboard(object.id)
     }
 
-    /// A terminal takes the keyboard immediately, even before its surface attaches. Other tiles
-    /// leave it with the canvas until Return enters them, except an open question.
     func takeKeyboard(_ id: ObjectID) {
         let type = board.objects[id]?.type
         guard type == .terminal || type == .question else {
