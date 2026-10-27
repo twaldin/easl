@@ -27,12 +27,12 @@ python3 "$R/Tests/BrowserScrolling/resize.py" --app "$G/frozen.app" --drift
 
 Retain each command's stdout/stderr under a distinct evidence name. `resize.py` has no `--out` and removes its temporary home. The main runner retains initial, reached-edge, final, and failed clipped-window captures, exact-PID/window receipts, `pixels.json`, and `app.log` under `--out`. Inspect the actual PNGs, including the final END marker's coloured border clear of native chrome. It checks unchanged tile frame and WebKit viewport.
 
-For manual replay in the health-checked viewer, measure `X`,`Y` inside the page body in content points. Confirm the selected window through a fresh `input state`. The scroll command targets the selected board; unlike click/key, it does not select an arbitrary window from `--window`.
+For manual replay in the health-checked viewer, measure `X`,`Y` inside the page body in content points. Match the intended board and exact own window in fresh `input state` and window-discovery receipts, then pass `--window "$WINDOW"` on every scroll. A stale window ID drops the input. Without that flag, replay uses the front board window; `selected:true` alone is ambiguous across window groups.
 
 ```sh
-scripts/dev.sh input scroll "$X" "$Y" 0 -12 --lines
-scripts/dev.sh input scroll "$X" "$Y" 0 -240
-scripts/dev.sh input scroll "$X" "$Y" 0 -120 --repeat 4 --interval 8 --gesture
+scripts/dev.sh input scroll "$X" "$Y" 0 -12 --lines --window "$WINDOW"
+scripts/dev.sh input scroll "$X" "$Y" 0 -240 --window "$WINDOW"
+scripts/dev.sh input scroll "$X" "$Y" 0 -120 --repeat 4 --interval 8 --gesture --window "$WINDOW"
 ```
 
 These move toward the bottom. Use positive Y for top, negative X for right, and positive X for left. Repeat with bounded attempts until native START/END pixels and independent canvas/page readbacks prove each edge. Keep original frame/viewport readbacks for comparison. The runner uses at most 150 attempts and fails after three unchanged comparisons.

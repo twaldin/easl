@@ -37,7 +37,7 @@ After adapting the copied controllers to this run's development home, board root
 ```sh
 python3 "$G/proof-seed.py" "$G"
 python3 "$G/proof-control.py" "$G" wait inert
-scripts/dev.sh input shortcut 9 --mods cmd
+scripts/dev.sh input shortcut 9 --mods cmd --window "$WINDOW"
 python3 "$G/guest-capture.py" "$G" before-submit
 python3 "$G/guest-input.py" "$G" before-submit button Submit
 python3 "$G/proof-control.py" "$G" wait submit
