@@ -16,6 +16,7 @@ public final class NoteRenderer {
     private let images: [String: NSImage]
     private let diagrams: [Int: NoteMermaid.Outcome]
     private let diagramAttachments: [NSTextAttachment]
+    private let diagramAttachmentViews: Bool
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
     private lazy var sourceIndex: NoteMath.SourceIndex? = source.map(NoteMath.SourceIndex.init)
@@ -33,12 +34,14 @@ public final class NoteRenderer {
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
-                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:], diagramAttachments: [NSTextAttachment] = []) {
+                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:], diagramAttachments: [NSTextAttachment] = [],
+                diagramAttachmentViews: Bool = false) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
         self.diagrams = diagrams
         self.diagramAttachments = diagramAttachments
+        self.diagramAttachmentViews = diagramAttachmentViews
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -549,7 +552,7 @@ public final class NoteRenderer {
                     } else {
                         attachment = NoteImageAttachment()
                         attachment.image = image
-                        attachment.allowsTextAttachmentView = false
+                        attachment.allowsTextAttachmentView = diagramAttachmentViews
                     }
                     let paragraph = style(context, spacing: 8, before: 2)
                     paragraph.alignment = .center
@@ -694,11 +697,34 @@ public final class NoteRenderer {
 /// drawn by the text layout itself (no attachment view), so on-screen notes, renders, and
 /// `ObjectMeasure` all lay it out the same way.
 final class NoteImageAttachment: NSTextAttachment {
+    override func viewProvider(for parentView: NSView?, location: any NSTextLocation,
+                               textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
+        guard allowsTextAttachmentView else { return nil }
+        return NoteDiagramViewProvider(textAttachment: self, parentView: parentView,
+                                       textLayoutManager: textContainer?.textLayoutManager, location: location)
+    }
+
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
                                    proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
         guard let size = image?.size, size.width > 0, size.height > 0 else { return .zero }
         let width = min(size.width, max(1, proposedLineFragment.width - position.x - 4))
         return CGRect(x: 0, y: 0, width: width, height: (size.height * width / size.width).rounded())
+    }
+}
+
+@MainActor
+private final class NoteDiagramViewProvider: NSTextAttachmentViewProvider {
+    private final class ImageView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    override func loadView() {
+        guard let image = textAttachment?.image else { return }
+        let imageView = ImageView(frame: NSRect(origin: .zero, size: image.size))
+        imageView.wantsLayer = true
+        imageView.layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        imageView.layer?.contentsGravity = .resizeAspect
+        view = imageView
     }
 }
 

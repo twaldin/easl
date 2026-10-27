@@ -256,62 +256,12 @@ final class NoteTile: NSView, TileContent {
             }
         }
         let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
-                                    diagrams: diagrams, diagramAttachments: attachments)
+                                    diagrams: diagrams, diagramAttachments: attachments, diagramAttachmentViews: true)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
-        guard !attachments.isEmpty, diagrams.values.contains(where: {
-            if case .image = $0 { return true }
-            return false
-        }), let storage = display.textStorage else {
-            display.textStorage?.setAttributedString(text)
-            return
-        }
-        updateDisplay(storage, with: text)
+        display.textStorage?.setAttributedString(text)
     }
 
-    private func updateDisplay(_ storage: NSTextStorage, with text: NSAttributedString) {
-        func paragraphs(_ value: NSString) -> (lines: [String], ranges: [NSRange]) {
-            var lines: [String] = []
-            var ranges: [NSRange] = []
-            var location = 0
-            while location < value.length {
-                let range = value.paragraphRange(for: NSRange(location: location, length: 0))
-                lines.append(value.substring(with: range))
-                ranges.append(range)
-                location = NSMaxRange(range)
-            }
-            return (lines, ranges)
-        }
-        let old = paragraphs(storage.string as NSString)
-        let new = paragraphs(text.string as NSString)
-        let changes = NoteDiff.lines(old.lines, new.lines)
-        storage.beginEditing()
-        var cursor = storage.length
-        for change in changes.reversed() {
-            switch change {
-            case .same(let index, _, _):
-                cursor = old.ranges[index].location
-            case .removed(let index, _):
-                storage.deleteCharacters(in: old.ranges[index])
-                cursor = old.ranges[index].location
-            case .added(let index, _):
-                storage.insert(text.attributedSubstring(from: new.ranges[index]), at: cursor)
-            }
-        }
-        text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
-            var location = range.location
-            while location < NSMaxRange(range) {
-                var previousRange = NSRange()
-                let previous = storage.attributes(at: location, effectiveRange: &previousRange)
-                let end = min(NSMaxRange(range), NSMaxRange(previousRange))
-                if !(previous as NSDictionary).isEqual(to: attributes) {
-                    storage.setAttributes(attributes, range: NSRange(location: location, length: end - location))
-                }
-                location = end
-            }
-        }
-        storage.endEditing()
-    }
 
     private func renderDisplay(diagrams: [Int: NoteMermaid.Outcome]? = nil, keepingDisplay: Bool = false) {
         guard live || isEditing else { return }
