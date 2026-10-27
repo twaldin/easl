@@ -4,11 +4,11 @@ Each version's section is its GitHub release's notes.
 
 ## 0.3.3
 
-easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for agent-made HTML tiles on local boards. Oversized browser tiles now scroll natively.
+easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for HTML tiles made by omp agents on local boards. Oversized browser tiles now scroll natively.
 
 Note diagrams use the same Mermaid.js as HTML tiles, in an isolated WebKit process. A slow diagram falls back to its source.
 
-A click in an agent-made HTML tile on a local board wakes that agent through `canvasKit.send`. The agent reads the page data from its inbox, labelled untrusted.
+A click or key press in an HTML tile made by an omp agent with the easl extension wakes that agent through `canvasKit.send` on a local board. The agent reads the page data from its inbox, labelled untrusted.
 
 Thanks to @afowic for browser scrolling and the original `canvasKit.send` and note-diagram work.
 
@@ -18,7 +18,7 @@ None of these features needs easld 0.3.3 on a remote board. Mermaid rendering an
 
 A 0.3.2 app shows a Mermaid fence in a note as code and keeps its source. In that app, `canvasKit.send` is undefined, so HTML pages must check for it before calling it.
 
-A 0.3.3 app against easld 0.3.2 renders Mermaid. Its `canvasKit.send` refuses on remote boards, by design in any version. The release-candidate checks exercised both mixed-version directions through edits, saves, and reopening; all six object types kept their props byte for byte.
+A 0.3.3 app against easld 0.3.2 renders Mermaid. Its `canvasKit.send` refuses on remote boards, by design in any version. The release-candidate checks exercised both mixed-version directions through edits, saves, and reopening; all six objects kept their props byte for byte.
 
 ### Board format
 
@@ -26,7 +26,7 @@ The board format is unchanged, still format 3.
 
 ### Known limits
 
-- `canvasKit.send` works only on local boards. Sends without a click are kept but do not wake the agent.
+- `canvasKit.send` works only on local boards and requires an omp agent with the easl extension. Other integrations refuse sends. Sends without a click or non-repeating key press are kept but do not wake the agent.
 - Note diagrams paint inside WebKit's sandboxed page process rather than its GPU process. That avoided a hang and lowers one layer of WebKit's defence-in-depth.
 - Note diagrams have not been run on macOS 14 or 15. If WebKit's private setting is missing there, the note shows the diagram's source.
 - Physical trackpad momentum was not tested.
