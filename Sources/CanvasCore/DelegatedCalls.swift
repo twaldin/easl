@@ -123,7 +123,7 @@ final class DelegatedCalls {
                 return .success(ApiRouter.viewResult(state, board: board.id))
             case "agent.prompt": return .success(try await prompt(p))
             case "agent.read": return .success(try read(p))
-            case "text.measure": return .success(try measure(p))
+            case "text.measure": return .success(try await measure(p))
             case "view.render": return .success(try await render(p))
             case "object.measure": return .success(try await measureObject(p))
             case "object.reload": return .success(try await reload(p, diagram: diagram))
@@ -359,12 +359,14 @@ final class DelegatedCalls {
             }
         }
 
-        func size() -> JSONValue {
+        func size() async -> JSONValue {
             let size: CGSize
             switch self {
             case .note(let document, let source, let width, _):
                 // No excerpts and no images: `measure` let through only notes without them.
-                let note = ObjectMeasure.note(document, markdown: source, width: width, excerpts: [:], images: [:])
+                let textWidth = (width ?? ObjectMeasure.defaultNoteWidth) - 2 * ObjectMeasure.noteInset.width
+                let diagrams = await NoteMermaid.resolve(document, width: textWidth, appearance: NoteMermaid.appearance())
+                let note = ObjectMeasure.note(document, markdown: source, width: width, excerpts: [:], images: [:], diagrams: diagrams)
                 return .object(["w": .number(note.size.width), "h": .number(note.size.height), "tableShortfall": .number(note.tableShortfall)])
             case .text(let text, let textSize, let width): size = ObjectMeasure.shapeTextBounds(text, textSize: textSize, width: width)
             case .label(let text, let width): size = ObjectMeasure.labelBounds(text, width: width)
@@ -379,12 +381,14 @@ final class DelegatedCalls {
     /// waits (docs/design/next.md "Framing"). A note's anchored fences and images are read under
     /// easld's `root`, on easld's machine, so a batch with one fails `unavailable` whole and easld
     /// measures it from its glyph table, reading them there. Nothing here reads a file.
-    private func measure(_ p: JSONValue) throws -> JSONValue {
+    private func measure(_ p: JSONValue) async throws -> JSONValue {
         guard let list = p["items"]?.array else { throw ApiRouter.Failure("invalid_params", "items must be a list of {kind, text, width?, textSize?, root?}") }
         let items = try list.enumerated().map { try TextItem($1, at: $0) }
         for case .note(let document, _, _, let root) in items where !NoteMarkdown.anchoredFences(in: document).isEmpty || !NoteImages.sources(in: document).isEmpty {
             throw ApiRouter.Failure("unavailable", "a note's fences and images are read on the board's host\(root.map { " (under \($0))" } ?? ""), which this Mac doesn't have")
         }
-        return .object(["sizes": .array(items.map { $0.size() })])
+        var sizes: [JSONValue] = []
+        for item in items { sizes.append(await item.size()) }
+        return .object(["sizes": .array(sizes)])
     }
 }

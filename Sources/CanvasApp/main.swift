@@ -127,6 +127,7 @@ if ProcessInfo.processInfo.environment["EASL_TERMINAL_DEBUG"] == "1" {
 }
 
 let app = CanvasApplication.shared
+NoteMermaid.backend = NoteMermaidWeb()
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

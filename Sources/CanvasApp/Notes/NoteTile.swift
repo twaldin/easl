@@ -47,6 +47,16 @@ final class NoteTile: NSView, TileContent {
     private var hostBoardClosed = false
     private var closureGeneration = 0
 
+    private struct DiagramRequest: Equatable {
+        let source: String
+        let width: CGFloat
+        let appearance: NoteMermaid.Appearance
+    }
+    private var diagramRequest: DiagramRequest?
+    private var diagramCancel: (@MainActor () -> Void)?
+    private var pendingDiagramResize: DispatchWorkItem?
+    private var diagramGeneration = 0
+
     private var session: NoteEditSession?
     var isEditing: Bool { session != nil }
     private var clickMonitor: Any?
@@ -120,7 +130,10 @@ final class NoteTile: NSView, TileContent {
         }
         display.isSelectable = closed
         editor.isEditable = !closed
-        if !closed, live { resolve() }
+        if !closed, live {
+            renderDisplay()
+            resolve()
+        }
     }
 
     private func configure(_ scroll: NSScrollView, document: NSTextView) {
@@ -141,8 +154,13 @@ final class NoteTile: NSView, TileContent {
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
-        // A table's cells wrap to the note's width.
-        if let renderedWidth, renderedWidth != textWidth { renderDisplay() }
+        if let renderedWidth, renderedWidth != textWidth || diagramRequest.map({ $0.width != diagramWidth }) == true {
+            if NoteMermaid.hasFences(in: document) {
+                scheduleDiagramResize()
+            } else {
+                renderDisplay()
+            }
+        }
         placeBanner()
     }
 
@@ -201,17 +219,91 @@ final class NoteTile: NSView, TileContent {
 
     /// The width of the text container the note lays out in (`ObjectMeasure.noteInset`).
     private var textWidth: CGFloat { bounds.width - 2 * ObjectMeasure.noteInset.width }
-    /// The width the display's text was rendered for, while that text depends on it (a table).
+    /// The width the display's text was rendered for, while that text depends on it.
     private var renderedWidth: CGFloat?
 
-    /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
-    /// and excerpts but no text layout (about 1 MB per note on a large board).
-    private func renderDisplay() {
-        guard live || isEditing else { return }
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth)
+    private var diagramWidth: CGFloat { textWidth.rounded(.down) }
+
+    private func scheduleDiagramResize() {
+        pendingDiagramResize?.cancel()
+        pendingDiagramResize = nil
+        if renderedWidth?.rounded(.down) == diagramWidth {
+            if diagramRequest?.width != diagramWidth || diagramCancel == nil { renderDisplay(keepingDisplay: true) }
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.renderDisplay(keepingDisplay: true) }
+        }
+        pendingDiagramResize = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.125, execute: work)
+    }
+
+    private func cancelDiagrams() {
+        diagramGeneration += 1
+        pendingDiagramResize?.cancel()
+        pendingDiagramResize = nil
+        let cancel = diagramCancel
+        diagramCancel = nil
+        diagramRequest = nil
+        cancel?()
+    }
+
+    private func applyDisplay(_ diagrams: [Int: NoteMermaid.Outcome]) {
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth, diagrams: diagrams)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
+    }
+
+    private func renderDisplay(diagrams: [Int: NoteMermaid.Outcome]? = nil, keepingDisplay: Bool = false) {
+        guard live || isEditing else { return }
+        pendingDiagramResize?.cancel()
+        pendingDiagramResize = nil
+        guard NoteMermaid.hasFences(in: document) else {
+            cancelDiagrams()
+            applyDisplay([:])
+            return
+        }
+        if let diagrams {
+            applyDisplay(diagrams)
+            return
+        }
+        let appearance = NoteMermaid.appearance(effectiveAppearance)
+        let request = DiagramRequest(source: markdown, width: diagramWidth, appearance: appearance)
+        guard live, window != nil, !hostBoardClosed, !board.isClosed else {
+            applyDisplay(NoteMermaid.cached(document, width: request.width, appearance: appearance))
+            return
+        }
+        if diagramRequest == request, diagramCancel != nil {
+            if !keepingDisplay { applyDisplay(NoteMermaid.cached(document, width: request.width, appearance: appearance)) }
+            return
+        }
+        let hadRequest = diagramRequest != nil
+        let cancelPrevious = diagramCancel
+        diagramCancel = nil
+        diagramGeneration += 1
+        let generation = diagramGeneration
+        diagramRequest = request
+        var completed = false
+        let cancel = NoteMermaid.request(document, width: request.width, appearance: request.appearance) { [weak self] outcomes in
+            completed = true
+            guard let self, self.diagramGeneration == generation, self.diagramRequest == request else { return }
+            self.diagramCancel = nil
+            guard self.live, self.window != nil, !self.hostBoardClosed, !self.board.isClosed,
+                  self.markdown == request.source, self.diagramWidth == request.width,
+                  NoteMermaid.appearance(self.effectiveAppearance) == request.appearance else { return }
+            self.renderDisplay(diagrams: outcomes)
+        }
+        if !completed { diagramCancel = cancel }
+        cancelPrevious?()
+        if !completed, !keepingDisplay || !hadRequest {
+            applyDisplay(NoteMermaid.cached(document, width: request.width, appearance: appearance))
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        renderDisplay()
     }
 
     // MARK: Live fences
@@ -405,6 +497,7 @@ final class NoteTile: NSView, TileContent {
 
     /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
     private func suspendWork() {
+        cancelDiagrams()
         resolveGeneration += 1
         pendingResolve?.cancel()
         pendingResolve = nil
@@ -424,6 +517,7 @@ final class NoteTile: NSView, TileContent {
             suspendWork()
             if session != nil { finishEditing(returningFocus: false) }
         } else {
+            renderDisplay()
             resolve()
         }
     }
@@ -779,8 +873,12 @@ final class NoteTile: NSView, TileContent {
             return .placeholder(request, "note changed while rendering")
         }
         let inset = NSSize(width: 8, height: 10)
-        let text = NoteRenderer(excerpts: resolved, images: pictures, source: source,
-                                width: request.size.width - 2 * inset.width)
+        let width = request.size.width - 2 * inset.width
+        let diagrams = await NoteMermaid.resolve(document, width: width, appearance: NoteMermaid.appearance(request.appearance))
+        guard !Task.isCancelled, generation == closureGeneration, markdown == source else {
+            return .placeholder(request, "note changed while rendering")
+        }
+        let text = NoteRenderer(excerpts: resolved, images: pictures, source: source, width: width, diagrams: diagrams)
             .render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()

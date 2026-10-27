@@ -14,6 +14,7 @@ public final class NoteRenderer {
     private let excerpts: [String: NoteExcerpt]
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
+    private let diagrams: [Int: NoteMermaid.Outcome]
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
     private lazy var sourceIndex: NoteMath.SourceIndex? = source.map(NoteMath.SourceIndex.init)
@@ -31,10 +32,11 @@ public final class NoteRenderer {
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
-                width: CGFloat) {
+                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:]) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
+        self.diagrams = diagrams
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -121,7 +123,7 @@ public final class NoteRenderer {
             let number = start.map { "\($0 + index)." }
             let checkbox = item.checkbox.map { $0 == .checked ? "☑" : "☐" }
             inner.marker = [number ?? (checkbox == nil ? "•" : nil), checkbox].compactMap { $0 }.joined(separator: " ")
-            inner.markerWidth = start == nil ? (checkbox == nil ? 14 : 20) : 22
+            inner.markerWidth = NoteMermaid.listMarkerWidth(ordered: start != nil, checkbox: checkbox != nil)
             inner.indent += inner.markerWidth + 4
             blocks(item, &inner)
         }
@@ -534,6 +536,33 @@ public final class NoteRenderer {
     // MARK: Fences
 
     private func fence(_ block: CodeBlock, context: Context, line: Int) {
+        if NoteMermaid.isMermaid(block) {
+            fitsWidth = true
+            if let diagram = diagrams[line] {
+                switch diagram {
+                case .image(let image):
+                    let attachment = NoteImageAttachment()
+                    attachment.image = image
+                    attachment.allowsTextAttachmentView = false
+                    append("\u{FFFC}\n", [
+                        .font: Self.bodyFont,
+                        .attachment: attachment,
+                        .paragraphStyle: style(context, spacing: 8, before: 2),
+                        .noteMarkdownLine: line,
+                    ])
+                case .fallback(let reason):
+                    append("Mermaid: \(reason)\n", [
+                        .font: Self.captionFont,
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                        .paragraphStyle: style(context, spacing: 2),
+                        .noteMarkdownLine: line,
+                    ])
+                    rows(NoteSource.lines(of: block.code).map { ($0, nil, NoteBlock.authored, nil) },
+                         context: context, markdownLine: line + 1, numberWidth: 0, referenceLinks: true)
+                }
+                return
+            }
+        }
         let key = (block.language ?? "").trimmingCharacters(in: .whitespaces)
         let fence = NoteFence(info: key)
         let body = NoteSource.lines(of: block.code)

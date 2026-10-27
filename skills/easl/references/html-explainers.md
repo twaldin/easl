@@ -72,7 +72,7 @@ button.addEventListener('click', async () => {
 ## Mermaid
 
 HTML diagrams use the vendored Mermaid.js 11.17.2 build offline, with `securityLevel: 'strict'`
-and the tile's light or dark theme. A `mermaid` fence in a note stays ordinary code.
+and the tile's light or dark theme. Note `mermaid` fences use the same build and container layout in an isolated renderer with a two-second deadline and source fallback.
 
 - **Give diagrams the full width.** Mermaid scales a diagram down to fit its container,
   so a sequence diagram squeezed into a narrow column (a grid cell, one `canvas-compare` pane) renders its message text at ~9 px, unreadable at 100%.
