@@ -1,0 +1,26 @@
+name: Cold Mermaid experiment
+
+on:
+  pull_request:
+
+jobs:
+  cold-mermaid:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+      - name: Build native renderer
+        run: swift build --build-system native -j 2 --product Easl
+      - name: Run native Mermaid sample ${{ matrix.sample }}
+        run: |
+          uptime
+          sysctl -n hw.ncpu
+          python3 -u Tests/NoteMermaid/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
