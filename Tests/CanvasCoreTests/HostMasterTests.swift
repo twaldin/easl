@@ -453,7 +453,7 @@ struct HostMasterTests {
         #expect(masters.allSatisfy { kill($0, 0) == 0 })
         host.master.close()
         #expect(try await eventually { masters.allSatisfy { kill($0, 0) == -1 && errno == ESRCH } })
-        #expect(host.processes.count == 0)
+        #expect(try await eventually { host.processes.count == 0 })
         let afterClose = HostFiles(host: remote, master: host.master)
         await #expect(throws: HostFileError.self) { try await afterClose.read(request) }
         #expect(host.masters == masters)

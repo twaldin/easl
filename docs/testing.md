@@ -163,6 +163,8 @@ The driver records `observe-requested.json` before starting capture. Cleanup wai
 
 `HostFileReadsTests`, `HostFilesTests`, `HostFileRangeTests`, `HostHTTPTests`, `HostGitTests`, and `HostMasterTests` exercise real host programs and SSH subprocess fixtures. They cover binary member ordering, independent refusals, batch-budget deferral, changing files, selected byte ranges, shared-command cancellation, priority/FIFO admission, lease bounds, and cancellation isolation.
 
+`persistentChannelCannotStarveFileReadsAndClosingReapsBothMasters` waits separately for master PID absence and an empty process registry. Foundation can reap a child before its asynchronous termination handler removes the registry entry. Both observations use the existing 30-second bound.
+
 `HostBrowserSnapshotsTests` uses real process links to a Unix-socket peer to check the two-link bound, priority ordering, independent active cancellation, and queued cancellation and deadlines.
 
 `HostImagePreviewTests` and the image-preview API tests cover explicit original selection, aspect ratio, alpha, descriptor versions, refusal, and connection lifetime. Easld's image-preview tests also retain color-tagged originals and reject malformed raster data. The `image-preview` and `image-preview-raster` scenarios run through both hosts; encoder bytes and filesystem stamps are not cross-host golden values.
