@@ -6,6 +6,24 @@ public protocol NoteMermaidBackend: AnyObject {
     func start(_ key: NoteMermaid.Key, completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void)
 }
 
+/// Calls `ready` immediately before rendering, after all renderer preparation has completed.
+/// Preparation has a 10-second bound; rendering has a separate 2-second bound.
+/// Call `failed` for renderer failures, or `completion` for image/content outcomes.
+/// Renderer failures and preparation timeouts retry once; warm timeouts and content failures do not.
+@MainActor
+public protocol NoteMermaidPreparingBackend: NoteMermaidBackend {
+    func start(_ key: NoteMermaid.Key, ready: @escaping @MainActor () -> Void,
+               failed: @escaping @MainActor (String) -> Void,
+               completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void)
+}
+
+extension NoteMermaidPreparingBackend {
+    public func start(_ key: NoteMermaid.Key,
+                      completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void) {
+        start(key, ready: {}, failed: { completion(.fallback($0)) }, completion: completion)
+    }
+}
+
 @MainActor
 public enum NoteMermaid {
     public enum Appearance: String, Hashable, Sendable {
@@ -136,17 +154,43 @@ public enum NoteMermaid {
     }
 
     @MainActor
+    private final class Attempt {
+        enum Phase {
+            case preparing, rendering
+        }
+
+        var phase: Phase
+        let canRetry: Bool
+        var deadline: Task<Void, Never>?
+        var abort: (@MainActor () -> Void)?
+        var abortOnReturn = false
+
+        init(preparing: Bool) {
+            phase = preparing ? .preparing : .rendering
+            canRetry = preparing
+        }
+
+        func stop(aborting: Bool) {
+            deadline?.cancel()
+            deadline = nil
+            abortOnReturn = aborting
+            let abort = self.abort
+            self.abort = nil
+            if aborting { abort?() }
+        }
+    }
+
+    @MainActor
     private final class Job {
         enum State {
             case queued
-            case starting
-            case active(abort: @MainActor () -> Void, deadline: Task<Void, Never>)
+            case running(Attempt)
         }
 
-        let id: UUID = UUID()
         let key: Key
         var consumers: Set<UUID> = []
         var state: State = .queued
+        var retries = 0
 
         init(_ key: Key) { self.key = key }
     }
@@ -168,8 +212,10 @@ public enum NoteMermaid {
         private var cache: [Key: CacheEntry] = [:]
         private var bytes = 0
         private var access: UInt64 = 0
+        private var generation = UUID()
 
         func install(_ backend: (any NoteMermaidBackend)?) {
+            generation = UUID()
             let oldJobs = Array(jobs.values)
             let oldConsumers = Array(consumers.values)
             jobs.removeAll()
@@ -180,9 +226,8 @@ public enum NoteMermaid {
             bytes = 0
             self.backend = backend
             for job in oldJobs {
-                if case .active(let abort, let deadline) = job.state {
-                    deadline.cancel()
-                    abort()
+                if case .running(let attempt) = job.state {
+                    attempt.stop(aborting: true)
                 }
             }
             for consumer in oldConsumers { consumer.completion(consumer.outcomes) }
@@ -275,12 +320,9 @@ public enum NoteMermaid {
                 switch job.state {
                 case .queued:
                     queue.removeAll { $0 == key }
-                case .starting:
+                case .running(let attempt):
                     active -= 1
-                case .active(let abort, let deadline):
-                    deadline.cancel()
-                    active -= 1
-                    abort()
+                    attempt.stop(aborting: true)
                 }
             }
             consumer.completion(consumer.outcomes)
@@ -288,43 +330,89 @@ public enum NoteMermaid {
         }
 
         private func drain() {
-            guard !draining, let backend else { return }
+            guard !draining else { return }
             draining = true
             defer { draining = false }
-            while active < 2, !queue.isEmpty {
+            while active < 2, !queue.isEmpty, let backend {
                 let key = queue.removeFirst()
                 guard let job = jobs[key], case .queued = job.state else { continue }
+                let prepared = backend as? any NoteMermaidPreparingBackend
+                let attempt = Attempt(preparing: prepared != nil)
                 active += 1
-                job.state = .starting
-                let expires = ContinuousClock.now.advanced(by: .seconds(2))
-                let id = job.id
-                let abort = backend.start(key) { [weak self] outcome in
-                    self?.finish(key, id: id, outcome: outcome, timedOut: false)
+                job.state = .running(attempt)
+                armDeadline(job, attempt: attempt)
+                let completion: @MainActor (Outcome) -> Void = { [weak self, weak job, weak attempt] outcome in
+                    guard let job, let attempt else { return }
+                    self?.finish(job, attempt: attempt, outcome: outcome, timedOut: false)
                 }
-                guard jobs[key] === job else { continue }
-                let deadline = Task { @MainActor [weak self] in
-                    do { try await Task.sleep(until: expires, clock: .continuous) }
-                    catch { return }
-                    self?.finish(key, id: id, outcome: .fallback("Mermaid rendering timed out after 2 seconds."), timedOut: true)
+                let abort: @MainActor () -> Void
+                if let prepared {
+                    abort = prepared.start(key, ready: { [weak self, weak job, weak attempt] in
+                        guard let self, let job, let attempt, self.isCurrent(job, attempt: attempt),
+                              case .preparing = attempt.phase else { return }
+                        attempt.phase = .rendering
+                        self.armDeadline(job, attempt: attempt)
+                    }, failed: { [weak self, weak job, weak attempt] reason in
+                        guard let job, let attempt else { return }
+                        self?.finish(job, attempt: attempt, outcome: .fallback(reason),
+                                     timedOut: false, rendererFailed: true)
+                    }, completion: completion)
+                } else {
+                    abort = backend.start(key, completion: completion)
                 }
-                job.state = .active(abort: abort, deadline: deadline)
+                if isCurrent(job, attempt: attempt) {
+                    attempt.abort = abort
+                } else if attempt.abortOnReturn {
+                    abort()
+                }
             }
         }
 
-        private func finish(_ key: Key, id: UUID, outcome: Outcome, timedOut: Bool) {
-            guard let job = jobs[key], job.id == id else { return }
-            jobs.removeValue(forKey: key)
-            switch job.state {
-            case .queued: break
-            case .starting: active -= 1
-            case .active(let abort, let deadline):
-                deadline.cancel()
-                active -= 1
-                if timedOut { abort() }
+        private func isCurrent(_ job: Job, attempt: Attempt) -> Bool {
+            guard jobs[job.key] === job, case .running(let current) = job.state else { return false }
+            return current === attempt
+        }
+
+        private func armDeadline(_ job: Job, attempt: Attempt) {
+            attempt.deadline?.cancel()
+            let preparing = attempt.phase == .preparing
+            let expires = ContinuousClock.now.advanced(by: .seconds(preparing ? 10 : 2))
+            attempt.deadline = Task { @MainActor [weak self, weak job, weak attempt] in
+                do { try await Task.sleep(until: expires, clock: .continuous) }
+                catch { return }
+                guard let job, let attempt, !Task.isCancelled else { return }
+                let reason = preparing
+                    ? "Mermaid renderer preparation timed out after 10 seconds."
+                    : "Mermaid rendering timed out after 2 seconds."
+                self?.finish(job, attempt: attempt, outcome: .fallback(reason), timedOut: true)
             }
+        }
+
+        private func finish(_ job: Job, attempt: Attempt, outcome: Outcome, timedOut: Bool,
+                            rendererFailed: Bool = false) {
+            guard isCurrent(job, attempt: attempt) else { return }
             let outcome = bounded(outcome)
-            store(outcome, for: key)
-            for consumer in job.consumers { deliver(outcome, key: key, to: consumer) }
+            let retry = attempt.canRetry && job.retries == 0
+                && (rendererFailed || (timedOut && attempt.phase == .preparing))
+            let generation = self.generation
+            active -= 1
+            if retry {
+                job.retries += 1
+                job.state = .queued
+                queue.append(job.key)
+            } else {
+                jobs.removeValue(forKey: job.key)
+            }
+            attempt.stop(aborting: timedOut)
+            // Aborting may cancel the job or replace the backend through reentrant callers.
+            if retry {
+                drain()
+                return
+            }
+            guard self.generation == generation,
+                  job.consumers.contains(where: { consumers[$0] != nil }) else { return }
+            store(outcome, for: job.key)
+            for consumer in job.consumers { deliver(outcome, key: job.key, to: consumer) }
             drain()
         }
 

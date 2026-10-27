@@ -249,7 +249,14 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func applyDisplay(_ diagrams: [Int: NoteMermaid.Outcome]) {
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth, diagrams: diagrams)
+        var attachments: [NSTextAttachment] = []
+        if let storage = display.textStorage {
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                if let attachment = value as? NSTextAttachment { attachments.append(attachment) }
+            }
+        }
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
+                                    diagrams: diagrams, diagramAttachments: attachments)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
