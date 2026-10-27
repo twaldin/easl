@@ -53,10 +53,15 @@ final class NoteMermaidWeb: NoteMermaidBackend {
             do {
                 if self.ruleLoad == nil {
                     self.ruleLoad = Task { @MainActor [weak self] in
-                        guard let compiled = try await WKContentRuleListStore.default().compileContentRuleList(
-                            forIdentifier: "easl-note-mermaid-isolated-v1", encodedContentRuleList: Self.networkRules
-                        ) else { throw URLError(.noPermissionsToReadFile) }
-                        self?.rules = compiled
+                        do {
+                            guard let compiled = try await WKContentRuleListStore.default().compileContentRuleList(
+                                forIdentifier: "easl-note-mermaid-isolated-v1", encodedContentRuleList: Self.networkRules
+                            ) else { throw URLError(.noPermissionsToReadFile) }
+                            self?.rules = compiled
+                        } catch {
+                            self?.ruleLoad = nil
+                            throw error
+                        }
                     }
                 }
                 guard let ruleLoad = self.ruleLoad else { throw URLError(.noPermissionsToReadFile) }

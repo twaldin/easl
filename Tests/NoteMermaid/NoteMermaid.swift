@@ -142,6 +142,26 @@ private enum NoteMermaidRegression {
         let source = "```mermaid\nflowchart LR\nsubgraph Work\ndirection LR\nA[Start] --> B[Finish]\nend\n```"
         let document = NoteMarkdown.parse(source)
         let width: CGFloat = 480
+        let coldSource = "```mermaid\nflowchart LR\nCold --> Start\n```"
+        let coldDocument = NoteMarkdown.parse(coldSource)
+        let coldStart = ContinuousClock.now
+        let cold = await NoteMermaid.resolve(coldDocument, width: width, appearance: .light)
+        let coldElapsed = coldStart.duration(to: .now)
+        try require(coldElapsed < .milliseconds(2500), "cold renderer exceeded its bounded deadline: \(coldElapsed)")
+        switch cold[1] {
+        case .image?:
+            _ = try raster(cold, width: width, name: "cold startup")
+        case .fallback?:
+            let text = NoteRenderer(excerpts: [:], source: coldSource, width: width, diagrams: cold).render(coldDocument, placeholder: "")
+            try require(attachments(text).isEmpty && text.string.contains("Cold --> Start"), "cold startup fallback must retain source")
+            print("COLD startup retained source after \(coldElapsed)")
+        case nil:
+            throw Failure(message: "cold renderer returned no completed outcome")
+        }
+        let gantt = "gantt\ntitle Forty tasks\ndateFormat YYYY-MM-DD\nsection Work\n" + (0..<40).map {
+            "Task \($0 + 1) : t\($0), 2026-10-\(String(format: "%02d", $0 % 25 + 1)), 2d"
+        }.joined(separator: "\n")
+        let canonicalGantt = try await kitDiagramSize(gantt, width: 1392)
         for appearance in [NoteMermaid.Appearance.light, .dark] {
             let result = await NoteMermaid.resolve(document, width: width, appearance: appearance)
             let image = try raster(result, width: width, name: "LR \(appearance)")
@@ -156,9 +176,6 @@ private enum NoteMermaidRegression {
         let wide = await NoteMermaid.resolve(document, width: 1400, appearance: .light)
         let wideImage = try raster(wide, width: 1400, name: "small at 1400pt")
         try require(wideImage.size.width < 480 && abs(wideImage.size.width - narrowImage.size.width) <= 1 && abs(wideImage.size.height - narrowImage.size.height) <= 1, "small diagram must retain its natural dimensions at wide note widths: \(narrowImage.size) versus \(wideImage.size)")
-        let gantt = "gantt\ntitle Forty tasks\ndateFormat YYYY-MM-DD\nsection Work\n" + (0..<40).map {
-            "Task \($0 + 1) : t\($0), 2026-10-\(String(format: "%02d", $0 % 25 + 1)), 2d"
-        }.joined(separator: "\n")
         let ordinary = [
             (name: "sequence at 1400pt", source: "sequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: Request\nalt Cached\nServer-->>Client: Hit\nelse Uncached\nServer-->>Client: Result\nend"),
             (name: "TD at 1400pt", source: "flowchart TD\nsubgraph Work\nA[Start] --> B[Build]\nend\nB --> C[Ship]"),
@@ -172,7 +189,6 @@ private enum NoteMermaidRegression {
             let rendered = NoteRenderer(excerpts: [:], source: source, width: 1400, diagrams: outcomes).render(document, placeholder: "")
             try require(attachments(rendered).count == 1 && !rendered.string.contains(fixture.source), "\(fixture.name) must display its image instead of source")
         }
-        let canonicalGantt = try await kitDiagramSize(gantt, width: 1392)
         let noteGantt = try raster(await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\n\(gantt)\n```"), width: 1400, appearance: .light), width: 1400, name: "gantt kit parity")
         try require(abs(noteGantt.size.width - canonicalGantt.width) <= 1 && abs(noteGantt.size.height - canonicalGantt.height) <= 1,
                     "note gantt must use the HTML kit's container geometry: \(noteGantt.size) versus \(canonicalGantt)")
