@@ -24,7 +24,7 @@ Preconditions: follow Launch and Doctor. Run on a local board and a real remote 
 4. Press Escape. Require `CanvasDocumentView`, the same selected tile, and native M selecting Move without changing either field. Return to Select.
 5. Derive the Notes field's content-point coordinates from a fresh exact-window capture. Click inside it and type `click-path`. Require visible text and `props.state.notes`. Press Escape and verify canvas ownership again.
 6. Independently reacquire the page, then click empty board space while it still has the keyboard. Require release. A board click after Escape does not qualify this transition.
-7. Replace the tile's HTML with a visibly marked new document. Wait for that marker, then type digits without another Return or field click. Require no replacement-page key receipt. Press V to select the canvas's Select tool before granting the page again. Require new input after that grant and read saved state after reload.
+7. Regrant the old page and prove it receives a native key. While it still owns the keyboard, replace the tile's HTML with a visibly marked new document. Wait for that marker, then type digits without another Return or field click. Require no replacement-page key receipt. Press V to select the canvas's Select tool before granting the page again. Require new input after that grant and read saved state after reload.
 
 ## Supplemental regression modes
 

@@ -48,7 +48,7 @@ ssh -t -o BatchMode=yes twaldin-home \
   "python3 -u $H/claim.py --guest any --boot --wait 900 $LANE $H -- /bin/zsh -l"
 ```
 
-Require `acquired`, `booted`, and `guest-silent`. The helper boots without a display or VNC viewer. It never adopts an already-running guest. Copy the concrete `EASL_GUI_GUEST` from the acquired shell into every other terminal. Never pass `any` to SSH or `guest.py`.
+Require `acquired`, `booted`, and `guest-silent`. A `deferred` event means Deadlock is running on home. Leave the FIFO wait in place until it exits; never stop the game, bypass the check, or use an older helper. If the wait expires with `busy` and `game:true`, copy the current helper and rejoin. The helper boots without a display or VNC viewer and never adopts an already-running guest. Copy the concrete `EASL_GUI_GUEST` from the acquired shell into every other terminal. Never pass `any` to SSH or `guest.py`.
 
 Between **every GUI step**, run on the lane machine:
 
@@ -56,7 +56,7 @@ Between **every GUI step**, run on the lane machine:
 ssh -o BatchMode=yes twaldin-home "python3 $H/claim.py status"
 ```
 
-If your continuous hold is at least 3,600 seconds and anyone is queued, finish the current step, clean up fully, and rejoin the queue. Do not reset the clock for another step. Hold the claim only for guest preparation and GUI proof, not writing, review, or CI. The helper monitors pressure during overlapping guest use; never stop the other holder's guest.
+If your continuous hold is at least 3,600 seconds and anyone is queued, finish the current step, clean up fully, and rejoin the queue. Do not reset the clock for another step. Hold the claim only for guest preparation and GUI proof, not writing, review, or CI. Never stop another holder's guest.
 
 In the claimed home shell, set `H` and `LANE` to the recorded values, then:
 
@@ -228,12 +228,12 @@ For canvas gestures without an accessibility action, derive coordinates from a f
 
 ```sh
 scripts/dev.sh input click "$X" "$Y" --mods hyper --window "$WINDOW"
-scripts/dev.sh input drag "$X" "$Y" "$TO_X" "$TO_Y"
-scripts/dev.sh input shortcut m
-scripts/dev.sh input menu "$X" "$Y" "Content Zoom/150%"
+scripts/dev.sh input drag "$X" "$Y" "$TO_X" "$TO_Y" --window "$WINDOW"
+scripts/dev.sh input shortcut m --window "$WINDOW"
+scripts/dev.sh input menu "$X" "$Y" "Content Zoom/150%" --window "$WINDOW"
 ```
 
-`--window` is supported for click, text, key, and shortcut. Other input kinds use the instance's selected board; confirm it with `input state` first. Do not use internal setters, direct draft mutation, or `agent.prompt` to stand in for a composer gesture. API calls may seed fixtures and inspect side effects, but cannot prove a different native entry point.
+Window-dependent replay accepts `--window "$WINDOW"`, including click, drag, release, menu, move, flags, magnify, scroll, text, key, and shortcut. A stale window ID drops the input. Untargeted window-dependent replay uses the front board window. In `input state`, `selected:true` marks a selected tab in each window group, not one unique global target; match the intended board and exact window too. Do not use internal setters, direct draft mutation, or `agent.prompt` to stand in for a composer gesture. API calls may seed fixtures and inspect side effects, but cannot prove a different native entry point.
 
 `input state` queues a request and prints no state to stdout. Record the byte offset of that home's `app.log` before the request. Wait with a bounded deadline for a new complete `DevInput.state` JSON line after that offset; an older line is not a receipt for this request. Use `selected`, `window`, `board`, and `responder` to identify the selected tab and focus. Require the intended board, since a remote open can still be in progress when the state request runs. Missing fresh state or the wrong selected board means readiness is unproven. Do not interpret empty helper stdout as an empty board or a failed request.
 
@@ -284,3 +284,5 @@ Run cleanup after **every** failed attempt as well as success. Keep the claim wh
 ## Maintain the map
 
 When a user path, menu, shortcut, CLI contract, or prerequisite changes, update its feature file in the same change. Use `/maintain-verification-skill` to check the map against the app. Do not turn an unreachable journey into a passing one by substituting a convenient entry point.
+
+Use [native browser scrolling](features/browser-scroll.md), [note Mermaid](features/note-mermaid.md), and the real-click [HTML page-message journey](features/html-send.md) when those paths change. BrowserScrolling is a manual authorized-capture runner, not a CI step. The HTML-send and both Mermaid native runners are wired into `.github/workflows/ci.yml`.

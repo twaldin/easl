@@ -29,7 +29,7 @@ Preconditions: follow Launch and Doctor. Run once on a local board and once on a
 2. Record its ID with `ask list --open --board "$BOARD"`. Require `correct: "a"` and `askConfidence: true` in `ask get`. Navigate to that fixture, enter its keyboard focus, and capture the open tile. Require no grading marker and unset confidence.
 3. Press native `1`, then the right arrow three times. The first adjustment starts from 50%, so three presses select 80%. Capture the selected Four option and visible 80% before pressing Return.
 4. Require waiter exit 0 with `option: "a"`, `correct: true`, and `confidence: 0.8`. Require `ask get` to agree. Capture the closed tile's correct marker and 80% confidence text.
-5. Post a second distinct question with the same options and correct answer. Focus that fixture, press native `2`, and submit without touching confidence. Require `option: "b"`, `correct: false`, and no confidence value. Capture the incorrect marker and the correct option's explanation, `Two pairs make four.`
+5. Post a second distinct question with the same options and correct answer, retaining `--confidence --keep --wait`. Focus that fixture, press native `2`, and submit without touching confidence. Require `option: "b"`, `correct: false`, and no confidence value. Capture the incorrect marker and the correct option's explanation, `Two pairs make four.`
 6. Save and reopen. Read both answers again and capture their closed states. Do not manufacture native answer evidence with `object.update` or `ask answer`.
 
 ## Gotchas

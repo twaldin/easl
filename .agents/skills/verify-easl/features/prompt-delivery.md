@@ -1,6 +1,6 @@
 # Prompt delivery after a lost reply
 
-Users do not resend a prompt whose execution reply was lost. The composer reconciles its submission identity and restores a draft only after confirmed non-delivery.
+On receipt-capable hosts, a lost reply does not trigger resubmission. The composer reconciles its submission identity and restores the submitted draft only after confirmed non-delivery. Legacy hosts cannot provide that guarantee.
 
 ## Sub-features
 

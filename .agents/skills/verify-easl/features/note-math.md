@@ -1,6 +1,6 @@
 # Note math
 
-Users read inline and display LaTeX in native notes. Unsupported or over-limit formulas keep their source instead of reaching the native typesetter.
+Users read inline and display LaTeX in native notes. Unsupported formulas render as source. Over-limit formulas are rejected before native typesetting.
 
 ## Sub-features
 
@@ -33,10 +33,16 @@ Preconditions: follow the skill's Launch and Doctor sections. Run this journey o
 
 	Literal code: `$x^2$`. After the code fence.
 
+	```text
+	$x^2$ and $$y$$ stay literal here.
+	```
+
+	Broken $\notarealcommand{x}$ here.
+
 	Escaped \$x\$ stays prose.
 	````
 
-2. Navigate to the heading through Command-P, then use Command-0 to show actual size. Capture the note by exact PID and window ID. Require typeset inline and display formulas, literal code and `$x$`, and trailing prose. Mermaid rendering is verified separately; do not require its fence to stay code.
+2. Navigate to the heading through Command-P, then use Command-0 to show actual size. Capture the note by exact PID and window ID. Require typeset inline and display formulas, literal inline and fenced math, escaped `$x$`, source fallback for the unsupported command, and trailing prose. Verify [Mermaid](note-mermaid.md) separately; do not require its fence to stay code.
 3. Create a second note with a display formula whose source is `\frac{1}{` repeated 32 times, followed by `x`, then 32 closing braces. Capture the visible source fallback and trailing text. Read back `props.markdown` and compare it byte-for-byte to the fixture.
 4. Reopen the board and capture both notes. Require unchanged Markdown. On the remote board, compare the host's persisted note props as well as the viewer's pixels.
 

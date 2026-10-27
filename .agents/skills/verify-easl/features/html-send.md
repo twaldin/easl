@@ -4,7 +4,7 @@ An agent-created local HTML tile can queue untrusted page data for its creating 
 
 ## Sub-features
 
-- `html-send-submit` wakes the creating omp terminal with an ID-only notice, then the agent reads its labelled inbox tool result and answers.
+- `html-send-submit` wakes the creating omp terminal with an ID-only notice within the integration's wake budget, then the agent reads its labelled inbox tool result and answers.
 - `html-send-inert` queues load and timer sends without starting or steering a turn.
 - `html-send-consumed` limits one native click or key to one turn-starting send within 1.5 seconds.
 - `html-send-flood` rejects sends past native count, byte or rate limits without retaining the refused payload.
@@ -26,9 +26,31 @@ Follow Launch and Doctor with a local board in the claimed guest. Use the real o
 5. Keep omp running while a Flood control waits two seconds after its click, then sends ten small payloads per burst with more than ten seconds between bursts. Require rate refusals after eight accepted sends per burst and page-count refusal at 32 retained items. Capture the refused status and verify rejected payloads are absent from retention. No flood send may wake the agent. Read and acknowledge the backlog, then use six 60,000-character payloads to exercise the page-byte cap: four fit, two refuse, all remain inert. Save bounded inbox wire-size receipts and acknowledge only after consumption.
 6. Run `Tests/HtmlSend/run.py --bin-path "$BIN"` for native gesture ownership, consumption, expiry, DOM-event rejection and reload reset. Core tests cover caps, wire expansion, notice/data projections, independent holds and ACKs, persistence, labels, refusals and export exclusions. Hook tests cover hostile custom-message exclusion, invalid ID refusal even with prior receipts, mixed user/peer bursts, manual inbox access, ordinary legacy fallback and bounded queues. Re-run the installed-provider role proof using the exported `noticeIds` and `submissionNotice` builders; only constants and native IDs may appear in its developer/system message.
 
+### Reuse the isolated integration fixture
+
+The retained controllers are under `/home/tim/agents/projects/easl/state/lanes/easl-canvaskit-send-1/`, not the bulk-evidence directory. Inspect `guest-provider.ts`, `quiz.html`, `proof-seed.py`, `proof-control.py`, `guest-capture.py`, and `guest-input.py` before copying them through home into the current `G`. Do not run `guest-proof-journey.py` unchanged: it assumes old scratch names and an old frozen bundle. Adapt the copied home, board-root, proof-directory, lane, and session paths to this run.
+
+Use a fresh guest-only omp installation or an already-qualified guest binary. The retained provider uses real omp 18.12.6 and the checked-out easl extension, registers an offline deterministic provider, and issues an actual inbox tool call followed by data ACK. Its fixed answer proves transport, not inference. It needs the omp package dependencies resolvable beside `guest-provider.ts`; never copy a user's profile.
+
+After adapting the copied controllers to this run's development home, board root, proof directory, and frozen bundle, run them in the guest:
+
+```sh
+python3 "$G/proof-seed.py" "$G"
+python3 "$G/proof-control.py" "$G" wait inert
+scripts/dev.sh input shortcut 9 --mods cmd --window "$WINDOW"
+python3 "$G/guest-capture.py" "$G" before-submit
+python3 "$G/guest-input.py" "$G" before-submit button Submit
+python3 "$G/proof-control.py" "$G" wait submit
+python3 "$G/guest-capture.py" "$G" after-submit
+```
+
+Seeding waits for protocol 3 before creating the quiz. The click helper derives Submit's content coordinates from the fresh capture. The final wait requires the real turn, notice, tool read, ACK, and answer. Keep `agent-read-data.json`, `omp-events.jsonl`, `native-inputs.jsonl`, runtime snapshots, session entries, and before/after PNGs with receipts. The source payload's forged IDs/labels must stay inside escaped tool output; only native IDs may appear in the notice.
+
+The native `Tests/HtmlSend/run.py` step is wired into CI's `test` job. It does not replace this terminal/inbox integration journey.
+
 ## Limits and refusals
 
-Native retained HTML budgets are 32 messages/256 KiB per page and 128 messages/1 MiB per destination. Each item reserves 4 KiB below the inbox cap for metadata; HTML sender names are bounded to 256 UTF-8 bytes. Rate is eight accepted sends per rolling ten seconds. Inbox batches are 32 messages/256 KiB; the extension's ordinary messages and notices share 128 messages/1 MiB. Data remains native and charged after notice ACK. At a full native cap, even an authorized send refuses until data acknowledgement frees capacity. Ordinary peer delivery still works. Session end discards HTML rather than bouncing it as user text.
+The bridge message, including its envelope, is limited to 64 KiB. Native retained HTML budgets are 32 messages/256 KiB per page and 128 messages/1 MiB per destination. Each item reserves 4 KiB below the inbox cap for metadata; HTML sender names are bounded to 256 UTF-8 bytes. Rate is eight accepted sends per rolling ten seconds. Inbox batches are 32 messages/256 KiB; the extension's ordinary messages and notices share 128 messages/1 MiB. The integration permits 20 wakes per sender per hour; over-budget notices wait for another turn. Data remains native and charged after notice ACK. At a full native cap, even an authorized send refuses until data acknowledgement frees capacity. Ordinary peer delivery still works. Session end discards HTML rather than bouncing it as user text.
 
 Exercise refusals independently. Offscreen rendering and remote pages cannot send. Integrations below protocol 3 refuse HTML producers but still take ordinary messages. Each automatic poll and ACK uses protocol 3 with `wakeOnly: true`; explicit data reads use protocol 2 without that filter. Older wake-only clients receive ordinary messages only. A 0.3.2 peer ignores the separate `htmlMessages` snapshot field.
 

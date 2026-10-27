@@ -12,7 +12,7 @@ Users start shells and agents in terminal tiles, type into them, and return to t
 
 ## How to get to it (user POV)
 
-Choose File > New Terminal or press Command-T. Click the terminal body to type. Close its tile to end the session. Quit or close a board to leave its sessions running.
+Choose File > New Terminal or press Command-T. Click the terminal body to type. Closing its tile asks for confirmation; choose Close or Command-Delete to end the session. Return and Escape cancel. Quit to preserve sessions. When closing a local board, choose Keep Running rather than End Sessions. Closing a remote viewer leaves host sessions running.
 
 ## Driving it with dev.sh
 
