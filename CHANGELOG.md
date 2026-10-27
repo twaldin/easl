@@ -2,7 +2,36 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.3
+
+easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for agent-made HTML tiles on local boards. Oversized browser tiles now scroll natively.
+
+Note diagrams use the same Mermaid.js as HTML tiles, in an isolated WebKit process. A slow diagram falls back to its source.
+
+A click in an agent-made HTML tile on a local board wakes that agent through `canvasKit.send`. The agent reads the page data from its inbox, labelled untrusted.
+
+Thanks to @afowic for browser scrolling and the original `canvasKit.send` and note-diagram work.
+
+### easld and the app
+
+None of these features needs easld 0.3.3 on a remote board. Mermaid rendering and browser scrolling run in the app. `canvasKit.send` works only on local boards, regardless of easld version.
+
+A 0.3.2 app shows a Mermaid fence in a note as code and keeps its source. In that app, `canvasKit.send` is undefined, so HTML pages must check for it before calling it.
+
+A 0.3.3 app against easld 0.3.2 renders Mermaid. Its `canvasKit.send` refuses on remote boards, by design in any version. The release-candidate checks exercised both mixed-version directions through edits, saves, and reopening; all six object types kept their props byte for byte.
+
+### Board format
+
+The board format is unchanged, still format 3.
+
+### Known limits
+
+- `canvasKit.send` works only on local boards. Sends without a click are kept but do not wake the agent.
+- Note diagrams paint inside WebKit's sandboxed page process rather than its GPU process. That avoided a hang and lowers one layer of WebKit's defence-in-depth.
+- Note diagrams have not been run on macOS 14 or 15. If WebKit's private setting is missing there, the note shows the diagram's source.
+- Physical trackpad momentum was not tested.
+
+### Changes
 
 - Notes render centred `mermaid` fences with the HTML kit's vendored Mermaid.js and container layout. An isolated WebKit renderer requests process-local painting with a two-second render deadline and bounded bitmap output. Cold startup has a separate ten-second bound; preparation timeouts and renderer failures retry once before failure caching. The painting route avoids shared GPU backlogs but can change GPU-related sandbox restrictions by platform; see the [renderer contract](https://github.com/twaldin/easl/blob/main/docs/contracts.md). Timed-out or invalid diagrams keep their source with a short explanation. Prose edits reuse cached bitmap layers instead of repainting diagrams through text layout. Resizing keeps the previous display until the new width is ready. Remote boards render on the viewing Mac. Board storage is unchanged, so 0.3.2 apps still show the fence as code.
 - Development: the cold Mermaid regression requires a raster image and checks preparation and rendering separately against the renderer's deadlines. CI logs both stage times and the retry count.
