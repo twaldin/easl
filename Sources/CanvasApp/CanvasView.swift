@@ -162,7 +162,7 @@ final class CanvasView: NSScrollView {
     let remote: RemoteSource?
     /// What the user had going on a remote board's provisional objects the host's ids replaced
     /// (`Board.onHostRekey`): carried to the host's object when it shows.
-    private var rekeyed: [ObjectID: (selected: Bool, draft: NoteTile.Draft?, browser: TileFrameView?)] = [:]
+    private var rekeyed: [ObjectID: (selected: Bool, draft: NoteTile.Draft?, browser: TileFrameView?, terminalFocus: Bool)] = [:]
     /// Whether the opening view is in place: nothing is saved before it, or a board closed in its
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
@@ -272,7 +272,8 @@ final class CanvasView: NSScrollView {
             let frame = self.tiles[provisional]
             let browser = frame.flatMap { $0.content is BrowserTile ? $0 : nil }
             if browser != nil { self.tiles.removeValue(forKey: provisional) }
-            self.rekeyed[host] = (self.selection.contains(provisional), (frame?.content as? NoteTile)?.takeDraft(), browser)
+            let terminalFocus = NSApp.isActive && self.window?.isKeyWindow == true && self.focusedTerminal == provisional
+            self.rekeyed[host] = (self.selection.contains(provisional), (frame?.content as? NoteTile)?.takeDraft(), browser, terminalFocus)
         }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
@@ -383,6 +384,7 @@ final class CanvasView: NSScrollView {
                     setSelection(selected)
                 }
                 if let draft = carried.draft { (tiles[object.id]?.content as? NoteTile)?.resume(draft) }
+                if carried.terminalFocus { (tiles[object.id]?.content as? TerminalTile)?.focus() }
             }
         case .objectUpdated(let object):
             if object.type == .group {
@@ -827,6 +829,11 @@ final class CanvasView: NSScrollView {
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
         guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {
+        case .keyDown:
+            guard let remote, let id = focusedTerminal, remote.mirror.isProvisional(id),
+                  !event.modifierFlags.contains(.command), event.keyCode != 53 else { return event }
+            showNotice("Terminal not ready. Nothing typed; try again after it starts.")
+            return nil
         case .leftMouseDown:
             guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }
             let point = docPoint(event)
@@ -1217,10 +1224,8 @@ final class CanvasView: NSScrollView {
         takeKeyboard(object.id)
     }
 
-    /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
-    /// next turn, once a new one's surface exists), as does an open question (its number keys
-    /// pick, Return answers); anything else leaves it with the canvas, so Esc, Delete, ⌘W, ⌘G
-    /// and the arrows act on the selection, and Return enters it.
+    /// A terminal takes the keyboard immediately, even before its surface attaches. Other tiles
+    /// leave it with the canvas until Return enters them, except an open question.
     func takeKeyboard(_ id: ObjectID) {
         let type = board.objects[id]?.type
         guard type == .terminal || type == .question else {
@@ -1237,9 +1242,7 @@ final class CanvasView: NSScrollView {
             }
             return
         }
-        DispatchQueue.main.async { [weak self] in
-            (self?.tiles[id]?.content as? TerminalTile)?.focus()
-        }
+        (tiles[id]?.content as? TerminalTile)?.focus()
     }
 
     /// Tiles Return hands the keyboard to.
