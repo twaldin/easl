@@ -67,6 +67,9 @@ private final class RecoveryBackend: NoteMermaidPreparingBackend {
             let key = NoteMermaid.Key(source: "flowchart LR\nDiscard --> Ready\n", width: 1400, appearance: .light)
             abort = renderer.start(key, ready: { finish(true) }, failed: { _ in finish(false) },
                                    completion: { _ in finish(false) })
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                MainActor.assumeIsolated { finish(false) }
+            }
         }
     }
 }
@@ -355,6 +358,8 @@ private enum NoteMermaidChurn {
 
     private static func verifyDiagramEdges(_ actual: NSBitmapImageRep, expected: NSBitmapImageRep,
                                            scale: CGFloat, state: String) throws {
+        try require(actual.pixelsWide == expected.pixelsWide && actual.pixelsHigh == expected.pixelsHigh,
+                    "\(state): native capture and reference have different raster bounds")
         let observed = try RasterPixels(actual)
         let referencePixels = try RasterPixels(expected)
         func distance(_ left: SIMD4<Float>, _ right: SIMD4<Float>) -> Float {
@@ -427,10 +432,13 @@ private enum NoteMermaidChurn {
                                         appearance: NSAppearance(named: .aqua)!)
         let reference = request.image { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return }
-            context.clip(to: tile.convert(clip.bounds, from: clip))
+            var viewport = tile.convert(clip.bounds, from: clip)
+            if !tile.isFlipped { viewport.origin.y = tile.bounds.maxY - viewport.maxY }
+            context.clip(to: viewport)
             layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
-                let point = text.convert(NSPoint(x: text.textContainerOrigin.x + fragment.layoutFragmentFrame.minX,
+                var point = text.convert(NSPoint(x: text.textContainerOrigin.x + fragment.layoutFragmentFrame.minX,
                                                 y: text.textContainerOrigin.y + fragment.layoutFragmentFrame.minY), to: tile)
+                if !tile.isFlipped { point.y = tile.bounds.maxY - point.y }
                 fragment.draw(at: point, in: context)
                 return true
             }
@@ -757,12 +765,17 @@ private enum NoteMermaidChurn {
         guard case .image? = first[1] else {
             throw Failure(description: "fresh renderer did not produce the recovery warmup image")
         }
-        let discarded = await backend.discardReadyRenderer()
-        try require(discarded, "benign renderer restart control could not terminate its prepared page")
-        let control = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRestart --> Ready\n```"),
-                                               width: 1400, appearance: .light)
-        guard case .image? = control[1], let cold = backend.preparationMilliseconds.last else {
-            throw Failure(description: "benign renderer restart did not produce the recovery control image")
+        var cold = 0.0
+        for trial in 0..<3 {
+            let discarded = await backend.discardReadyRenderer()
+            try require(discarded, "benign renderer restart control could not terminate its prepared page")
+            let control = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRestart\(trial) --> Ready\n```"),
+                                                   width: 1400, appearance: .light)
+            guard case .image? = control[1], let preparation = backend.preparationMilliseconds.last else {
+                throw Failure(description: "benign renderer restart did not produce the recovery control image")
+            }
+            cold = max(cold, preparation)
+            emit(["event": "restart-control", "trial": trial, "preparationMs": preparation])
         }
         let hostile = "---\nconfig:\n  radar:\n    width: 4000\n    height: 4000\n---\nradar-beta\nshowLegend false\naxis a,b,c,d\ncurve "
             + (0..<3300).map { "c\($0){9,9,9,9}" }.joined(separator: ",")
