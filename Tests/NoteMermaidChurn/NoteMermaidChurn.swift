@@ -179,6 +179,10 @@ private enum NoteMermaidChurn {
         let layers = imageLayers(text)
         try require(layers.count == expected.count, "\(state): \(layers.count) visible image layers for \(expected.count) attachments")
         let scale = tile.window?.backingScaleFactor ?? 1
+        var highestTextZ = -CGFloat.infinity
+        for sibling in text.layer?.sublayers ?? [] where !layers.contains(where: { $0 === sibling }) {
+            highestTextZ = max(highestTextZ, sibling.zPosition)
+        }
         for (index, layer) in layers.enumerated() {
             let frame = expected[index]
             try require(zip(rectValues(layer.frame), rectValues(frame)).allSatisfy { abs($0 - $1) < 0.001 },
@@ -186,6 +190,7 @@ private enum NoteMermaidChurn {
             try require(layer.superlayer === text.layer && !layer.isHidden && layer.opacity == 1,
                         "\(state): diagram layer is detached or hidden")
             try require(layer.contentsScale == scale, "\(state): diagram layer uses the wrong backing scale")
+            try require(layer.zPosition > highestTextZ, "\(state): diagram is not above AppKit text and selection in compositor order")
             guard let pixels = layerRaster(layer),
                   let png = NSBitmapImageRep(cgImage: pixels).representation(using: .png, properties: [:]) else {
                 throw Failure(description: "\(state): layer has no raster contents")
