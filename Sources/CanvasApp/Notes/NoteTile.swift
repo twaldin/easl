@@ -70,6 +70,7 @@ final class NoteTile: NSView, TileContent {
         wantsLayer = true
         layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.16).cgColor
 
+        display.wantsLayer = true
         display.isEditable = false
         display.isSelectable = false
         display.drawsBackground = false
@@ -1081,6 +1082,11 @@ final class NoteDisplayView: NSTextView {
         }
         while diagramLayers.count > count { diagramLayers.removeLast().removeFromSuperlayer() }
         CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateDiagramLayers()
     }
 
     override func layout() {

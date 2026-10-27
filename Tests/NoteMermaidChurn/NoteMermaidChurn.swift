@@ -599,7 +599,9 @@ private enum NoteMermaidChurn {
         let window = makeWindow(tile)
         defer { tile.setLive(false); tile.removeFromSuperview(); window.close() }
         try await wait("\(fixture.name) candidate visible as native image") {
-            attachments(try display(tile).attributedString()).count == fixture.sources.count
+            let text = try display(tile)
+            return attachments(text.attributedString()).count == fixture.sources.count &&
+                imageLayers(text).count == fixture.sources.count
         }
         _ = try check(tile, fixture: fixture, edit: -1)
         tile.layoutSubtreeIfNeeded()
