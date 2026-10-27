@@ -507,8 +507,8 @@ private enum NoteMermaidChurn {
         try record("reattached-layer", expected: fixture.sources.count)
 
         tile.setFrameSize(NSSize(width: 620, height: 360))
-        host.bounds = tile.bounds
         host.setFrameSize(NSSize(width: tile.bounds.width * zoom, height: tile.bounds.height * zoom))
+        host.bounds = tile.bounds
         let resizedWidth = (tile.bounds.width - 2 * ObjectMeasure.noteInset.width).rounded(.down)
         let resized = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\n\(source)\n```"),
                                                  width: resizedWidth, appearance: .light)
