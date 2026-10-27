@@ -146,6 +146,44 @@ private enum NoteMermaidChurn {
         return png
     }
 
+    private static func verifyLiveDiagramPixels(_ tile: NoteTile) async throws {
+        let request = TileRenderRequest(size: tile.bounds.size, scale: 2, full: false,
+                                        appearance: NSAppearance(named: .aqua)!)
+        let rendered = await tile.render(request)
+        guard let pixels = rendered.image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let actual = tile.bitmapImageRepForCachingDisplay(in: tile.bounds) else {
+            throw Failure(description: "live/export diagram comparison has no bitmap")
+        }
+        tile.cacheDisplay(in: tile.bounds, to: actual)
+        let expected = NSBitmapImageRep(cgImage: pixels)
+        try require(actual.pixelsWide == expected.pixelsWide && actual.pixelsHigh == expected.pixelsHigh,
+                    "live note and scale-2 export have different raster bounds")
+        func color(_ bitmap: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor {
+            bitmap.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
+        }
+        func close(_ left: NSColor, _ right: NSColor, tolerance: CGFloat) -> Bool {
+            abs(left.redComponent - right.redComponent) <= tolerance &&
+                abs(left.greenComponent - right.greenComponent) <= tolerance &&
+                abs(left.blueComponent - right.blueComponent) <= tolerance &&
+                abs(left.alphaComponent - right.alphaComponent) <= tolerance
+        }
+        var witnesses = 0
+        for y in stride(from: 8, to: expected.pixelsHigh - 8, by: 32) {
+            for x in stride(from: 8, to: expected.pixelsWide - 8, by: 32) {
+                let reference = color(expected, x, y)
+                guard reference.alphaComponent > 0.99,
+                      [(-4, 0), (4, 0), (0, -4), (0, 4)].allSatisfy({
+                          close(reference, color(expected, x + $0.0, y + $0.1), tolerance: 0.02)
+                      }) else { continue }
+                try require(close(reference, color(actual, x, y), tolerance: 0.13),
+                            "live note lost or misplaced a diagram at raster pixel \(x),\(y)")
+                witnesses += 1
+            }
+        }
+        try require(witnesses >= 16, "fixture did not expose enough opaque diagram pixels to compare")
+        emit(["event": "live-export-pixels", "matchedDiagramPixels": witnesses, "scale": 2])
+    }
+
     private static func sourceSwaps(_ tile: NoteTile, board: Board, directory: URL) async throws {
         let sources = ["flowchart LR\nA[Short] --> B[Wide]", "flowchart TD\nA[Tall] --> B[Second] --> C[Third] --> D[Fourth] --> E[Last]"]
         let diagramWidth = (tile.bounds.width - 2 * ObjectMeasure.noteInset.width).rounded(.down)
@@ -173,6 +211,7 @@ private enum NoteMermaidChurn {
             }
             let actual = try rasterData(raster)
             try require(actual == expected[index], "source swap \(step) displayed a stale cached diagram")
+            try await verifyLiveDiagramPixels(tile)
             try snapshot(tile, name: "source-swap-\(step)", directory: directory)
         }
         emit(["event": "source-swaps", "edits": 3, "imageCounts": [1, 1, 1], "rasterMatches": 3])
@@ -234,6 +273,7 @@ private enum NoteMermaidChurn {
               "settledImagesTotal": settledCounts.reduce(0, +), "finalImages": try check(tile, fixture: fixture, edit: editCount - 1),
               "maxGapMs": heartbeat.maximumMilliseconds, "limitMs": gapLimitMilliseconds,
               "heartbeatSamples": heartbeat.samples, "withinLimit": passed, "assertsTiming": !profile])
+        try await verifyLiveDiagramPixels(tile)
         try snapshot(tile, name: fixture.name + "-after", directory: directory)
         if fixture.sources.count == 1 { try await sourceSwaps(tile, board: board, directory: directory) }
         return passed
