@@ -82,6 +82,7 @@ private enum TerminalRekey {
         otherWindow.contentView!.addSubview(otherEditor)
         defer {
             board.onEvent = nil
+            mirror.close()
             canvas.discard()
             otherWindow.close()
             window.close()

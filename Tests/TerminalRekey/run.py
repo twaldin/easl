@@ -51,8 +51,8 @@ def main():
                     "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
     with tempfile.TemporaryDirectory(prefix="easl-terminal-rekey-") as temporary:
-        bundle = pathlib.Path(temporary) / "TerminalRekey.app" / "Contents"
-        (bundle / "MacOS").mkdir(parents=True)
+        bundle = build / "TerminalRekey.app" / "Contents"
+        (bundle / "MacOS").mkdir(parents=True, exist_ok=True)
         launched = bundle / "MacOS" / "TerminalRekey"
         shutil.copy2(executable, launched)
         with (bundle / "Info.plist").open("wb") as info:

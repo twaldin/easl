@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- New remote terminals keep keyboard focus when the host assigns their final ID, without taking it back from the composer, another tile, or another window. Typing before that confirmation is visibly refused rather than queued.
+
 ## 0.3.3
 
 easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for HTML tiles made by omp agents on local boards. Oversized browser tiles now scroll natively.
