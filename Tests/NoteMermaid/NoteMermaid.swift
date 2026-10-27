@@ -172,7 +172,7 @@ private enum NoteMermaidRegression {
             let cold = await NoteMermaid.resolve(coldDocument, width: width, appearance: .light)
             let preparation = renderer.readyAt.map { coldStart.duration(to: $0) }
             let render = renderer.readyAt.flatMap { ready in renderer.completedAt.map { ready.duration(to: $0) } }
-            print("COLD startup: preparation=\(preparation.map { "\($0)" } ?? "unavailable") render=\(render.map { "\($0)" } ?? "unavailable") retries=\(renderer.attempts - 1)")
+            FileHandle.standardOutput.write(Data("COLD startup: preparation=\(preparation.map { "\($0)" } ?? "unavailable") render=\(render.map { "\($0)" } ?? "unavailable") retries=\(renderer.attempts - 1)\n".utf8))
             _ = try raster(cold, width: width, name: "cold startup")
             guard let preparation, let render else {
                 throw Failure(message: "cold renderer did not report readiness and completion")
