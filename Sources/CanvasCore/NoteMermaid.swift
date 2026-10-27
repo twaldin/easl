@@ -80,6 +80,8 @@ public enum NoteMermaid {
     static let maxDimension = 8192
     static let maxPixels = 4 * 1024 * 1024
     static let cacheBytes = 32 * 1024 * 1024
+    static let preparationTimeout: Duration = .seconds(10)
+    static let renderTimeout: Duration = .seconds(2)
     private static let maxQueued = 128
     private static let maxConsumers = 256
     private static let maxCacheEntries = 512
@@ -374,7 +376,7 @@ public enum NoteMermaid {
         private func armDeadline(_ job: Job, attempt: Attempt) {
             attempt.deadline?.cancel()
             let preparing = attempt.phase == .preparing
-            let expires = ContinuousClock.now.advanced(by: .seconds(preparing ? 10 : 2))
+            let expires = ContinuousClock.now.advanced(by: preparing ? preparationTimeout : renderTimeout)
             attempt.deadline = Task { @MainActor [weak self, weak job, weak attempt] in
                 do { try await Task.sleep(until: expires, clock: .continuous) }
                 catch { return }
