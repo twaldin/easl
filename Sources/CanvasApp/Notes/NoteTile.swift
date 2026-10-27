@@ -154,7 +154,7 @@ final class NoteTile: NSView, TileContent {
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
-        if let renderedWidth, renderedWidth != textWidth {
+        if let renderedWidth, renderedWidth != textWidth || diagramRequest.map({ $0.width != diagramWidth }) == true {
             if NoteMermaid.hasFences(in: document) {
                 scheduleDiagramResize()
             } else {

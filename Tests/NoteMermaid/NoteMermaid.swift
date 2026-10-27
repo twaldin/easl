@@ -4,6 +4,24 @@ import WebKit
 @testable import CanvasApp
 @testable import CanvasCore
 
+@MainActor
+private final class HeldMermaidRenderer: NoteMermaidBackend {
+    private var pending: [NoteMermaid.Key: @MainActor (NoteMermaid.Outcome) -> Void] = [:]
+    private(set) var starts = 0
+
+    func start(_ key: NoteMermaid.Key, completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void) {
+        starts += 1
+        pending[key] = completion
+        return { [weak self] in self?.pending.removeValue(forKey: key) }
+    }
+
+    func finish(with image: NSImage) {
+        let completions = Array(pending.values)
+        pending.removeAll()
+        for completion in completions { completion(.image(image)) }
+    }
+}
+
 @main
 @MainActor
 private enum NoteMermaidRegression {
@@ -55,11 +73,46 @@ private enum NoteMermaidRegression {
         print("RASTER \(name): logical=\(image.size) pixels=\(pixelWidth)x\(pixelHeight)")
         return image
     }
+    private static func pendingResizeRoundTrip() async throws {
+        let previous = NoteMermaid.backend
+        let renderer = HeldMermaidRenderer()
+        NoteMermaid.backend = renderer
+        defer { NoteMermaid.backend = previous }
+        let board = Board(id: "mermaid-resize", root: URL(fileURLWithPath: ProcessInfo.processInfo.environment["EASL_HOME"]!))
+        let source = "```mermaid\nflowchart LR\nPending --> Ready\n```"
+        let object = board.create(type: .note, props: .object(["markdown": .string(source)]), frame: Frame(x: 0, y: 0, w: 496, h: 240))
+        let tile = NoteTile(object: object, board: board)
+        let window = NSWindow(contentRect: tile.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView!.addSubview(tile)
+        window.orderFrontRegardless()
+        defer { tile.setLive(false); tile.removeFromSuperview(); window.close() }
+        try await wait { renderer.starts == 1 }
+        tile.setFrameSize(NSSize(width: 536, height: 240))
+        try await wait { renderer.starts == 2 }
+        tile.setFrameSize(NSSize(width: 496, height: 240))
+        try await Task.sleep(for: .milliseconds(200))
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 80, pixelsHigh: 40,
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                      isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        bitmap.bitmapData!.initialize(repeating: 128, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        bitmap.size = NSSize(width: 40, height: 20)
+        let image = NSImage(size: bitmap.size)
+        image.addRepresentation(bitmap)
+        renderer.finish(with: image)
+        try await wait {
+            textViews(tile).contains { text in
+                !text.isEditable && attachments(text.attributedString()).count == 1 && !text.string.contains("Pending")
+            }
+        }
+        print("PASS pending Mermaid width round-trip replaces source with completed output")
+    }
 
     static func main() async throws {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
         app.finishLaunching()
+        try await pendingResizeRoundTrip()
         NoteMermaid.backend = NoteMermaidWeb()
         defer { NoteMermaid.backend = nil }
         let source = "```mermaid\nflowchart LR\nsubgraph Work\ndirection LR\nA[Start] --> B[Finish]\nend\n```"
