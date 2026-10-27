@@ -1063,6 +1063,7 @@ final class NoteDisplayView: NSTextView {
             } else {
                 imageLayer = CALayer()
                 imageLayer.contentsGravity = .resizeAspect
+                imageLayer.zPosition = 1
                 backing.addSublayer(imageLayer)
                 diagramLayers.append(imageLayer)
             }
