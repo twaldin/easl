@@ -8,6 +8,7 @@ Users browse in native WebKit tiles, automate page controls through the CLI, and
 - `browser-cli` locates and drives page elements through the cmux browser subset.
 - `browser-relay` forwards native input from viewer B to a page drawn by viewer A.
 - `browser-gates` distinguishes first visible response from settled sharp assignment.
+- `browser-scroll` uses the separate [native scrolling journey](browser-scroll.md) for oversized-edge reveal, wheel units, phased ownership, and replay limits.
 
 ## How to get to it (user POV)
 

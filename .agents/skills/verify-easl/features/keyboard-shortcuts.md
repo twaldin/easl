@@ -30,6 +30,6 @@ Preconditions: an isolated `EASL_DEV_HOME`, fresh settings, one owned terminal, 
 
 - `input command` calls an AppKit selector directly. It does not prove the physical shortcut path. `shortcut` and `key` do exercise key equivalents and the responder chain.
 - Settings and a board can have different window IDs under one PID. Untargeted input can test the wrong responder.
-- System-reserved chords are refused. Bare letters are drawing tools, not global shortcuts.
+- Hard-coded reserved chords are refused. An action's own default bypasses the additional enabled macOS symbolic-hotkey check. Bare letters are drawing tools, not global shortcuts. Replay uses US-ANSI key codes and supplied characters; it does not qualify non-US physical-key translation.
 - Custom menu bindings and unchanged default bindings have different precedence over Ghostty remaps. Test both when changing that contract.
 - Use current menu titles and AX labels. The default table is not proof that an instance has those bindings.

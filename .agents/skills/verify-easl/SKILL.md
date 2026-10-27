@@ -48,7 +48,7 @@ ssh -t -o BatchMode=yes twaldin-home \
   "python3 -u $H/claim.py --guest any --boot --wait 900 $LANE $H -- /bin/zsh -l"
 ```
 
-Require `acquired`, `booted`, and `guest-silent`. The helper boots without a display or VNC viewer. It never adopts an already-running guest. Copy the concrete `EASL_GUI_GUEST` from the acquired shell into every other terminal. Never pass `any` to SSH or `guest.py`.
+Require `acquired`, `booted`, and `guest-silent`. A `deferred` event means Deadlock is running on home. Leave the FIFO wait in place until it exits; never stop the game, bypass the check, or use an older helper. If the wait expires with `busy` and `game:true`, copy the current helper and rejoin. The helper boots without a display or VNC viewer and never adopts an already-running guest. Copy the concrete `EASL_GUI_GUEST` from the acquired shell into every other terminal. Never pass `any` to SSH or `guest.py`.
 
 Between **every GUI step**, run on the lane machine:
 
@@ -56,7 +56,7 @@ Between **every GUI step**, run on the lane machine:
 ssh -o BatchMode=yes twaldin-home "python3 $H/claim.py status"
 ```
 
-If your continuous hold is at least 3,600 seconds and anyone is queued, finish the current step, clean up fully, and rejoin the queue. Do not reset the clock for another step. Hold the claim only for guest preparation and GUI proof, not writing, review, or CI. The helper monitors pressure during overlapping guest use; never stop the other holder's guest.
+If your continuous hold is at least 3,600 seconds and anyone is queued, finish the current step, clean up fully, and rejoin the queue. Do not reset the clock for another step. Hold the claim only for guest preparation and GUI proof, not writing, review, or CI. Never stop another holder's guest.
 
 In the claimed home shell, set `H` and `LANE` to the recorded values, then:
 
@@ -284,3 +284,5 @@ Run cleanup after **every** failed attempt as well as success. Keep the claim wh
 ## Maintain the map
 
 When a user path, menu, shortcut, CLI contract, or prerequisite changes, update its feature file in the same change. Use `/maintain-verification-skill` to check the map against the app. Do not turn an unreachable journey into a passing one by substituting a convenient entry point.
+
+For a 0.3.3 refresh, include [native browser scrolling](features/browser-scroll.md), [note Mermaid](features/note-mermaid.md), and the real-click [HTML page-message journey](features/html-send.md). BrowserScrolling is a manual authorized-capture runner, not a CI step. The HTML-send and both Mermaid native runners are wired into `.github/workflows/ci.yml`.
