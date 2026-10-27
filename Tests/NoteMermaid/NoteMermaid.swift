@@ -108,6 +108,30 @@ private enum NoteMermaidRegression {
         print("PASS pending Mermaid width round-trip replaces source with completed output")
     }
 
+    private static func kitDiagramSize(_ source: String, width: CGFloat) async throws -> CGSize {
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["EASL_HOME"]!)
+        let board = Board(id: "mermaid-kit-parity", root: root)
+        let html = "<style>body{padding:0}.mermaid{margin:0}</style><pre class=\"mermaid\">\(source)</pre>"
+        let object = board.create(type: .html, props: .object(["html": .string(html)]),
+                                  frame: Frame(x: 0, y: 0, w: Double(width), h: 1200))
+        let tile = HtmlTile(object: object, board: board)
+        let window = NSWindow(contentRect: tile.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView!.addSubview(tile)
+        window.orderFrontRegardless()
+        defer { tile.setLive(false); tile.removeFromSuperview(); window.close() }
+        var ready = false
+        tile.whenLiveReady { ready = true }
+        try await wait { ready }
+        guard let web = tile.webView,
+              let dimensions = try await web.evaluateJavaScript("const box = document.querySelector('.mermaid svg').getBoundingClientRect(); ({width: box.width, height: box.height})") as? [String: Double],
+              let width = dimensions["width"], let height = dimensions["height"] else {
+            throw Failure(message: "HTML kit did not produce a Mermaid diagram")
+        }
+        return CGSize(width: width, height: height)
+    }
+
     static func main() async throws {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -148,6 +172,10 @@ private enum NoteMermaidRegression {
             let rendered = NoteRenderer(excerpts: [:], source: source, width: 1400, diagrams: outcomes).render(document, placeholder: "")
             try require(attachments(rendered).count == 1 && !rendered.string.contains(fixture.source), "\(fixture.name) must display its image instead of source")
         }
+        let canonicalGantt = try await kitDiagramSize(gantt, width: 1392)
+        let noteGantt = try raster(await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\n\(gantt)\n```"), width: 1400, appearance: .light), width: 1400, name: "gantt kit parity")
+        try require(abs(noteGantt.size.width - canonicalGantt.width) <= 1 && abs(noteGantt.size.height - canonicalGantt.height) <= 1,
+                    "note gantt must use the HTML kit's container geometry: \(noteGantt.size) versus \(canonicalGantt)")
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["EASL_HOME"]!).appendingPathComponent("board")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = Board(id: "mermaid-native", root: root)

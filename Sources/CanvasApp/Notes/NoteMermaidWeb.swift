@@ -194,6 +194,8 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     private static let renderScript = #"""
     const host = document.createElement('div');
     host.id = 'diagram';
+    host.className = 'mermaid';
+    host.dataset.processed = 'true';
     host.style.width = width + 'px';
     document.body.replaceChildren(host);
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
@@ -205,7 +207,7 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     };
     configuration.secure = [...new Set([...mermaid.mermaidAPI.getConfig().secure, 'dompurifyConfig', 'secure'])];
     mermaid.initialize(configuration);
-    const result = await mermaid.render('noteDiagram', source);
+    const result = await mermaid.render('noteDiagram', source, host);
     host.innerHTML = result.svg;
     for (const node of host.querySelectorAll('image,img,iframe,object,embed,script,video,audio,source,link,meta,base')) node.remove();
     for (const node of host.querySelectorAll('*')) {
@@ -218,6 +220,8 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     }
     const svg = host.querySelector('svg');
     if (!svg) throw new Error('No SVG');
+    host.style.display = 'block';
+    host.style.margin = '0';
     const box = svg.getBoundingClientRect();
     if (![box.width, box.height].every(value => Number.isFinite(value) && value > 0)) throw new Error('Invalid dimensions');
     const scale = Math.min(1, width / box.width, 8192 / box.width, 8192 / box.height, Math.sqrt(4194304 / box.width / box.height));
