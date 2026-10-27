@@ -250,14 +250,8 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func applyDisplay(_ diagrams: [Int: NoteMermaid.Outcome]) {
-        var attachments: [NSTextAttachment] = []
-        if !diagrams.isEmpty, let storage = display.textStorage {
-            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
-                if let attachment = value as? NSTextAttachment { attachments.append(attachment) }
-            }
-        }
         let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
-                                    diagrams: diagrams, diagramAttachments: attachments, compositedDiagrams: true)
+                                    diagrams: diagrams, compositedDiagrams: true)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
@@ -1069,7 +1063,6 @@ final class NoteDisplayView: NSTextView {
             } else {
                 imageLayer = CALayer()
                 imageLayer.contentsGravity = .resizeAspect
-                imageLayer.zPosition = 1
                 backing.addSublayer(imageLayer)
                 diagramLayers.append(imageLayer)
             }
@@ -1081,7 +1074,27 @@ final class NoteDisplayView: NSTextView {
             count += 1
         }
         while diagramLayers.count > count { diagramLayers.removeLast().removeFromSuperlayer() }
+        restoreDiagramLayerOrder()
         CATransaction.commit()
+    }
+
+    private func restoreDiagramLayerOrder() {
+        guard !diagramLayers.isEmpty, let backing = layer else { return }
+        let sublayers = backing.sublayers ?? []
+        let start = sublayers.count - diagramLayers.count
+        if start >= 0 && diagramLayers.indices.allSatisfy({ sublayers[start + $0] === diagramLayers[$0] }) {
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // cacheDisplay follows sibling order, not zPosition, above AppKit's selection layers.
+        for imageLayer in diagramLayers { backing.addSublayer(imageLayer) }
+        CATransaction.commit()
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        restoreDiagramLayerOrder()
     }
 
     override func viewDidMoveToWindow() {
@@ -1128,6 +1141,7 @@ final class NoteDisplayView: NSTextView {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.NoteDisplayView", since: perfStart) }
         super.draw(dirtyRect)
+        restoreDiagramLayerOrder()
     }
 
     override func setFrameSize(_ newSize: NSSize) {

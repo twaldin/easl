@@ -54,6 +54,21 @@ private final class RecoveryBackend: NoteMermaidPreparingBackend {
             ready()
         }, failed: failed, completion: completion)
     }
+
+    func discardReadyRenderer() async -> Bool {
+        await withCheckedContinuation { continuation in
+            var abort: (@MainActor () -> Void)?
+            let finish: @MainActor (Bool) -> Void = { ready in
+                guard let cancel = abort else { return }
+                abort = nil
+                cancel()
+                continuation.resume(returning: ready)
+            }
+            let key = NoteMermaid.Key(source: "flowchart LR\nDiscard --> Ready\n", width: 1400, appearance: .light)
+            abort = renderer.start(key, ready: { finish(true) }, failed: { _ in finish(false) },
+                                   completion: { _ in finish(false) })
+        }
+    }
 }
 
 @MainActor
@@ -301,32 +316,131 @@ private enum NoteMermaidChurn {
         let expected = NSBitmapImageRep(cgImage: pixels)
         try require(actual.pixelsWide == expected.pixelsWide && actual.pixelsHigh == expected.pixelsHigh,
                     "live note and independent export have different raster bounds at capture scale \(scale)")
-        func color(_ bitmap: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor {
-            bitmap.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
+        try verifyDiagramEdges(actual, expected: expected, scale: scale, state: "live-export")
+    }
+
+    private struct RasterPixels {
+        let width: Int
+        let bytes: [UInt8]
+
+        init(_ bitmap: NSBitmapImageRep) throws {
+            guard let image = bitmap.cgImage else { throw Failure(description: "pixel comparison has no CGImage") }
+            width = image.width
+            var storage = [UInt8](repeating: 0, count: width * image.height * 4)
+            let drawn = storage.withUnsafeMutableBytes { buffer in
+                guard let context = CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                                              bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue |
+                                                CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+                return true
+            }
+            guard drawn else { throw Failure(description: "pixel comparison could not normalize its raster") }
+            bytes = storage
         }
-        func close(_ left: NSColor, _ right: NSColor, tolerance: CGFloat) -> Bool {
-            abs(left.redComponent - right.redComponent) <= tolerance &&
-                abs(left.greenComponent - right.greenComponent) <= tolerance &&
-                abs(left.blueComponent - right.blueComponent) <= tolerance &&
-                abs(left.alphaComponent - right.alphaComponent) <= tolerance
+
+        func color(_ x: Int, _ y: Int) -> SIMD4<Float> {
+            let offset = (y * width + x) * 4
+            return SIMD4(Float(bytes[offset]), Float(bytes[offset + 1]),
+                         Float(bytes[offset + 2]), Float(bytes[offset + 3])) / 255
         }
-        var witnesses = 0
-        for y in stride(from: 8, to: expected.pixelsHigh - 8, by: 32) {
-            for x in stride(from: 8, to: expected.pixelsWide - 8, by: 32) {
-                let reference = color(expected, x, y)
-                guard reference.alphaComponent > 0.99,
-                      [(-4, 0), (4, 0), (0, -4), (0, 4)].allSatisfy({
-                          close(reference, color(expected, x + $0.0, y + $0.1), tolerance: 0.02)
-                      }) else { continue }
-                try require(close(reference, color(actual, x, y), tolerance: 0.13),
-                            "live note lost or misplaced a diagram at raster pixel \(x),\(y)")
-                witnesses += 1
+    }
+
+    private struct PixelWitness {
+        let x: Int
+        let y: Int
+        let color: SIMD4<Float>
+    }
+
+    private static func verifyDiagramEdges(_ actual: NSBitmapImageRep, expected: NSBitmapImageRep,
+                                           scale: CGFloat, state: String) throws {
+        let observed = try RasterPixels(actual)
+        let referencePixels = try RasterPixels(expected)
+        func distance(_ left: SIMD4<Float>, _ right: SIMD4<Float>) -> Float {
+            max(abs(left.x - right.x), abs(left.y - right.y), abs(left.z - right.z))
+        }
+        let radius = max(2, Int(ceil(2 * scale)))
+        var witnesses: [PixelWitness] = []
+        for y in stride(from: radius + 1, to: expected.pixelsHigh - radius - 1, by: 2) {
+            for x in stride(from: radius + 1, to: expected.pixelsWide - radius - 1, by: 2) {
+                let reference = referencePixels.color(x, y)
+                guard reference.w > 0.99 else { continue }
+                let right = referencePixels.color(x + 1, y), below = referencePixels.color(x, y + 1)
+                guard (right.w > 0.99 && distance(reference, right) > 0.2) ||
+                    (below.w > 0.99 && distance(reference, below) > 0.2) else { continue }
+                witnesses.append(PixelWitness(x: x, y: y, color: reference))
             }
         }
-        try require(witnesses >= 16, "fixture did not expose enough opaque diagram pixels to compare")
-        emit(["event": "live-export-pixels", "matchedDiagramPixels": witnesses, "scale": scale,
-              "pixelsWide": actual.pixelsWide, "pixelsHigh": actual.pixelsHigh,
-              "windowBackingScale": tile.window?.backingScaleFactor ?? 1])
+        try require(witnesses.count >= 16, "\(state): fixture lacks opaque diagram edge witnesses")
+        func error(dx: Int, dy: Int) -> Float {
+            witnesses.reduce(Float.zero) { total, witness in
+                total + distance(witness.color, observed.color(witness.x + dx, witness.y + dy))
+            } / Float(witnesses.count)
+        }
+        let aligned = error(dx: 0, dy: 0)
+        var best = (dx: 0, dy: 0, error: aligned)
+        for dy in -radius...radius {
+            for dx in -radius...radius {
+                let candidate = error(dx: dx, dy: dy)
+                if candidate < best.error { best = (dx, dy, candidate) }
+            }
+        }
+        // One raster pixel permits different antialias coverage, but never a two-point shift.
+        try require(aligned < 0.13 && abs(best.dx) <= 1 && abs(best.dy) <= 1,
+                    "\(state): missing or shifted diagram edges, error \(aligned), best offset \(best.dx),\(best.dy)")
+        try require(error(dx: radius, dy: 0) > aligned + 0.015 &&
+                    error(dx: 0, dy: radius) > aligned + 0.015,
+                    "\(state): edge witnesses cannot distinguish an injected two-point layer offset")
+        emit(["event": "diagram-edge-pixels", "state": state, "edgeWitnesses": witnesses.count,
+              "scale": scale, "alignedError": aligned, "bestOffset": [best.dx, best.dy],
+              "twoPointXError": error(dx: radius, dy: 0), "twoPointYError": error(dx: 0, dy: radius),
+              "pixelsWide": actual.pixelsWide, "pixelsHigh": actual.pixelsHigh])
+    }
+
+    private static func verifySelectedDiagramPixels(_ tile: NoteTile) throws {
+        tile.layoutSubtreeIfNeeded()
+        tile.displayIfNeeded()
+        let text = try display(tile)
+        guard let sourceContainer = text.textContainer,
+              let actual = tile.bitmapImageRepForCachingDisplay(in: tile.bounds),
+              let clip = text.enclosingScrollView?.contentView else {
+            throw Failure(description: "selected diagram comparison has no native viewport")
+        }
+        tile.cacheDisplay(in: tile.bounds, to: actual)
+        let scale = CGFloat(actual.pixelsWide) / tile.bounds.width
+        try require(abs(CGFloat(actual.pixelsHigh) / tile.bounds.height - scale) < 0.001,
+                    "selected native capture has inconsistent scale")
+        let expectedText = NSMutableAttributedString(attributedString: text.attributedString())
+        expectedText.removeAttribute(.noteDiagramImage, range: NSRange(location: 0, length: expectedText.length))
+        let content = NSTextContentStorage()
+        let layout = NSTextLayoutManager()
+        let delegate = NoteLayoutDelegate()
+        layout.delegate = delegate
+        let container = NSTextContainer(size: sourceContainer.size)
+        container.lineFragmentPadding = sourceContainer.lineFragmentPadding
+        layout.textContainer = container
+        content.addTextLayoutManager(layout)
+        content.attributedString = expectedText
+        layout.ensureLayout(for: layout.documentRange)
+        let request = TileRenderRequest(size: tile.bounds.size, scale: scale, full: false,
+                                        appearance: NSAppearance(named: .aqua)!)
+        let reference = request.image { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            context.clip(to: tile.convert(clip.bounds, from: clip))
+            layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+                let point = text.convert(NSPoint(x: text.textContainerOrigin.x + fragment.layoutFragmentFrame.minX,
+                                                y: text.textContainerOrigin.y + fragment.layoutFragmentFrame.minY), to: tile)
+                fragment.draw(at: point, in: context)
+                return true
+            }
+        }
+        withExtendedLifetime((content, delegate)) {}
+        guard let pixels = reference?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw Failure(description: "independent selected-viewport fragment drawing has no bitmap")
+        }
+        try verifyDiagramEdges(actual, expected: NSBitmapImageRep(cgImage: pixels), scale: scale,
+                               state: "read-only-selection")
     }
 
     private static func sourceSwaps(_ tile: NoteTile, board: Board, directory: URL) async throws {
@@ -542,6 +656,7 @@ private enum NoteMermaidChurn {
                     "read-only selection across diagram did not copy the displayed range")
         try geometry(tile, state: "read-only-selection", zoom: zoom)
         try record("read-only-selection", expected: fixture.sources.count)
+        try verifySelectedDiagramPixels(tile)
         try await stage("native-read-only-selection", tile: tile, directory: directory)
         text.setSelectedRange(NSRange(location: 0, length: 0))
         tile.setHostBoardClosed(false)
@@ -639,8 +754,15 @@ private enum NoteMermaidChurn {
         defer { NoteMermaid.backend = previous }
         let first = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nFresh --> Ready\n```"),
                                              width: 1400, appearance: .light)
-        guard case .image? = first[1], let cold = backend.preparationMilliseconds.first else {
-            throw Failure(description: "fresh renderer did not produce the recovery control image")
+        guard case .image? = first[1] else {
+            throw Failure(description: "fresh renderer did not produce the recovery warmup image")
+        }
+        let discarded = await backend.discardReadyRenderer()
+        try require(discarded, "benign renderer restart control could not terminate its prepared page")
+        let control = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRestart --> Ready\n```"),
+                                               width: 1400, appearance: .light)
+        guard case .image? = control[1], let cold = backend.preparationMilliseconds.last else {
+            throw Failure(description: "benign renderer restart did not produce the recovery control image")
         }
         let hostile = "---\nconfig:\n  radar:\n    width: 4000\n    height: 4000\n---\nradar-beta\nshowLegend false\naxis a,b,c,d\ncurve "
             + (0..<3300).map { "c\($0){9,9,9,9}" }.joined(separator: ",")
@@ -662,7 +784,7 @@ private enum NoteMermaidChurn {
             guard case .image? = next[1], let preparation = backend.preparationMilliseconds.last else {
                 throw Failure(description: "ordinary diagram did not recover after a renderer timeout")
             }
-            emit(["event": "timeout-recovery", "trial": trial, "freshPreparationMs": cold,
+            emit(["event": "timeout-recovery", "trial": trial, "restartPreparationMs": cold,
                   "recoveryPreparationMs": preparation, "excessMs": preparation - cold,
                   "maximumExcessMs": 750, "timedOut": timedOut, "activeMs": active * 1000, "assertsTiming": !profile])
             try require(profile || preparation <= cold + 750,

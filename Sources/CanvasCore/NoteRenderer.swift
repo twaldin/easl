@@ -15,7 +15,6 @@ public final class NoteRenderer {
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
     private let diagrams: [Int: NoteMermaid.Outcome]
-    private let diagramAttachments: [NSTextAttachment]
     private let compositedDiagrams: Bool
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
@@ -34,13 +33,12 @@ public final class NoteRenderer {
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
-                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:], diagramAttachments: [NSTextAttachment] = [],
+                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:],
                 compositedDiagrams: Bool = false) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
         self.diagrams = diagrams
-        self.diagramAttachments = diagramAttachments
         self.compositedDiagrams = compositedDiagrams
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
@@ -546,14 +544,9 @@ public final class NoteRenderer {
             if let diagram = diagrams[line] {
                 switch diagram {
                 case .image(let image):
-                    let attachment: NSTextAttachment
-                    if let existing = diagramAttachments.first(where: { $0.image === image }) {
-                        attachment = existing
-                    } else {
-                        attachment = NoteImageAttachment()
-                        attachment.image = image
-                        attachment.allowsTextAttachmentView = false
-                    }
+                    let attachment = NoteImageAttachment()
+                    attachment.image = image
+                    attachment.allowsTextAttachmentView = false
                     let paragraph = style(context, spacing: 8, before: 2)
                     paragraph.alignment = .center
                     append("\u{FFFC}\n", [
