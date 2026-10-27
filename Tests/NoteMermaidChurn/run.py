@@ -48,6 +48,8 @@ def main():
                         help="Whole native process deadline in seconds, including screenshot pauses. Default 600.")
     parser.add_argument("--artifacts", type=pathlib.Path,
                         help="Directory for PNGs, JSONL and cleanup metadata. Defaults under explicit --scratch, otherwise under --bin-path.")
+    parser.add_argument("--recovery-only", action="store_true",
+                        help="Run only the natural-timeout/ordinary-diagram recovery regression.")
     parser.add_argument("--profile", action="store_true",
                         help="Keep image assertions, disable only the 50ms limit, and pause 3s after each churn-ready event for sampling.")
     args = parser.parse_args()
@@ -131,6 +133,8 @@ def run(args, parser, scratch):
                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         if args.profile:
             native_command.append("--profile")
+        if args.recovery_only:
+            native_command.append("--recovery-only")
         native_log = artifacts / "native.jsonl"
         log = native_log.open("w")
         process = subprocess.Popen(native_command, cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)

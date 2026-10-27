@@ -38,6 +38,25 @@ private final class Heartbeat {
 }
 
 @MainActor
+private final class RecoveryBackend: NoteMermaidPreparingBackend {
+    private let renderer = NoteMermaidWeb()
+    private(set) var preparationMilliseconds: [Double] = []
+    private(set) var readyUptime = 0.0
+
+    func start(_ key: NoteMermaid.Key, ready: @escaping @MainActor () -> Void,
+               failed: @escaping @MainActor (String) -> Void,
+               completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void) {
+        let began = ProcessInfo.processInfo.systemUptime
+        return renderer.start(key, ready: { [weak self] in
+            let now = ProcessInfo.processInfo.systemUptime
+            self?.preparationMilliseconds.append((now - began) * 1000)
+            self?.readyUptime = now
+            ready()
+        }, failed: failed, completion: completion)
+    }
+}
+
+@MainActor
 private enum NoteMermaidChurn {
     private struct Failure: Error, CustomStringConvertible {
         let description: String
@@ -97,7 +116,7 @@ private enum NoteMermaidChurn {
     }
 
     private static func layerRaster(_ layer: CALayer) -> CGImage? {
-        guard let contents = layer.contents, CFGetTypeID(contents as CFTypeRef) == CGImageGetTypeID() else { return nil }
+        guard let contents = layer.contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else { return nil }
         return (contents as! CGImage)
     }
 
@@ -611,6 +630,44 @@ private enum NoteMermaidChurn {
         return observed
     }
 
+    private static func timeoutRecovery(profile: Bool) async throws {
+        let previous = NoteMermaid.backend
+        let backend = RecoveryBackend()
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let first = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nFresh --> Ready\n```"),
+                                             width: 1400, appearance: .light)
+        guard case .image? = first[1], let cold = backend.preparationMilliseconds.first else {
+            throw Failure(description: "fresh renderer did not produce the recovery control image")
+        }
+        let hostile = "---\nconfig:\n  radar:\n    width: 4000\n    height: 4000\n---\nradar-beta\nshowLegend false\naxis a,b,c,d\ncurve "
+            + (0..<3300).map { "c\($0){9,9,9,9}" }.joined(separator: ",")
+        for trial in 0..<3 {
+            let stopped = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\n\(hostile)\n%% recovery \(trial)\n```"),
+                                                   width: 1400, appearance: .light)
+            let active = ProcessInfo.processInfo.systemUptime - backend.readyUptime
+            let timedOut: Bool
+            switch stopped[1] {
+            case .image?: timedOut = false
+            case .fallback?:
+                try require(active >= 1.9, "recovery workload fell back without exercising the warm deadline")
+                timedOut = true
+            case nil: throw Failure(description: "recovery workload produced no outcome")
+            }
+            try require(profile || active < 2.25, "warm renderer exceeded its two-second deadline")
+            let next = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRecovered\(trial) --> Ready\n```"),
+                                                width: 1400, appearance: .light)
+            guard case .image? = next[1], let preparation = backend.preparationMilliseconds.last else {
+                throw Failure(description: "ordinary diagram did not recover after a renderer timeout")
+            }
+            emit(["event": "timeout-recovery", "trial": trial, "freshPreparationMs": cold,
+                  "recoveryPreparationMs": preparation, "excessMs": preparation - cold,
+                  "maximumExcessMs": 750, "timedOut": timedOut, "activeMs": active * 1000, "assertsTiming": !profile])
+            try require(profile || preparation <= cold + 750,
+                        "a timed-out diagram delayed the next ordinary diagram beyond cold preparation")
+        }
+    }
+
     static func main() async throws {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -621,11 +678,14 @@ private enum NoteMermaidChurn {
         let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         var supplied: [Fixture] = []
         var profile = false
+        var recoveryOnly = false
         var argument = 2
         while argument < CommandLine.arguments.count {
             let option = CommandLine.arguments[argument]
             if option == "--profile" {
                 profile = true
+            } else if option == "--recovery-only" {
+                recoveryOnly = true
             } else if option == "--stage-seconds" {
                 argument += 1
                 guard argument < CommandLine.arguments.count,
@@ -652,6 +712,11 @@ private enum NoteMermaidChurn {
             argument += 1
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if recoveryOnly {
+            try await timeoutRecovery(profile: profile)
+            emit(["event": "result", "status": "passed", "proof": "timeout-recovery"])
+            return
+        }
         let root = URL(fileURLWithPath: home).appendingPathComponent("churn-board", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = Board(id: "mermaid-churn", root: root)
@@ -690,6 +755,7 @@ private enum NoteMermaidChurn {
             results.append(try await churn(largestFixture, board: board, directory: directory, profile: profile))
         }
         try await lifecycle(board: board, directory: directory)
+        try await timeoutRecovery(profile: profile)
         try require(profile || results.allSatisfy(\.withinLimit), "main-queue heartbeat exceeded 50ms; see churn records")
         emit(["event": "result", "status": profile ? "profile-only" : "passed",
               "churnEdits": results.reduce(0) { $0 + $1.edits },

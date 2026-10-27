@@ -93,7 +93,11 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
                         self.finish(id, .fallback("Mermaid renderer is busy."))
                         return
                     }
-                    page = Page(rules: rules, assets: assets)
+                    guard let created = Page(rules: rules, assets: assets) else {
+                        self.finish(id, .fallback("Mermaid rendering cannot isolate raster work on this WebKit version."))
+                        return
+                    }
+                    page = created
                 }
                 current.page = page
                 current.preparation = nil
@@ -329,12 +333,28 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
         private static let termination = NSSelectorFromString("_killWebContentProcessAndResetState")
         var canTerminate: Bool { web.responds(to: Self.termination) }
 
-        init(rules: WKContentRuleList, assets: Assets) {
+        private static let localRenderingFeature: NSObject? = {
+            let selector = NSSelectorFromString("_features")
+            guard WKPreferences.responds(to: selector),
+                  let features = (WKPreferences.self as AnyObject).perform(selector)?.takeUnretainedValue() as? [NSObject] else { return nil }
+            return features.first {
+                $0.responds(to: NSSelectorFromString("key")) &&
+                    $0.value(forKey: "key") as? String == "UseGPUProcessForDOMRenderingEnabled"
+            }
+        }()
+
+        init?(rules: WKContentRuleList, assets: Assets) {
             let configuration = WKWebViewConfiguration()
+            let preferences = configuration.preferences
+            let setter = NSSelectorFromString("_setEnabled:forFeature:")
+            guard let feature = Self.localRenderingFeature, preferences.responds(to: setter) else { return nil }
+            typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+            let setEnabled = unsafeBitCast(preferences.method(for: setter), to: SetEnabled.self)
+            setEnabled(preferences, setter, false, feature)
             configuration.websiteDataStore = .nonPersistent()
             configuration.setURLSchemeHandler(assets, forURLScheme: "easl-note-mermaid")
             configuration.userContentController.add(rules)
-            configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+            preferences.javaScriptCanOpenWindowsAutomatically = false
             web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
             super.init()
             web.navigationDelegate = self
