@@ -558,4 +558,182 @@ struct NoteMermaidTests {
         }
         #expect(NoteMermaid.hasFences(in: NoteMarkdown.parse("> - item\n>\n>   ```mermaid\n>   graph TD; A-->B\n>   ```")))
     }
+
+    @Test func synchronousCompletionFeedsTheSameCacheAsAsyncConsumers() async throws {
+        let backend = Backend()
+        let picture = try image()
+        backend.answer = { _ in .image(picture) }
+        let previous = NoteMermaid.backend
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let document = NoteMarkdown.parse(markdown(["inline completion"]))
+        var completions = 0
+        var result: [Int: NoteMermaid.Outcome] = [:]
+        let cancel = NoteMermaid.request(document, width: 400.1, appearance: .light) {
+            completions += 1
+            result = $0
+        }
+        #expect(completions == 1)
+        #expect(renderedImage(result[1]) === picture)
+        let exported = await NoteMermaid.resolve(document, width: 400.9, appearance: .light)
+        #expect(renderedImage(exported[1]) === picture)
+        #expect(backend.requests.count == 1)
+        cancel()
+        cancel()
+        #expect(completions == 1)
+        #expect(backend.aborted.isEmpty)
+    }
+
+    @Test func synchronousHandoffKeepsAnInFlightImageAcrossProseAndFractionalWidthChanges() throws {
+        let backend = Backend()
+        let previous = NoteMermaid.backend
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let picture = try image()
+        let fence = markdown(["graph TD; A-->B"])
+        let oldSource = "Old prose.\n\n" + fence
+        let updatedSource = "Updated prose.\n\nAnother paragraph.\n\n" + fence
+        var oldCompletions = 0
+        var oldResult: [Int: NoteMermaid.Outcome] = [:]
+        var updatedCompletions = 0
+        var updatedResult: [Int: NoteMermaid.Outcome] = [:]
+        let cancelOld = NoteMermaid.request(NoteMarkdown.parse(oldSource), width: 400.1, appearance: .light) {
+            oldCompletions += 1
+            oldResult = $0
+        }
+        #expect(backend.requests.count == 1)
+        let updatedDocument = NoteMarkdown.parse(updatedSource)
+        let cancelUpdated = NoteMermaid.request(updatedDocument, width: 400.9, appearance: .light) {
+            updatedCompletions += 1
+            updatedResult = $0
+        }
+        cancelOld()
+        #expect(oldCompletions == 1)
+        #expect(oldResult.isEmpty)
+        #expect(updatedCompletions == 0)
+        #expect(backend.requests.count == 1)
+        #expect(backend.aborted.isEmpty)
+        backend.complete(0, with: .image(picture))
+        #expect(updatedCompletions == 1)
+        #expect(Set(updatedResult.keys) == [5])
+        #expect(renderedImage(updatedResult[5]) === picture)
+        let text = NoteRenderer(excerpts: [:], source: updatedSource, width: 400.9, diagrams: updatedResult)
+            .render(updatedDocument, placeholder: "")
+        #expect(text.string.contains("Updated prose."))
+        #expect(!text.string.contains("Old prose."))
+        let location = (text.string as NSString).range(of: "\u{FFFC}").location
+        try #require(location != NSNotFound)
+        #expect(text.attribute(.attachment, at: location, effectiveRange: nil) != nil)
+        #expect(text.attribute(.noteMarkdownLine, at: location, effectiveRange: nil) as? Int == 5)
+        cancelOld()
+        cancelUpdated()
+        #expect(oldCompletions == 1)
+        #expect(updatedCompletions == 1)
+        #expect(backend.aborted.isEmpty)
+    }
+
+    @Test func synchronousHandoffKeepsQueuedFencesAndAbortsOnlyRemovedWork() throws {
+        let backend = Backend()
+        let previous = NoteMermaid.backend
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let kept = try image(width: 100)
+        let queued = try image(width: 110)
+        let added = try image(width: 120)
+        let oldDocument = NoteMarkdown.parse(markdown(["kept", "removed", "queued"]))
+        let updatedDocument = NoteMarkdown.parse("Updated prose.\n\n" + markdown(["queued", "kept", "added"]))
+        var oldCompletions = 0
+        var updatedCompletions = 0
+        var result: [Int: NoteMermaid.Outcome] = [:]
+        let cancelOld = NoteMermaid.request(oldDocument, width: 400, appearance: .light) { _ in oldCompletions += 1 }
+        #expect(backend.requests.map(\.key.source) == ["kept\n", "removed\n"])
+        let cancelUpdated = NoteMermaid.request(updatedDocument, width: 400, appearance: .light) {
+            updatedCompletions += 1
+            result = $0
+        }
+        cancelOld()
+        #expect(oldCompletions == 1)
+        #expect(backend.aborted == [1])
+        #expect(backend.requests.map(\.key.source) == ["kept\n", "removed\n", "queued\n"])
+        backend.complete(0, with: .image(kept))
+        #expect(backend.requests.map(\.key.source) == ["kept\n", "removed\n", "queued\n", "added\n"])
+        backend.complete(2, with: .image(queued))
+        #expect(updatedCompletions == 0)
+        backend.complete(3, with: .image(added))
+        #expect(updatedCompletions == 1)
+        #expect(Set(result.keys) == [3, 7, 11])
+        #expect(renderedImage(result[3]) === queued)
+        #expect(renderedImage(result[7]) === kept)
+        #expect(renderedImage(result[11]) === added)
+        backend.complete(1, with: .fallback("late removed result"))
+        #expect(updatedCompletions == 1)
+        cancelUpdated()
+        #expect(backend.aborted == [1])
+    }
+
+    @Test func synchronousLastConsumerCancellationAbortsImmediatelyAndRejectsLateImages() throws {
+        let backend = Backend()
+        let previous = NoteMermaid.backend
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let document = NoteMarkdown.parse(markdown(["cancel and retry"]))
+        let stale = try image(width: 110)
+        let current = try image(width: 120)
+        var cancelledCompletions = 0
+        var cancelledResult: [Int: NoteMermaid.Outcome] = [:]
+        let cancelOld = NoteMermaid.request(document, width: 400, appearance: .light) {
+            cancelledCompletions += 1
+            cancelledResult = $0
+        }
+        cancelOld()
+        #expect(backend.aborted == [0])
+        #expect(cancelledCompletions == 1)
+        #expect(cancelledResult.isEmpty)
+        var currentCompletions = 0
+        var currentResult: [Int: NoteMermaid.Outcome] = [:]
+        let cancelCurrent = NoteMermaid.request(document, width: 400, appearance: .light) {
+            currentCompletions += 1
+            currentResult = $0
+        }
+        #expect(backend.requests.count == 2)
+        backend.complete(0, with: .image(stale))
+        #expect(currentCompletions == 0)
+        #expect(NoteMermaid.cached(document, width: 400, appearance: .light).isEmpty)
+        backend.complete(1, with: .image(current))
+        #expect(currentCompletions == 1)
+        #expect(renderedImage(currentResult[1]) === current)
+        cancelOld()
+        cancelCurrent()
+        #expect(cancelledCompletions == 1)
+        #expect(currentCompletions == 1)
+        #expect(backend.aborted == [0])
+    }
+
+    @Test func cancellingASynchronousLiveConsumerLeavesAnAsyncExportSubscribed() async throws {
+        let backend = Backend()
+        let previous = NoteMermaid.backend
+        NoteMermaid.backend = backend
+        defer { NoteMermaid.backend = previous }
+        let picture = try image()
+        let document = NoteMarkdown.parse(markdown(["live and export"]))
+        var exported: [Int: NoteMermaid.Outcome] = [:]
+        let export = Task { @MainActor in exported = await NoteMermaid.resolve(document, width: 400, appearance: .light) }
+        try await eventually { backend.requests.count == 1 }
+        var liveCompletions = 0
+        var liveResult: [Int: NoteMermaid.Outcome] = [:]
+        let cancelLive = NoteMermaid.request(document, width: 400, appearance: .light) {
+            liveCompletions += 1
+            liveResult = $0
+        }
+        cancelLive()
+        #expect(liveCompletions == 1)
+        #expect(liveResult.isEmpty)
+        #expect(backend.aborted.isEmpty)
+        backend.complete(0, with: .image(picture))
+        await export.value
+        #expect(renderedImage(exported[1]) === picture)
+        #expect(backend.requests.count == 1)
+        #expect(backend.aborted.isEmpty)
+        #expect(liveCompletions == 1)
+    }
 }

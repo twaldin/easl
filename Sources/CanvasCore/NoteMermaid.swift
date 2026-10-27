@@ -24,7 +24,7 @@ public enum NoteMermaid {
         case fallback(String)
     }
 
-    public static func appearance(_ value: NSAppearance = NSAppearance.current) -> Appearance {
+    public static func appearance(_ value: NSAppearance = NSAppearance.currentDrawing()) -> Appearance {
         value.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
     }
 
@@ -35,6 +35,13 @@ public enum NoteMermaid {
 
     public static func resolve(_ document: Document, width: CGFloat, appearance: Appearance) async -> [Int: Outcome] {
         await service.resolve(fences(in: document, width: width, appearance: appearance))
+    }
+
+    /// Registers before returning. Completion may run synchronously; cancelling delivers any
+    /// completed outcomes once and aborts jobs only when no other consumer still needs them.
+    public static func request(_ document: Document, width: CGFloat, appearance: Appearance,
+                               completion: @escaping @MainActor ([Int: Outcome]) -> Void) -> (@MainActor () -> Void) {
+        service.request(fences(in: document, width: width, appearance: appearance), completion: completion)
     }
 
     public static func cached(_ document: Document, width: CGFloat, appearance: Appearance) -> [Int: Outcome] {
@@ -147,7 +154,7 @@ public enum NoteMermaid {
     private struct Consumer {
         var pending: [Key: [Int]]
         var outcomes: [Int: Outcome]
-        let continuation: CheckedContinuation<[Int: Outcome], Never>
+        let completion: @MainActor ([Int: Outcome]) -> Void
     }
 
     @MainActor
@@ -178,7 +185,7 @@ public enum NoteMermaid {
                     abort()
                 }
             }
-            for consumer in oldConsumers { consumer.continuation.resume(returning: consumer.outcomes) }
+            for consumer in oldConsumers { consumer.completion(consumer.outcomes) }
         }
 
         func cached(_ fences: [Fence]) -> [Int: Outcome] {
@@ -202,50 +209,60 @@ public enum NoteMermaid {
                         continuation.resume(returning: [:])
                         return
                     }
-                    var outcomes: [Int: Outcome] = [:]
-                    var pending: [Key: [Int]] = [:]
-                    for fence in fences {
-                        switch fence.admission {
-                        case .fallback(let reason): outcomes[fence.line] = .fallback(reason)
-                        case .key(let key):
-                            if let outcome = lookup(key) {
-                                outcomes[fence.line] = outcome
-                            } else {
-                                pending[key, default: []].append(fence.line)
-                            }
-                        }
-                    }
-                    guard !pending.isEmpty else {
-                        continuation.resume(returning: outcomes)
-                        return
-                    }
-                    guard consumers.count < maxConsumers else {
-                        for lines in pending.values {
-                            for line in lines { outcomes[line] = .fallback("Mermaid renderer is busy.") }
-                        }
-                        continuation.resume(returning: outcomes)
-                        return
-                    }
-                    consumers[id] = Consumer(pending: pending, outcomes: outcomes, continuation: continuation)
-                    // Preserve document order rather than dictionary iteration order in the render queue.
-                    for fence in fences {
-                        guard case .key(let key) = fence.admission, consumers[id]?.pending[key] != nil else { continue }
-                        if let job = jobs[key] {
-                            job.consumers.insert(id)
-                        } else if queue.count < maxQueued {
-                            let job = Job(key)
-                            job.consumers.insert(id)
-                            jobs[key] = job
-                            queue.append(key)
-                        } else {
-                            deliver(.fallback("Mermaid renderer is busy."), key: key, to: id)
-                        }
-                    }
-                    drain()
+                    _ = request(fences, id: id) { continuation.resume(returning: $0) }
                 }
             } onCancel: {
                 Task { @MainActor [weak self] in self?.cancel(id) }
             }
+        }
+
+        func request(_ fences: [Fence], id: UUID = UUID(),
+                     completion: @escaping @MainActor ([Int: Outcome]) -> Void) -> (@MainActor () -> Void) {
+            guard backend != nil, !fences.isEmpty else {
+                completion([:])
+                return {}
+            }
+            var outcomes: [Int: Outcome] = [:]
+            var pending: [Key: [Int]] = [:]
+            for fence in fences {
+                switch fence.admission {
+                case .fallback(let reason): outcomes[fence.line] = .fallback(reason)
+                case .key(let key):
+                    if let outcome = lookup(key) {
+                        outcomes[fence.line] = outcome
+                    } else {
+                        pending[key, default: []].append(fence.line)
+                    }
+                }
+            }
+            guard !pending.isEmpty else {
+                completion(outcomes)
+                return {}
+            }
+            guard consumers.count < maxConsumers else {
+                for lines in pending.values {
+                    for line in lines { outcomes[line] = .fallback("Mermaid renderer is busy.") }
+                }
+                completion(outcomes)
+                return {}
+            }
+            consumers[id] = Consumer(pending: pending, outcomes: outcomes, completion: completion)
+            // Preserve document order rather than dictionary iteration order in the render queue.
+            for fence in fences {
+                guard case .key(let key) = fence.admission, consumers[id]?.pending[key] != nil else { continue }
+                if let job = jobs[key] {
+                    job.consumers.insert(id)
+                } else if queue.count < maxQueued {
+                    let job = Job(key)
+                    job.consumers.insert(id)
+                    jobs[key] = job
+                    queue.append(key)
+                } else {
+                    deliver(.fallback("Mermaid renderer is busy."), key: key, to: id)
+                }
+            }
+            drain()
+            return { [weak self] in self?.cancel(id) }
         }
 
         private func cancel(_ id: UUID) {
@@ -266,7 +283,7 @@ public enum NoteMermaid {
                     abort()
                 }
             }
-            consumer.continuation.resume(returning: consumer.outcomes)
+            consumer.completion(consumer.outcomes)
             drain()
         }
 
@@ -315,7 +332,7 @@ public enum NoteMermaid {
             guard var consumer = consumers.removeValue(forKey: id), let lines = consumer.pending.removeValue(forKey: key) else { return }
             for line in lines { consumer.outcomes[line] = outcome }
             if consumer.pending.isEmpty {
-                consumer.continuation.resume(returning: consumer.outcomes)
+                consumer.completion(consumer.outcomes)
             } else {
                 consumers[id] = consumer
             }

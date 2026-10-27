@@ -16,6 +16,27 @@ final class NoteMermaidWeb: NoteMermaidBackend {
         }
     }
 
+    private struct SnapshotGeometry {
+        let size: NSSize
+        let pixelWidth: Int
+
+        init(width: Int, height: Int) {
+            size = NSSize(width: CGFloat(width), height: CGFloat(height))
+            var lower = 1
+            var upper = min(width * 2, 8192)
+            while lower < upper {
+                let candidate = (lower + upper + 1) / 2
+                let pixelHeight = (height * candidate + width - 1) / width
+                if pixelHeight <= 8192, candidate * pixelHeight <= 4_194_304 {
+                    lower = candidate
+                } else {
+                    upper = candidate - 1
+                }
+            }
+            pixelWidth = lower
+        }
+    }
+
     private var jobs: [UUID: Job] = [:]
     private var idle: [Page] = []
     private var idleRelease: Timer?
@@ -118,12 +139,14 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                     self.finish(id, .fallback("Mermaid could not render this diagram."))
                     return
                 }
-                let size = NSSize(width: width, height: height)
-                page.web.frame.size = size
+                let geometry = SnapshotGeometry(width: Int(width), height: Int(height))
+                page.web.frame.size = geometry.size
                 let snapshot = WKSnapshotConfiguration()
-                snapshot.rect = NSRect(origin: .zero, size: size)
+                snapshot.rect = NSRect(origin: .zero, size: geometry.size)
                 let backingScale = max(1, page.web.window?.backingScaleFactor ?? 1)
-                snapshot.snapshotWidth = NSNumber(value: width / Double(backingScale))
+                let snapshotPoints = (Double(geometry.pixelWidth) / Double(backingScale)).rounded(.down)
+                let targetPixelWidth = snapshotPoints > 0 ? snapshotPoints * Double(backingScale) : Double(geometry.pixelWidth)
+                snapshot.snapshotWidth = NSNumber(value: targetPixelWidth / Double(backingScale))
                 page.web.takeSnapshot(with: snapshot) { [weak self, weak page] image, _ in
                     MainActor.assumeIsolated {
                         guard let self, let page, self.jobs[id]?.page === page else { return }
@@ -133,7 +156,11 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                             self.finish(id, .fallback("Mermaid snapshot failed."))
                             return
                         }
-                        let raster = NSImage(cgImage: pixels, size: size)
+                        let bitmap = NSBitmapImageRep(cgImage: pixels)
+                        bitmap.size = geometry.size
+                        let raster = NSImage(size: geometry.size)
+                        raster.cacheMode = .never
+                        raster.addRepresentation(bitmap)
                         page.web.callAsyncJavaScript("document.body.replaceChildren(); return true;", arguments: [:], in: nil, in: .page) { [weak self, weak page] reset in
                             MainActor.assumeIsolated {
                                 guard let self, let page, self.jobs[id]?.page === page else { return }
@@ -191,7 +218,6 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     }
     const svg = host.querySelector('svg');
     if (!svg) throw new Error('No SVG');
-    svg.style.maxWidth = '100%';
     const box = svg.getBoundingClientRect();
     if (![box.width, box.height].every(value => Number.isFinite(value) && value > 0)) throw new Error('Invalid dimensions');
     const scale = Math.min(1, width / box.width, 8192 / box.width, 8192 / box.height, Math.sqrt(4194304 / box.width / box.height));
@@ -283,8 +309,8 @@ final class NoteMermaidWeb: NoteMermaidBackend {
             web.removeFromSuperview()
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            decisionHandler(!loaded && navigationAction.targetFrame?.isMainFrame == true && navigationAction.request.url == Assets.pageURL ? .allow : .cancel)
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+            !loaded && navigationAction.targetFrame?.isMainFrame == true && navigationAction.request.url == Assets.pageURL ? .allow : .cancel
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
