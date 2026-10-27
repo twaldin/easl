@@ -95,14 +95,16 @@ private enum TerminalRekey {
         }
         try require(NSApp.isActive && window.isKeyWindow,
                     "fixture must be active and key: active=\(NSApp.isActive) key=\(window.isKeyWindow)")
-        let provisional = board.create(type: .terminal, props: .object([:]))
+        let frame = Frame(x: -350, y: -200, w: 700, h: 400)
+        canvas.show(Viewport(rect: Frame(x: -450, y: -300, w: 900, h: 600), zoom: 1))
+        let provisional = board.create(type: .terminal, props: .object([:]), frame: frame)
         let first = try terminal(canvas, provisional.id)
-        canvas.select(provisional.id, extend: false)
         try require(window.makeFirstResponder(canvas.document), "canvas must initially own keyboard")
-        canvas.takeKeyboard(provisional.id)
+        canvas.showNew(provisional)
         if owner != .movedBeforeInitialFocus {
             await turn()
             try require(window.firstResponder === first.terminal, "user flow must focus provisional terminal")
+            try require(canvas.tiles[provisional.id]?.isLive == true, "fixture terminal must remain live in the viewport")
         }
 
         let expected: NSResponder
@@ -113,7 +115,7 @@ private enum TerminalRekey {
             try require(window.makeFirstResponder(composer), "composer must take keyboard")
             expected = composer
         case .otherTile:
-            let other = board.create(type: .terminal, props: .object([:]))
+            let other = board.create(type: .terminal, props: .object([:]), frame: frame)
             let tile = try terminal(canvas, other.id)
             tile.focus()
             expected = tile.terminal
