@@ -10,6 +10,8 @@ extension NSAttributedString.Key {
     public static let noteCodeRow = NSAttributedString.Key("canvas.note.codeRow")
     /// 1-based markdown line a rendered paragraph came from, to put the caret there on edit.
     public static let noteMarkdownLine = NSAttributedString.Key("canvas.note.markdownLine")
+    /// `NSImage` composited by the display; its attachment reserves a TextKit frame without painting.
+    public static let noteDiagramImage = NSAttributedString.Key("canvas.note.diagramImage")
 }
 
 /// Paragraph decorations, drawn behind the text by `NoteBlockFragment`.

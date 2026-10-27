@@ -3,15 +3,21 @@ import CanvasCore
 import WebKit
 
 @MainActor
-final class NoteMermaidWeb: NoteMermaidBackend {
+final class NoteMermaidWeb: NoteMermaidPreparingBackend {
     private final class Job {
         let key: NoteMermaid.Key
+        let ready: @MainActor () -> Void
+        let failed: @MainActor (String) -> Void
         let completion: @MainActor (NoteMermaid.Outcome) -> Void
         var preparation: Task<Void, Never>?
         var page: Page?
 
-        init(key: NoteMermaid.Key, completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) {
+        init(key: NoteMermaid.Key, ready: @escaping @MainActor () -> Void,
+             failed: @escaping @MainActor (String) -> Void,
+             completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) {
             self.key = key
+            self.ready = ready
+            self.failed = failed
             self.completion = completion
         }
     }
@@ -41,33 +47,39 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     private var idle: [Page] = []
     private var idleRelease: Timer?
     private var rules: WKContentRuleList?
-    private var ruleLoad: Task<Void, Error>?
+    private var ruleLoad: (id: UUID, task: Task<WKContentRuleList, Error>)?
     private var assets: Assets?
 
-    func start(_ key: NoteMermaid.Key, completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void) {
+    func start(_ key: NoteMermaid.Key, ready: @escaping @MainActor () -> Void,
+               failed: @escaping @MainActor (String) -> Void,
+               completion: @escaping @MainActor (NoteMermaid.Outcome) -> Void) -> (@MainActor () -> Void) {
         let id = UUID()
-        let job = Job(key: key, completion: completion)
+        let job = Job(key: key, ready: ready, failed: failed, completion: completion)
         jobs[id] = job
         job.preparation = Task { [weak self] in
             guard let self else { return }
             do {
-                if self.ruleLoad == nil {
-                    self.ruleLoad = Task { @MainActor [weak self] in
-                        do {
+                if self.rules == nil {
+                    if self.ruleLoad == nil {
+                        self.ruleLoad = (UUID(), Task { @MainActor in
                             guard let compiled = try await WKContentRuleListStore.default().compileContentRuleList(
                                 forIdentifier: "easl-note-mermaid-isolated-v1", encodedContentRuleList: Self.networkRules
                             ) else { throw URLError(.noPermissionsToReadFile) }
-                            self?.rules = compiled
-                        } catch {
-                            self?.ruleLoad = nil
-                            throw error
-                        }
+                            return compiled
+                        })
+                    }
+                    guard let load = self.ruleLoad else { throw URLError(.noPermissionsToReadFile) }
+                    do {
+                        let rules = try await load.task.value
+                        guard !Task.isCancelled, self.jobs[id] === job else { return }
+                        self.rules = rules
+                    } catch {
+                        if self.ruleLoad?.id == load.id { self.ruleLoad = nil }
+                        throw error
                     }
                 }
-                guard let ruleLoad = self.ruleLoad else { throw URLError(.noPermissionsToReadFile) }
-                try await ruleLoad.value
-                guard let rules = self.rules else { throw URLError(.noPermissionsToReadFile) }
-                guard !Task.isCancelled, let current = self.jobs[id] else { return }
+                guard !Task.isCancelled, let current = self.jobs[id],
+                      let rules = self.rules else { return }
                 if self.assets == nil {
                     guard let kitRoot = AppPaths.asset("kit") else { throw URLError(.fileDoesNotExist) }
                     self.assets = try Assets(kitRoot: kitRoot)
@@ -81,7 +93,11 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                         self.finish(id, .fallback("Mermaid renderer is busy."))
                         return
                     }
-                    page = Page(rules: rules, assets: assets)
+                    guard let created = Page(rules: rules, assets: assets) else {
+                        self.finish(id, .fallback("Mermaid rendering cannot isolate raster work on this WebKit version."))
+                        return
+                    }
+                    page = created
                 }
                 current.page = page
                 current.preparation = nil
@@ -91,7 +107,9 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                 }
                 page.web.appearance = NSAppearance(named: key.appearance == .dark ? .darkAqua : .aqua)
                 WebStage.park(page.web, frame: NSRect(x: 0, y: 0, width: CGFloat(key.width), height: 1))
-                page.failure = { [weak self] in self?.finish(id, .fallback("Mermaid renderer stopped.")) }
+                page.failure = { [weak self] in
+                    self?.finish(id, .fallback("Mermaid renderer stopped."), rendererFailed: true)
+                }
                 if page.loaded {
                     self.draw(id)
                 } else {
@@ -100,7 +118,7 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self.finish(id, .fallback("Mermaid renderer could not load its local resources."))
+                self.finish(id, .fallback("Mermaid renderer could not load its local resources."), rendererFailed: true)
             }
         }
         return { [weak self] in self?.abort(id) }
@@ -109,10 +127,15 @@ final class NoteMermaidWeb: NoteMermaidBackend {
     private func abort(_ id: UUID) {
         guard let job = jobs.removeValue(forKey: id) else { return }
         job.preparation?.cancel()
+        if rules == nil {
+            ruleLoad?.task.cancel()
+            ruleLoad = nil
+        }
         job.page?.discard()
     }
 
-    private func finish(_ id: UUID, _ outcome: NoteMermaid.Outcome, reusing page: Page? = nil) {
+    private func finish(_ id: UUID, _ outcome: NoteMermaid.Outcome, reusing page: Page? = nil,
+                        rendererFailed: Bool = false) {
         guard let job = jobs.removeValue(forKey: id) else { return }
         job.preparation?.cancel()
         if let page {
@@ -124,20 +147,34 @@ final class NoteMermaidWeb: NoteMermaidBackend {
         } else {
             job.page?.discard()
         }
-        job.completion(outcome)
+        if rendererFailed, case .fallback(let reason) = outcome {
+            job.failed(reason)
+        } else {
+            job.completion(outcome)
+        }
     }
 
     private func draw(_ id: UUID) {
         guard let job = jobs[id], let page = job.page else { return }
         page.ready = nil
+        job.ready()
+        guard jobs[id] === job else { return }
         page.web.callAsyncJavaScript(Self.renderScript,
             arguments: ["source": job.key.source, "width": job.key.width, "dark": job.key.appearance == .dark],
             in: nil, in: .page
         ) { [weak self, weak page] result in
             MainActor.assumeIsolated {
                 guard let self, let page, self.jobs[id]?.page === page else { return }
-                guard case .success(let value) = result,
-                      let dimensions = value as? [String: Double],
+                let value: Any
+                switch result {
+                case .success(let rendered):
+                    value = rendered
+                case .failure(let error):
+                    let contentFailure = (error as? WKError)?.code == .javaScriptExceptionOccurred
+                    self.finish(id, .fallback("Mermaid could not render this diagram."), rendererFailed: !contentFailure)
+                    return
+                }
+                guard let dimensions = value as? [String: Double],
                       let width = dimensions["width"], let height = dimensions["height"],
                       width.isFinite, height.isFinite, width >= 1, height >= 1,
                       width <= 8192, height <= 8192, width * height <= 4_194_304 else {
@@ -155,10 +192,13 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                 page.web.takeSnapshot(with: snapshot) { [weak self, weak page] image, _ in
                     MainActor.assumeIsolated {
                         guard let self, let page, self.jobs[id]?.page === page else { return }
-                        guard let pixels = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                              pixels.width <= 8192, pixels.height <= 8192,
+                        guard let pixels = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                            self.finish(id, .fallback("Mermaid snapshot failed."), rendererFailed: true)
+                            return
+                        }
+                        guard pixels.width <= 8192, pixels.height <= 8192,
                               pixels.width * pixels.height <= 4_194_304 else {
-                            self.finish(id, .fallback("Mermaid snapshot failed."))
+                            self.finish(id, .fallback("Mermaid image exceeds the raster limit."))
                             return
                         }
                         let bitmap = NSBitmapImageRep(cgImage: pixels)
@@ -170,7 +210,7 @@ final class NoteMermaidWeb: NoteMermaidBackend {
                             MainActor.assumeIsolated {
                                 guard let self, let page, self.jobs[id]?.page === page else { return }
                                 guard case .success = reset else {
-                                    self.finish(id, .fallback("Mermaid renderer could not reset."))
+                                    self.finish(id, .fallback("Mermaid renderer could not reset."), rendererFailed: true)
                                     return
                                 }
                                 self.finish(id, .image(raster), reusing: page)
@@ -293,12 +333,28 @@ final class NoteMermaidWeb: NoteMermaidBackend {
         private static let termination = NSSelectorFromString("_killWebContentProcessAndResetState")
         var canTerminate: Bool { web.responds(to: Self.termination) }
 
-        init(rules: WKContentRuleList, assets: Assets) {
+        private static let localRenderingFeature: NSObject? = {
+            let selector = NSSelectorFromString("_features")
+            guard WKPreferences.responds(to: selector),
+                  let features = (WKPreferences.self as AnyObject).perform(selector)?.takeUnretainedValue() as? [NSObject] else { return nil }
+            return features.first {
+                $0.responds(to: NSSelectorFromString("key")) &&
+                    $0.value(forKey: "key") as? String == "UseGPUProcessForDOMRenderingEnabled"
+            }
+        }()
+
+        init?(rules: WKContentRuleList, assets: Assets) {
             let configuration = WKWebViewConfiguration()
+            let preferences = configuration.preferences
+            let setter = NSSelectorFromString("_setEnabled:forFeature:")
+            guard let feature = Self.localRenderingFeature, preferences.responds(to: setter) else { return nil }
+            typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+            let setEnabled = unsafeBitCast(preferences.method(for: setter), to: SetEnabled.self)
+            setEnabled(preferences, setter, false, feature)
             configuration.websiteDataStore = .nonPersistent()
             configuration.setURLSchemeHandler(assets, forURLScheme: "easl-note-mermaid")
             configuration.userContentController.add(rules)
-            configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+            preferences.javaScriptCanOpenWindowsAutomatically = false
             web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
             super.init()
             web.navigationDelegate = self
@@ -323,8 +379,18 @@ final class NoteMermaidWeb: NoteMermaidBackend {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            loaded = true
-            ready?()
+            webView.callAsyncJavaScript("return typeof mermaid === 'object' && typeof mermaid.render === 'function';",
+                                       arguments: [:], in: nil, in: .page) { [weak self] result in
+                MainActor.assumeIsolated {
+                    guard let self, self.web.navigationDelegate === self else { return }
+                    guard case .success(let value) = result, value as? Bool == true else {
+                        self.failure?()
+                        return
+                    }
+                    self.loaded = true
+                    self.ready?()
+                }
+            }
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failure?() }

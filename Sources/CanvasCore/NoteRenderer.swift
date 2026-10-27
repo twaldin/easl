@@ -15,6 +15,7 @@ public final class NoteRenderer {
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
     private let diagrams: [Int: NoteMermaid.Outcome]
+    private let compositedDiagrams: Bool
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
     private lazy var sourceIndex: NoteMath.SourceIndex? = source.map(NoteMath.SourceIndex.init)
@@ -32,11 +33,13 @@ public final class NoteRenderer {
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
-                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:]) {
+                width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:],
+                compositedDiagrams: Bool = false) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
         self.diagrams = diagrams
+        self.compositedDiagrams = compositedDiagrams
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -544,12 +547,17 @@ public final class NoteRenderer {
                     let attachment = NoteImageAttachment()
                     attachment.image = image
                     attachment.allowsTextAttachmentView = false
+                    let paragraph = style(context, spacing: 8, before: 2)
+                    paragraph.alignment = .center
                     append("\u{FFFC}\n", [
                         .font: Self.bodyFont,
                         .attachment: attachment,
-                        .paragraphStyle: style(context, spacing: 8, before: 2),
+                        .paragraphStyle: paragraph,
                         .noteMarkdownLine: line,
                     ])
+                    if compositedDiagrams {
+                        out.addAttribute(.noteDiagramImage, value: image, range: NSRange(location: out.length - 2, length: 1))
+                    }
                 case .fallback(let reason):
                     append("Mermaid: \(reason)\n", [
                         .font: Self.captionFont,
@@ -681,10 +689,12 @@ public final class NoteRenderer {
     }
 }
 
-/// A note's `![alt](path)` picture: its natural size, scaled down to the line's width (never up),
-/// drawn by the text layout itself (no attachment view), so on-screen notes, renders, and
-/// `ObjectMeasure` all lay it out the same way.
 final class NoteImageAttachment: NSTextAttachment {
+    override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
+                        textContainer: NSTextContainer?) -> NSImage? {
+        attributes[.noteDiagramImage] == nil ? image : nil
+    }
+
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
                                    proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
         guard let size = image?.size, size.width > 0, size.height > 0 else { return .zero }

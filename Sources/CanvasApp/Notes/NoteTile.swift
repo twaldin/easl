@@ -70,6 +70,7 @@ final class NoteTile: NSView, TileContent {
         wantsLayer = true
         layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.16).cgColor
 
+        display.wantsLayer = true
         display.isEditable = false
         display.isSelectable = false
         display.drawsBackground = false
@@ -249,10 +250,12 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func applyDisplay(_ diagrams: [Int: NoteMermaid.Outcome]) {
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth, diagrams: diagrams)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
+                                    diagrams: diagrams, compositedDiagrams: true)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
+        display.updateDiagramLayers()
     }
 
     private func renderDisplay(diagrams: [Int: NoteMermaid.Outcome]? = nil, keepingDisplay: Bool = false) {
@@ -819,6 +822,7 @@ final class NoteTile: NSView, TileContent {
             // hierarchy: AppKit re-tiles every scroll view and rebuilds its tracking areas on each
             // frame of a canvas pan, hidden or not. `render(_:)` and cards don't use them.
             display.textStorage?.setAttributedString(NSAttributedString())
+            display.clearDiagramLayers()
             displayScroll.removeFromSuperview()
             editorScroll.removeFromSuperview()
         }
@@ -1026,6 +1030,85 @@ final class NoteTile: NSView, TileContent {
 /// A note is short; lay all of it out once per content change instead. Older SDKs do not expose
 /// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
+    private var diagramLayers: [CALayer] = []
+
+    func clearDiagramLayers() {
+        for layer in diagramLayers { layer.removeFromSuperlayer() }
+        diagramLayers.removeAll()
+    }
+
+    func updateDiagramLayers() {
+        guard let storage = textStorage, let layout = textLayoutManager,
+              let content = layout.textContentManager, let backing = layer else {
+            clearDiagramLayers()
+            return
+        }
+        guard (storage.string as NSString).contains("\u{FFFC}") else {
+            clearDiagramLayers()
+            return
+        }
+        layout.ensureLayout(for: layout.documentRange)
+        let origin = textContainerOrigin
+        var count = 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        storage.enumerateAttribute(.noteDiagramImage, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let image = value as? NSImage,
+                  let location = content.location(content.documentRange.location, offsetBy: range.location),
+                  let fragment = layout.textLayoutFragment(for: location) else { return }
+            let attachmentFrame = fragment.frameForTextAttachment(at: location)
+            let imageLayer: CALayer
+            if count < diagramLayers.count {
+                imageLayer = diagramLayers[count]
+            } else {
+                imageLayer = CALayer()
+                imageLayer.contentsGravity = .resizeAspect
+                // The compositor needs z-order; cacheDisplay also needs sibling order.
+                imageLayer.zPosition = 1
+                backing.addSublayer(imageLayer)
+                diagramLayers.append(imageLayer)
+            }
+            if imageLayer.superlayer !== backing { backing.addSublayer(imageLayer) }
+            imageLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            imageLayer.contentsScale = window?.backingScaleFactor ?? 1
+            imageLayer.frame = attachmentFrame.offsetBy(dx: origin.x + fragment.layoutFragmentFrame.minX,
+                                                        dy: origin.y + fragment.layoutFragmentFrame.minY)
+            count += 1
+        }
+        while diagramLayers.count > count { diagramLayers.removeLast().removeFromSuperlayer() }
+        restoreDiagramLayerOrder()
+        CATransaction.commit()
+    }
+
+    private func restoreDiagramLayerOrder() {
+        guard !diagramLayers.isEmpty, let backing = layer else { return }
+        let sublayers = backing.sublayers ?? []
+        let start = sublayers.count - diagramLayers.count
+        if start >= 0 && diagramLayers.indices.allSatisfy({ sublayers[start + $0] === diagramLayers[$0] }) {
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // cacheDisplay follows sibling order, not zPosition, above AppKit's selection layers.
+        for imageLayer in diagramLayers { backing.addSublayer(imageLayer) }
+        CATransaction.commit()
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        restoreDiagramLayerOrder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateDiagramLayers()
+    }
+
+    override func layout() {
+        super.layout()
+        updateDiagramLayers()
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func copy(_ sender: Any?) {
@@ -1060,6 +1143,7 @@ final class NoteDisplayView: NSTextView {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.NoteDisplayView", since: perfStart) }
         super.draw(dirtyRect)
+        restoreDiagramLayerOrder()
     }
 
     override func setFrameSize(_ newSize: NSSize) {

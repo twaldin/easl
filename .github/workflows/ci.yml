@@ -51,6 +51,10 @@ jobs:
         run: python3 Tests/VideoPlayback/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native note Mermaid regression
         run: python3 Tests/NoteMermaid/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native note Mermaid prose churn regression
+        run: |
+          swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+          python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)"
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
