@@ -714,8 +714,8 @@ private enum NoteMermaidChurn {
             argument += 1
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try await timeoutRecovery(profile: profile)
         if recoveryOnly {
-            try await timeoutRecovery(profile: profile)
             emit(["event": "result", "status": "passed", "proof": "timeout-recovery"])
             return
         }
@@ -757,7 +757,6 @@ private enum NoteMermaidChurn {
             results.append(try await churn(largestFixture, board: board, directory: directory, profile: profile))
         }
         try await lifecycle(board: board, directory: directory)
-        try await timeoutRecovery(profile: profile)
         try require(profile || results.allSatisfy(\.withinLimit), "main-queue heartbeat exceeded 50ms; see churn records")
         emit(["event": "result", "status": profile ? "profile-only" : "passed",
               "churnEdits": results.reduce(0) { $0 + $1.edits },
