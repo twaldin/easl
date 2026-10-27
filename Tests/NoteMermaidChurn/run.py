@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -31,17 +32,51 @@ def cleanup(process):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Measure warm native NoteTile prose churn with real local Mermaid rasters. Never rebuilds Easl.")
+        description="Link an optimized native NoteTile proof against an existing build, then measure geometry, lifecycle and warm prose churn. Never rebuilds Easl.",
+        epilog="Old hostile inputs are plain Mermaid source files supplied as repeated --fixture NAME=PATH, for example sequence590, nested-cross, treemap and radar1100. --stage-seconds writes stage.json with the exact native PID/window number before each screenshot pause; capture that window, not the desktop.")
     parser.add_argument("--bin-path", required=True, type=pathlib.Path,
                         help="Existing optimized native build with testable CanvasApp and CanvasCore modules.")
+    parser.add_argument("--repo", type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[2],
+                        help="Repository checkout containing this runner's Swift source and Easl resources. Defaults to this script's checkout.")
+    parser.add_argument("--scratch", type=pathlib.Path,
+                        help="Work directory for the linked proof executable and isolated temporary home. Defaults to an owned temporary directory.")
+    parser.add_argument("--fixture", action="append", default=[], metavar="NAME=PATH",
+                        help="External UTF-8 Mermaid source to render, display and include in largest-raster selection. Repeat for each old hostile source.")
+    parser.add_argument("--stage-seconds", type=float, default=0,
+                        help="Pause at native geometry/scroll/selection stages for exact PID/window capture. Default 0.")
+    parser.add_argument("--timeout", type=float, default=600,
+                        help="Whole native process deadline in seconds, including screenshot pauses. Default 600.")
     parser.add_argument("--artifacts", type=pathlib.Path,
-                        help="Directory for native note PNGs and runner cleanup metadata. Defaults under --bin-path.")
+                        help="Directory for PNGs, JSONL and cleanup metadata. Defaults under explicit --scratch, otherwise under --bin-path.")
     parser.add_argument("--profile", action="store_true",
                         help="Keep image assertions, disable only the 50ms limit, and pause 3s after each churn-ready event for sampling.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS with a native window session.")
-    root = pathlib.Path(__file__).resolve().parents[2]
+    owner = tempfile.TemporaryDirectory(prefix="easl-native-proof-") if args.scratch is None else contextlib.nullcontext(str(args.scratch.resolve()))
+    with owner as scratch:
+        run(args, parser, pathlib.Path(scratch))
+
+
+def run(args, parser, scratch):
+    root = args.repo.resolve()
+    source = root / "Tests/NoteMermaidChurn/NoteMermaidChurn.swift"
+    if not source.is_file():
+        parser.error(f"Missing native proof source: {source}")
+    if not 0 <= args.stage_seconds <= 60 or not 0 < args.timeout < float("inf"):
+        parser.error("--stage-seconds must be in 0...60 and --timeout must be positive and finite.")
+    fixtures = []
+    for value in args.fixture:
+        name, separator, filename = value.partition("=")
+        if not separator or not name or not all(c.isalnum() or c in "-_" for c in name):
+            parser.error("--fixture requires NAME=PATH with an alphanumeric, hyphen or underscore name.")
+        path = pathlib.Path(filename).resolve()
+        if not path.is_file():
+            parser.error(f"Missing fixture {name}: {path}")
+        if any(existing[0] == name for existing in fixtures):
+            parser.error(f"Duplicate fixture name: {name}")
+        fixtures.append((name, path))
+    scratch.mkdir(parents=True, exist_ok=True)
     build = args.bin_path.resolve()
     link_file = build / "Easl.product" / "Objects.LinkFileList"
     description_file = build / "description.json"
@@ -71,24 +106,29 @@ def main():
             command.extend(["-Xcc", arguments[index + 1]])
         elif argument == "-I" and "libghostty" in arguments[index + 1]:
             command.extend(["-I", arguments[index + 1]])
-    executable = build / "NoteMermaidChurn"
-    command.append(str(root / "Tests/NoteMermaidChurn/NoteMermaidChurn.swift"))
+    executable = scratch / "NoteMermaidChurn"
+    command.append(str(source))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty",
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-Xlinker", "-e", "-Xlinker", "_NoteMermaidChurnMain", "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    artifacts = (args.artifacts or build / "NoteMermaidChurn-artifacts").resolve()
+    default_artifacts = scratch / "artifacts" if args.scratch is not None else build / "NoteMermaidChurn-artifacts"
+    artifacts = (args.artifacts or default_artifacts).resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
     cleanup_record = None
     timed_out = False
-    with tempfile.TemporaryDirectory(prefix="easl-note-mermaid-churn-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="easl-note-mermaid-churn-", dir=scratch) as temporary:
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, XDG_CACHE_HOME=temporary,
                            EASL_NO_ACTIVATE="1", EASL_RESOURCES=str(root))
         environment.pop("EASL_ROOT", None)
-        native_command = [str(executable), str(artifacts)]
+        native_command = [str(executable), str(artifacts), "--stage-seconds", str(args.stage_seconds)]
+        for name, path in fixtures:
+            native_command.extend(["--fixture", f"{name}={path}"])
+            emit({"event": "fixture-input", "fixture": name, "path": str(path),
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         if args.profile:
             native_command.append("--profile")
         native_log = artifacts / "native.jsonl"
@@ -97,9 +137,10 @@ def main():
         emit({"event": "runner-start", "ownedPid": process.pid,
               "build": str(build), "optimizedObjects": True, "isolatedHome": temporary,
               "artifacts": str(artifacts), "profile": args.profile,
+              "stageSeconds": args.stage_seconds, "repo": str(root), "scratch": str(scratch),
               "probeSha256": hashlib.sha256(executable.read_bytes()).hexdigest()})
         try:
-            process.wait(timeout=180)
+            process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
         finally:
@@ -112,7 +153,7 @@ def main():
     cleanup_record["isolatedHomeRemoved"] = not pathlib.Path(temporary).exists()
     (artifacts / "runner-cleanup.json").write_text(json.dumps(cleanup_record, indent=2, sort_keys=True) + "\n")
     if timed_out:
-        parser.exit(1, "Native churn regression exceeded 180s; owned process cleanup is recorded.\n")
+        parser.exit(1, f"Native regression exceeded {args.timeout}s; owned process cleanup is recorded.\n")
     if process.returncode:
         parser.exit(1, f"Native churn regression failed with exit {process.returncode}; see native JSON records and PNG artifacts.\n")
 

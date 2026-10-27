@@ -1060,10 +1060,8 @@ final class NoteDisplayView: NSTextView {
         storage.enumerateAttribute(.noteDiagramImage, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard let image = value as? NSImage,
                   let location = content.location(content.documentRange.location, offsetBy: range.location),
-                  let fragment = layout.textLayoutFragment(for: location),
-                  let line = fragment.textLineFragments.first else { return }
-            let bounds = line.typographicBounds
-            let height = (image.size.height * bounds.width / image.size.width).rounded()
+                  let fragment = layout.textLayoutFragment(for: location) else { return }
+            let attachmentFrame = fragment.frameForTextAttachment(at: location)
             let imageLayer: CALayer
             if count < diagramLayers.count {
                 imageLayer = diagramLayers[count]
@@ -1074,11 +1072,11 @@ final class NoteDisplayView: NSTextView {
                 backing.addSublayer(imageLayer)
                 diagramLayers.append(imageLayer)
             }
+            if imageLayer.superlayer !== backing { backing.addSublayer(imageLayer) }
             imageLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
             imageLayer.contentsScale = window?.backingScaleFactor ?? 1
-            imageLayer.frame = CGRect(x: origin.x + fragment.layoutFragmentFrame.minX + bounds.minX,
-                                      y: origin.y + fragment.layoutFragmentFrame.minY + line.glyphOrigin.y - height,
-                                      width: bounds.width, height: height)
+            imageLayer.frame = attachmentFrame.offsetBy(dx: origin.x + fragment.layoutFragmentFrame.minX,
+                                                        dy: origin.y + fragment.layoutFragmentFrame.minY)
             count += 1
         }
         while diagramLayers.count > count { diagramLayers.removeLast().removeFromSuperlayer() }

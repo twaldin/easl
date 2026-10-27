@@ -112,7 +112,7 @@ extension NoteMermaidTests {
         #expect(backend.requests.count == 2)
     }
 
-    @Test func rendererFailureRetriesOnceThenCachesOnlyTheFinalFailure() {
+    @Test func rendererFailureRetriesOnceThenCachesOnlyTheFinalFailure() throws {
         let backend = PreparedBackend()
         let previous = NoteMermaid.backend
         NoteMermaid.backend = backend
@@ -122,7 +122,7 @@ extension NoteMermaidTests {
         let cancel = NoteMermaid.request(document, width: 400, appearance: .light) { results.append($0) }
         defer { cancel() }
         backend.requests[0].failed("cold process failed")
-        #expect(backend.requests.count == 2)
+        try #require(backend.requests.count == 2)
         #expect(results.isEmpty)
         #expect(NoteMermaid.cached(document, width: 400, appearance: .light).isEmpty)
         backend.requests[0].ready()

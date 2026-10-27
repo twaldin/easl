@@ -160,14 +160,12 @@ public enum NoteMermaid {
         }
 
         var phase: Phase
-        let canRetry: Bool
         var deadline: Task<Void, Never>?
         var abort: (@MainActor () -> Void)?
         var abortOnReturn = false
 
         init(preparing: Bool) {
             phase = preparing ? .preparing : .rendering
-            canRetry = preparing
         }
 
         func stop(aborting: Bool) {
@@ -392,7 +390,7 @@ public enum NoteMermaid {
                             rendererFailed: Bool = false) {
             guard isCurrent(job, attempt: attempt) else { return }
             let outcome = bounded(outcome)
-            let retry = attempt.canRetry && job.retries == 0
+            let retry = job.retries == 0
                 && (rendererFailed || (timedOut && attempt.phase == .preparing))
             let generation = self.generation
             active -= 1
@@ -404,7 +402,6 @@ public enum NoteMermaid {
                 jobs.removeValue(forKey: job.key)
             }
             attempt.stop(aborting: timedOut)
-            // Aborting may cancel the job or replace the backend through reentrant callers.
             if retry {
                 drain()
                 return

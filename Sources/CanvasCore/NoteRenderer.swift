@@ -696,7 +696,6 @@ public final class NoteRenderer {
     }
 }
 
-/// Natural-size note images share layout bounds across live views, measurements, and exports.
 final class NoteImageAttachment: NSTextAttachment {
     override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
                         textContainer: NSTextContainer?) -> NSImage? {
@@ -710,7 +709,6 @@ final class NoteImageAttachment: NSTextAttachment {
         return CGRect(x: 0, y: 0, width: width, height: (size.height * width / size.width).rounded())
     }
 }
-
 
 /// The images a note's markdown shows: board-relative paths, and absolute paths (or `file://`
 /// URLs) inside the board root or the temp directory (`LocalImage.sandboxed`), read off the main
