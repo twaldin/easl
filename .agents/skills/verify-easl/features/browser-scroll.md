@@ -37,7 +37,7 @@ scripts/dev.sh input scroll "$X" "$Y" 0 -120 --repeat 4 --interval 8 --gesture -
 
 These move toward the bottom. Use positive Y for top, negative X for right, and positive X for left. Repeat with bounded attempts until native START/END pixels and independent canvas/page readbacks prove each edge. Keep original frame/viewport readbacks for comparison. The runner uses at most 150 attempts and fails after three unchanged comparisons.
 
-On the scratch remote board, establish [A's drawing identity and B's stream](browser-tiles.md) first. Repeat native edge reveal and page scroll in B, capturing B and A separately. Two local pages are not relay proof.
+On the scratch remote board, establish [A's drawing identity and B's stream](browser-tiles.md) first. Record A's page scroll offsets or visible markers before B's input. Repeat native edge reveal and page scroll in B, capturing B and A separately. Canvas reveal changes B's viewport only. After subsequent page scrolling, require A's page state to advance and match B's streamed post-scroll markers. Retain the drawing-client and stream IDs. Two local pages are not relay proof.
 
 ## Gotchas
 
