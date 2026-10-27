@@ -166,7 +166,7 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
                 case .success(let rendered):
                     value = rendered
                 case .failure(let error):
-                    let contentFailure = (error as? WKError)?.code == .javaScriptException
+                    let contentFailure = (error as? WKError)?.code == .javaScriptExceptionOccurred
                     self.finish(id, .fallback("Mermaid could not render this diagram."), rendererFailed: !contentFailure)
                     return
                 }

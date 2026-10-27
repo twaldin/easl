@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -7,13 +8,10 @@ import platform
 import shlex
 import subprocess
 import tempfile
-import time
 
 
 def emit(record):
     print(json.dumps(record, sort_keys=True), flush=True)
-
-
 
 
 def cleanup(process):
@@ -93,10 +91,13 @@ def main():
         native_command = [str(executable), str(artifacts)]
         if args.profile:
             native_command.append("--profile")
-        process = subprocess.Popen(native_command, cwd=root, env=environment)
+        native_log = artifacts / "native.jsonl"
+        log = native_log.open("w")
+        process = subprocess.Popen(native_command, cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)
         emit({"event": "runner-start", "ownedPid": process.pid,
               "build": str(build), "optimizedObjects": True, "isolatedHome": temporary,
-              "artifacts": str(artifacts), "profile": args.profile})
+              "artifacts": str(artifacts), "profile": args.profile,
+              "probeSha256": hashlib.sha256(executable.read_bytes()).hexdigest()})
         try:
             process.wait(timeout=180)
         except subprocess.TimeoutExpired:
@@ -106,6 +107,8 @@ def main():
             cleanup_record.update(timedOut=timed_out, isolatedHome=temporary)
             (artifacts / "runner-cleanup.json").write_text(json.dumps(cleanup_record, indent=2, sort_keys=True) + "\n")
             emit(cleanup_record)
+            log.close()
+            print(native_log.read_text(), end="", flush=True)
     cleanup_record["isolatedHomeRemoved"] = not pathlib.Path(temporary).exists()
     (artifacts / "runner-cleanup.json").write_text(json.dumps(cleanup_record, indent=2, sort_keys=True) + "\n")
     if timed_out:
