@@ -250,18 +250,18 @@ final class NoteTile: NSView, TileContent {
 
     private func applyDisplay(_ diagrams: [Int: NoteMermaid.Outcome]) {
         var attachments: [NSTextAttachment] = []
-        if let storage = display.textStorage {
+        if !diagrams.isEmpty, let storage = display.textStorage {
             storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
                 if let attachment = value as? NSTextAttachment { attachments.append(attachment) }
             }
         }
         let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth,
-                                    diagrams: diagrams, diagramAttachments: attachments, diagramAttachmentViews: true)
+                                    diagrams: diagrams, diagramAttachments: attachments, compositedDiagrams: true)
         let text = renderer.render(document, placeholder: Self.placeholder)
         renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
+        display.updateDiagramLayers()
     }
-
 
     private func renderDisplay(diagrams: [Int: NoteMermaid.Outcome]? = nil, keepingDisplay: Bool = false) {
         guard live || isEditing else { return }
@@ -827,6 +827,7 @@ final class NoteTile: NSView, TileContent {
             // hierarchy: AppKit re-tiles every scroll view and rebuilds its tracking areas on each
             // frame of a canvas pan, hidden or not. `render(_:)` and cards don't use them.
             display.textStorage?.setAttributedString(NSAttributedString())
+            display.clearDiagramLayers()
             displayScroll.removeFromSuperview()
             editorScroll.removeFromSuperview()
         }
@@ -1034,6 +1035,61 @@ final class NoteTile: NSView, TileContent {
 /// A note is short; lay all of it out once per content change instead. Older SDKs do not expose
 /// this viewport delegate method to Swift.
 final class NoteDisplayView: NSTextView {
+    private var diagramLayers: [CALayer] = []
+
+    func clearDiagramLayers() {
+        for layer in diagramLayers { layer.removeFromSuperlayer() }
+        diagramLayers.removeAll()
+    }
+
+    func updateDiagramLayers() {
+        guard let storage = textStorage, let layout = textLayoutManager,
+              let content = layout.textContentManager, let backing = layer else {
+            clearDiagramLayers()
+            return
+        }
+        guard (storage.string as NSString).contains("\u{FFFC}") else {
+            clearDiagramLayers()
+            return
+        }
+        layout.ensureLayout(for: layout.documentRange)
+        let origin = textContainerOrigin
+        var count = 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        storage.enumerateAttribute(.noteDiagramImage, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let image = value as? NSImage,
+                  let location = content.location(content.documentRange.location, offsetBy: range.location),
+                  let fragment = layout.textLayoutFragment(for: location),
+                  let line = fragment.textLineFragments.first else { return }
+            let bounds = line.typographicBounds
+            let height = (image.size.height * bounds.width / image.size.width).rounded()
+            let imageLayer: CALayer
+            if count < diagramLayers.count {
+                imageLayer = diagramLayers[count]
+            } else {
+                imageLayer = CALayer()
+                imageLayer.contentsGravity = .resizeAspect
+                imageLayer.zPosition = 1
+                backing.addSublayer(imageLayer)
+                diagramLayers.append(imageLayer)
+            }
+            imageLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            imageLayer.contentsScale = window?.backingScaleFactor ?? 1
+            imageLayer.frame = CGRect(x: origin.x + fragment.layoutFragmentFrame.minX + bounds.minX,
+                                      y: origin.y + fragment.layoutFragmentFrame.minY + line.glyphOrigin.y - height,
+                                      width: bounds.width, height: height)
+            count += 1
+        }
+        while diagramLayers.count > count { diagramLayers.removeLast().removeFromSuperlayer() }
+        CATransaction.commit()
+    }
+
+    override func layout() {
+        super.layout()
+        updateDiagramLayers()
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func copy(_ sender: Any?) {

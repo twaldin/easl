@@ -16,7 +16,7 @@ public final class NoteRenderer {
     private let images: [String: NSImage]
     private let diagrams: [Int: NoteMermaid.Outcome]
     private let diagramAttachments: [NSTextAttachment]
-    private let diagramAttachmentViews: Bool
+    private let compositedDiagrams: Bool
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
     private lazy var sourceIndex: NoteMath.SourceIndex? = source.map(NoteMath.SourceIndex.init)
@@ -35,13 +35,13 @@ public final class NoteRenderer {
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
                 width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:], diagramAttachments: [NSTextAttachment] = [],
-                diagramAttachmentViews: Bool = false) {
+                compositedDiagrams: Bool = false) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
         self.diagrams = diagrams
         self.diagramAttachments = diagramAttachments
-        self.diagramAttachmentViews = diagramAttachmentViews
+        self.compositedDiagrams = compositedDiagrams
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -552,7 +552,7 @@ public final class NoteRenderer {
                     } else {
                         attachment = NoteImageAttachment()
                         attachment.image = image
-                        attachment.allowsTextAttachmentView = diagramAttachmentViews
+                        attachment.allowsTextAttachmentView = false
                     }
                     let paragraph = style(context, spacing: 8, before: 2)
                     paragraph.alignment = .center
@@ -562,6 +562,9 @@ public final class NoteRenderer {
                         .paragraphStyle: paragraph,
                         .noteMarkdownLine: line,
                     ])
+                    if compositedDiagrams {
+                        out.addAttribute(.noteDiagramImage, value: image, range: NSRange(location: out.length - 2, length: 1))
+                    }
                 case .fallback(let reason):
                     append("Mermaid: \(reason)\n", [
                         .font: Self.captionFont,
@@ -695,13 +698,9 @@ public final class NoteRenderer {
 
 /// Natural-size note images share layout bounds across live views, measurements, and exports.
 final class NoteImageAttachment: NSTextAttachment {
-    override var usesTextAttachmentView: Bool { allowsTextAttachmentView }
-
-    override func viewProvider(for parentView: NSView?, location: any NSTextLocation,
-                               textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
-        guard allowsTextAttachmentView else { return nil }
-        return NoteDiagramViewProvider(textAttachment: self, parentView: parentView,
-                                       textLayoutManager: textContainer?.textLayoutManager, location: location)
+    override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
+                        textContainer: NSTextContainer?) -> NSImage? {
+        attributes[.noteDiagramImage] == nil ? image : nil
     }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
@@ -712,26 +711,6 @@ final class NoteImageAttachment: NSTextAttachment {
     }
 }
 
-@MainActor
-private final class NoteDiagramViewProvider: NSTextAttachmentViewProvider {
-    private final class ImageView: NSView {
-        override var wantsUpdateLayer: Bool { true }
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    }
-
-    override func loadView() {
-        guard let image = textAttachment?.image else { return }
-        let size = image.size
-        let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        view = MainActor.assumeIsolated {
-            let imageView = ImageView(frame: NSRect(origin: .zero, size: size))
-            imageView.wantsLayer = true
-            imageView.layer?.contents = pixels
-            imageView.layer?.contentsGravity = .resizeAspect
-            return imageView
-        }
-    }
-}
 
 /// The images a note's markdown shows: board-relative paths, and absolute paths (or `file://`
 /// URLs) inside the board root or the temp directory (`LocalImage.sandboxed`), read off the main
