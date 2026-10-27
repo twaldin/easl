@@ -693,10 +693,10 @@ public final class NoteRenderer {
     }
 }
 
-/// A note's `![alt](path)` picture: its natural size, scaled down to the line's width (never up),
-/// drawn by the text layout itself (no attachment view), so on-screen notes, renders, and
-/// `ObjectMeasure` all lay it out the same way.
+/// Natural-size note images share layout bounds across live views, measurements, and exports.
 final class NoteImageAttachment: NSTextAttachment {
+    override var usesTextAttachmentView: Bool { allowsTextAttachmentView }
+
     override func viewProvider(for parentView: NSView?, location: any NSTextLocation,
                                textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
         guard allowsTextAttachmentView else { return nil }
@@ -715,16 +715,19 @@ final class NoteImageAttachment: NSTextAttachment {
 @MainActor
 private final class NoteDiagramViewProvider: NSTextAttachmentViewProvider {
     private final class ImageView: NSView {
+        override var wantsUpdateLayer: Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 
     override func loadView() {
-        guard let image = textAttachment?.image else { return }
-        let imageView = ImageView(frame: NSRect(origin: .zero, size: image.size))
-        imageView.wantsLayer = true
-        imageView.layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        imageView.layer?.contentsGravity = .resizeAspect
-        view = imageView
+        MainActor.assumeIsolated {
+            guard let image = textAttachment?.image else { return }
+            let imageView = ImageView(frame: NSRect(origin: .zero, size: image.size))
+            imageView.wantsLayer = true
+            imageView.layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            imageView.layer?.contentsGravity = .resizeAspect
+            view = imageView
+        }
     }
 }
 
