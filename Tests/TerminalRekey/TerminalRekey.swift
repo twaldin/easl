@@ -35,11 +35,14 @@ private enum TerminalRekey {
         guard let home = ProcessInfo.processInfo.environment["EASL_HOME"] else {
             fatalError("run.py must provide a disposable EASL_HOME")
         }
+        setenv("EASL_DEV_INPUT", "1", 1)
+        _ = CanvasApplication.shared
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.regular)
         app.finishLaunching()
         Task { @MainActor in
             do {
+                try require(app is CanvasApplication, "replay fixture must use the real application dispatch")
                 let ghostty = URL(fileURLWithPath: home).appendingPathComponent("ghostty")
                 try FileManager.default.createDirectory(at: ghostty, withIntermediateDirectories: true)
                 try "keybind = super+d=new_split:right\nkeybind = super+shift+d=close_surface\nkeybind = alt+d=new_split:right\n"
@@ -256,6 +259,17 @@ private enum TerminalRekey {
         try refuse("Command-V", "v", 9, .command)
         try refuse("typing", "x", 7, [])
         try refuse("Return", "\r", 36, [])
+        let background = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 300, height: 200),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        background.isReleasedWhenClosed = false
+        defer { background.close() }
+        background.makeKeyAndOrderFront(nil)
+        try require(background.isKeyWindow && !window.isKeyWindow, "replay target must not be the key window")
+        try refuse("background Escape", "\u{1b}", 53, [])
+        try refuse("background Command-V", "v", 9, .command)
+        try refuse("background typing", "x", 7, [])
+        window.makeKeyAndOrderFront(nil)
+        background.close()
         var custom = KeyboardShortcuts()
         try custom.set(ShortcutBinding(key: "v", modifiers: .control), for: "paste")
         try custom.set(ShortcutBinding(key: "r", modifiers: .option), for: "rectangleTool")
