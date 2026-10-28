@@ -13,6 +13,12 @@ private func gapContext(_ edit: Int32, _ phase: Int32)
 private func gapBeat()
 @_silgen_name("easl_gap_stop")
 private func gapStop()
+@_silgen_name("easl_spell_start")
+private func spellStart()
+@_silgen_name("easl_spell_calls")
+private func spellCalls() -> UInt64
+@_silgen_name("easl_spell_stop")
+private func spellStop()
 
 @MainActor
 private final class Heartbeat {
@@ -840,6 +846,7 @@ private enum NoteMermaidChurn {
         var supplied: [Fixture] = []
         var profile = false
         var recoveryOnly = false
+        var spellProbe = false
         var argument = 2
         while argument < CommandLine.arguments.count {
             let option = CommandLine.arguments[argument]
@@ -847,6 +854,8 @@ private enum NoteMermaidChurn {
                 profile = true
             } else if option == "--recovery-only" {
                 recoveryOnly = true
+            } else if option == "--spell-probe" {
+                spellProbe = true
             } else if option == "--stage-seconds" {
                 argument += 1
                 guard argument < CommandLine.arguments.count,
@@ -873,6 +882,27 @@ private enum NoteMermaidChurn {
             argument += 1
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if spellProbe {
+            spellStart()
+            defer { spellStop() }
+            let board = Board(id: "spell-probe", root: directory)
+            let object = board.create(type: .note, props: .object(["markdown": .string("A deliberately misspelled wrod.")]),
+                                      frame: Frame(x: 0, y: 0, w: 480, h: 320))
+            let tile = NoteTile(object: object, board: board)
+            let window = makeWindow(tile)
+            defer { tile.setLive(false); tile.removeFromSuperview(); window.close() }
+            try await Task.sleep(for: .seconds(3))
+            let viewingCalls = spellCalls()
+            try require(tile.enterKeyboard(), "note could not enter editing")
+            try await Task.sleep(for: .seconds(3))
+            let totalCalls = spellCalls()
+            let enabled = textViews(tile).contains { $0.isEditable && $0.isContinuousSpellCheckingEnabled }
+            emit(["event": "spell-preflight-probe", "viewingCalls": viewingCalls,
+                  "totalCallsAfterEditing": totalCalls, "spellingEnabledWhileEditing": enabled])
+            try require(viewingCalls == 0, "read-only note initialized the spell service for its hidden editor")
+            try require(totalCalls > 0 && enabled, "editing lost spell checking")
+            return
+        }
         if ProcessInfo.processInfo.environment["EASL_GAP_CALIBRATE"] == "1" {
             "calibration-cpu".withCString { gapStart($0) }
             gapContext(-1, 7)

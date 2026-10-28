@@ -50,6 +50,7 @@ def main():
                         help="Directory for PNGs, JSONL and cleanup metadata. Defaults under explicit --scratch, otherwise under --bin-path.")
     parser.add_argument("--recovery-only", action="store_true",
                         help="Run only the natural-timeout/ordinary-diagram recovery regression.")
+    parser.add_argument("--spell-probe", action="store_true")
     parser.add_argument("--profile", action="store_true",
                         help="Keep image assertions, disable only the 50ms limit, and pause 3s after each churn-ready event for sampling.")
     args = parser.parse_args()
@@ -103,6 +104,10 @@ def run(args, parser, scratch):
                     "-target", f"{platform.machine()}-apple-macosx14.0",
                     "-c", str(root / "Tests/NoteMermaidChurn/GapProbe.c"),
                     "-o", str(probe_object)], cwd=root, check=True)
+    spell_object = scratch / "SpellProbe.o"
+    subprocess.run(["xcrun", "clang", "-O2", "-target", f"{platform.machine()}-apple-macosx14.0",
+                    "-c", str(root / "Tests/NoteMermaidChurn/SpellProbe.c"),
+                    "-o", str(spell_object)], cwd=root, check=True)
     command = [compiler, "-O", "-g", "-swift-version", "6", "-parse-as-library", "-enable-testing",
                "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx14.0",
                "-I", str(build / "Modules"), "-I", str(build)]
@@ -116,6 +121,7 @@ def run(args, parser, scratch):
     executable = scratch / "NoteMermaidChurn"
     command.append(str(source))
     command.append(str(probe_object))
+    command.append(str(spell_object))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty",
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
@@ -141,6 +147,8 @@ def run(args, parser, scratch):
             native_command.append("--profile")
         if args.recovery_only:
             native_command.append("--recovery-only")
+        if args.spell_probe:
+            native_command.append("--spell-probe")
         native_log = artifacts / "native.jsonl"
         log = native_log.open("w")
         process = subprocess.Popen(native_command, cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)

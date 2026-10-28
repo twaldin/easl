@@ -1,4 +1,4 @@
-name: Note Mermaid churn outlier experiment
+name: Note cold spell-check regression experiment
 
 on:
   push:
@@ -11,103 +11,36 @@ concurrency:
   group: mermaid-churn-experiment-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  BASELINE_SHA: 500cc93b93d4e122625793b10fbd04a807e9dd0f
-
 jobs:
-  smoke:
-    name: Churn smoke / experiment
+  spell-preflight:
     runs-on: macos-26
-    outputs:
-      probe_ok: ${{ steps.probe-health.outputs.ok }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Select Command Line Tools
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+      - name: Build original product
         run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
-      - name: Confirm unchanged product code
-        run: git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
-      - name: Record host and run identity
+          git show 500cc93b93d4e122625793b10fbd04a807e9dd0f:Sources/CanvasApp/Notes/NoteTile.swift > Sources/CanvasApp/Notes/NoteTile.swift
+          swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+      - name: Prove read-only spell-service activation before fix
         run: |
-          printf 'side=experiment index=smoke baseline=%s experiment=%s checkout=' "$BASELINE_SHA" "$GITHUB_SHA"
-          git rev-parse HEAD
-          uname -a
-          arch
-          uptime
-          sysctl hw.ncpu hw.physicalcpu hw.logicalcpu hw.memsize vm.loadavg
-          vm_stat
-          ps -axo pid,ppid,%cpu,%mem,etime,comm -r
-      - name: Build optimized Easl
-        run: swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-      - name: Run full churn regression with original 50ms gate
-        env:
-          EASL_GAP_CALIBRATE: "1"
-        run: python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/churn-smoke-artifacts" --bin-path "$(swift build --build-system native -c release --show-bin-path)"
-      - name: Validate diagnostic calibration
-        id: probe-health
-        if: always()
+          code=0
+          python3 Tests/NoteMermaidChurn/run.py --spell-probe --artifacts "$RUNNER_TEMP/spell-before" --bin-path "$(swift build --build-system native -c release --show-bin-path)" || code=$?
+          test "$code" -eq 1
+          python3 - "$RUNNER_TEMP/spell-before/native.jsonl" <<'PY'
+          import json, pathlib, sys
+          records = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.startswith('{')]
+          probe = next(r for r in records if r['event'] == 'spell-preflight-probe')
+          assert probe['viewingCalls'] > 0 and probe['spellingEnabledWhileEditing'], probe
+          print(json.dumps({'event': 'failing-before-confirmed', **probe}, sort_keys=True))
+          PY
+      - name: Build fixed product
         run: |
-          python3 Tests/NoteMermaidChurn/check_probe.py "$RUNNER_TEMP/churn-smoke-artifacts/native.jsonl"
-          printf 'ok=true\n' >> "$GITHUB_OUTPUT"
-
-  matrix:
-    name: Churn pair / ${{ matrix.index }}
-    needs: smoke
-    if: ${{ always() && needs.smoke.outputs.probe_ok == 'true' }}
-    runs-on: macos-26
-    strategy:
-      fail-fast: false
-      max-parallel: 20
-      matrix:
-        index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-    env:
-      INDEX: ${{ matrix.index }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - name: Confirm unchanged product code
-        run: git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
-      - name: Select Command Line Tools
-        run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
-      - name: Record host and run identity
-        run: |
-          printf 'index=%s baseline=%s experiment=%s checkout=' "$INDEX" "$BASELINE_SHA" "$GITHUB_SHA"
-          git rev-parse HEAD
-          uname -a
-          arch
-          uptime
-          sysctl hw.ncpu hw.physicalcpu hw.logicalcpu hw.memsize vm.loadavg
-          vm_stat
-          ps -axo pid,ppid,%cpu,%mem,etime,comm -r
-      - name: Build identical optimized product objects once
-        run: swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-      - name: Run paired baseline and experiment without discarding failures
-        run: |
-          build=$(swift build --build-system native -c release --show-bin-path)
-          if (( INDEX % 2 )); then sides="main experiment"; else sides="experiment main"; fi
-          status=0
-          for side in $sides; do
-            ref="$GITHUB_SHA"
-            if [[ "$side" == main ]]; then ref="$BASELINE_SHA"; fi
-            git show "$ref:Tests/NoteMermaidChurn/NoteMermaidChurn.swift" > Tests/NoteMermaidChurn/NoteMermaidChurn.swift
-            git show "$ref:Tests/NoteMermaidChurn/run.py" > Tests/NoteMermaidChurn/run.py
-            printf '{"event":"side-start","side":"%s","index":%s,"source":"%s"}\n' "$side" "$INDEX" "$ref"
-            uptime
-            sysctl vm.loadavg
-            if python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/churn-$side" --bin-path "$build"; then
-              code=0
-            else
-              code=$?
-              status=1
-            fi
-            printf '{"event":"side-end","side":"%s","index":%s,"returnCode":%s}\n' "$side" "$INDEX" "$code"
-          done
-          exit "$status"
+          git show "$GITHUB_SHA:Sources/CanvasApp/Notes/NoteTile.swift" > Sources/CanvasApp/Notes/NoteTile.swift
+          swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+      - name: Prove read-only isolation and editing spell checks after fix
+        run: python3 Tests/NoteMermaidChurn/run.py --spell-probe --artifacts "$RUNNER_TEMP/spell-after" --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+      - name: Exercise unchanged full churn gate on fixed product
+        run: python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/fixed-churn" --bin-path "$(swift build --build-system native -c release --show-bin-path)"
