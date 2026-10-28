@@ -259,6 +259,13 @@ private enum TerminalRekey {
         AppShortcuts.configure(custom)
         try refuse("custom paste", "v", 9, .control)
         try refuse("custom drawing", "r", 15, .option)
+        var customUndo = custom
+        try customUndo.set(ShortcutBinding(key: "z", modifiers: .control), for: "undoCanvas")
+        try customUndo.set(ShortcutBinding(key: "z", modifiers: [.control, .shift]), for: "redoCanvas")
+        AppShortcuts.configure(customUndo)
+        try refuse("custom undo", "z", 6, .control)
+        try refuse("custom redo", "z", 6, [.control, .shift])
+        AppShortcuts.configure(custom)
         canvas.zoom(to: 0.5)
         let zoom = canvas.viewport.zoom
         hideNotice()
@@ -281,6 +288,11 @@ private enum TerminalRekey {
         canvas.showNew(provisional)
         key("\u{f703}", 124, [.command, .option])
         try require(canvas.selection == [neighbor.id], "Command-Option-Right must still navigate to the neighboring tile")
+        canvas.showNew(provisional)
+        hideNotice()
+        key("\u{1b}", 53, .command)
+        try require(window.firstResponder === canvas.document && !refusalVisible(),
+                    "Command-Escape must leave the provisional terminal without a refusal")
         canvas.showNew(provisional)
         hideNotice()
         key("w", 13, .command)
