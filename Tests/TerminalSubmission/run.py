@@ -48,8 +48,14 @@ def main():
         environment = dict(os.environ, EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE="1")
         environment.pop("EASL_ROOT", None)
-        result = subprocess.run([str(executable)], cwd=root, env=environment, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
+        try:
+            result = subprocess.run([str(executable)], cwd=root, env=environment, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
+        except subprocess.TimeoutExpired as error:
+            captured = error.stdout or b""
+            print(captured.decode(errors="replace") if isinstance(captured, bytes) else captured,
+                  end="", flush=True)
+            raise
         print(result.stdout, end="", flush=True)
         result.check_returncode()
         if "TERMINAL_SUBMISSION_COMPLETE" not in result.stdout.splitlines():

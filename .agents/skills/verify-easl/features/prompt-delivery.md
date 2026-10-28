@@ -23,6 +23,10 @@ Preconditions: the native [composer journey](composer.md), a live owned shell, a
 5. Repeat with `action: cut-before`. Require zero executed markers and confirmed restoration of text and mentions. A retry after restoration is a new explicit user send, not an automatic resend.
 6. Repeat against guest-local v0.3.0 easld. Its missing `agent.prompt_epoch` selects legacy delivery. Require one `agent.prompt` dispatch, a cleared draft, and exactly one shell receipt after native Command-Return. For a separate dropped-reply attempt, require no automatic replay or reconciliation. The draft returns even if execution already happened, as in v0.3.0. A manual retry can duplicate execution.
 
+For local attachment failures, run separate `agent.prompt {composer:true}` cases against fresh terminals at 50 ms, 100 ms, 1 s, and 5 s after creation, with at least 10 runs per delay. Retain creation and dispatch timestamps, the API outcome, attachment lifecycle logs, native captures, and unique shell receipts. Require one execution or an explicit refusal, never `typed` after a refused Enter or an attachment change.
+
+Exercise attachment exit or replacement after text insertion but before Enter. Require refusal rather than `typed`, and no automatic replay. Repeat through native Command-Return to prove draft and mention retention and the warning that text may already be present. These cases supplement the lost-reply journey, not replace it.
+
 ## Gotchas
 
 - `Sources/CanvasCore/BoardMirror.swift` preflights receipt support before remote delivery.
@@ -32,4 +36,5 @@ Preconditions: the native [composer journey](composer.md), a live owned shell, a
 - Old hosts receive the legacy request once. A missing epoch method must not trigger automatic resubmission. Lost-reply safety requires a host with submission receipts.
 - The retained probe cannot hold reconciliation indefinitely. Transport failure keeps the **checking…** label; a host `unknown` outcome produces **Not safe to resend**. Those need separate fault fixtures before claiming either persistent-state path.
 - Preserve intermediate failure captures. A final cleared composer alone cannot prove exactly-once delivery.
+- `typed` means the same live attachment accepted the full text and Enter. It does not acknowledge execution. A refusal can leave partial text in the terminal, even when a submission receipt reports `not-delivered`. Repeated submission IDs still return the original outcome without another dispatch.
 - Stop only recorded owned probe processes. Export receipts before removing scratch.

@@ -2,6 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
+- Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. A refused or partial submission keeps the composer draft and warns that text may already be present. The app does not replay it automatically.
+
 ## 0.3.3
 
 easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for HTML tiles made by omp agents on local boards. Oversized browser tiles now scroll natively.

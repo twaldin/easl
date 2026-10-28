@@ -77,6 +77,58 @@ private enum TerminalSubmission {
         try require(f.text() == "submission-once\n", "the attachment must receive text and exactly one Enter")
     }
 
+    static func letExitQueueWithoutMainTurns() {
+        Thread.sleep(forTimeInterval: 0.15)
+    }
+
+    static func oldExitCannotKillReplacement() async throws {
+        let f = Fixture(command: "/usr/bin/true")
+        defer { f.close() }
+        for index in 0..<20 {
+            f.view.configuration = TerminalSurfaceOptions(command: "/usr/bin/true", waitAfterCommand: true)
+            // Keep the main actor blocked so the exited child's mailbox event is not drained.
+            letExitQueueWithoutMainTurns()
+            let receipt = f.receipt.appendingPathExtension("replacement-\(index)")
+            f.view.configuration = TerminalSurfaceOptions(
+                command: ShellWords.quote(["/bin/sh", "-c", "exec /bin/cat > " + ShellWords.quote([receipt.path])]),
+                waitAfterCommand: true)
+            f.controller.tick()
+            try require(!f.exited, "an old child exit must not mark replacement \(index) exited")
+            let marker = "full-first-marker-\(index)"
+            let accepted = await f.submit(marker)
+            try require(accepted, "replacement \(index) must accept its first text and Enter")
+            try await until {
+                (try? String(contentsOf: receipt, encoding: .utf8)) == marker + "\n"
+            }
+            let received = try String(contentsOf: receipt, encoding: .utf8)
+            try require(received == marker + "\n",
+                        "replacement \(index) must receive the complete marker and exactly one Enter")
+        }
+    }
+
+    static func cancelledSubmissionDoesNotSendEnter() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        var pasted = false
+        let submission = Task { @MainActor in
+            await f.view.submitOrdered({
+                let accepted = f.view.paste(text: "partial-")
+                pasted = true
+                return accepted
+            }, delay: .seconds(30))
+        }
+        defer { submission.cancel() }
+        try await until { pasted }
+        submission.cancel()
+        let accepted = await submission.value
+        try require(!accepted, "a cancelled submission must not report delivery")
+        let control = await f.submit("explicit-control")
+        try require(control, "cancellation must not block a later explicit submission")
+        try await until { !f.text().isEmpty }
+        try require(f.text() == "partial-explicit-control\n",
+                    "cancellation must leave partial text without sending Enter or replaying it")
+    }
+
     static func exitedAttachmentIsNotSuccessfulDelivery() async throws {
         let f = Fixture(command: ShellWords.quote(["/bin/sh", "-c", "exit 0"]))
         defer { f.close() }
@@ -158,6 +210,8 @@ private enum TerminalSubmission {
     static func runCases() async {
         let cases: [(String, @MainActor () async throws -> Void)] = [
             ("live attachment receives text and Enter once", liveAttachmentReceivesTextAndEnterOnce),
+            ("old exit cannot kill replacement", oldExitCannotKillReplacement),
+            ("cancelled submission does not send Enter", cancelledSubmissionDoesNotSendEnter),
             ("exited attachment refuses prompt delivery", exitedAttachmentIsNotSuccessfulDelivery),
             ("replacement cannot inherit a submission", replacementCannotReceiveTheOriginalEnter),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
