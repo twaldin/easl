@@ -337,6 +337,16 @@ private enum TerminalRekey {
                     canvas.selection == created && canvas.focusedTerminal == created.first && !refusalVisible(),
                     "Ghostty New Terminal remap must create and focus one provisional terminal")
         key("d", 2, [.command, .shift])
+        guard let closeSheet = window.attachedSheet else {
+            throw Failure(message: "Ghostty Close Terminal remap must offer the close confirmation")
+        }
+        try require(!refusalVisible(), "Ghostty Close Terminal remap must not show a provisional refusal")
+        window.endSheet(closeSheet, returnCode: .alertSecondButtonReturn)
+        closeSheet.orderOut(nil)
+        for _ in 0..<100 {
+            if Set(board.objects.keys) == priorIDs { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         try require(Set(board.objects.keys) == priorIDs && created.allSatisfy { canvas.tiles[$0] == nil } && !refusalVisible(),
                     "Ghostty Close Terminal remap must remove only the newly focused terminal")
         print("CHECK provisional refusal, application commands, canonical terminal, and composer")
