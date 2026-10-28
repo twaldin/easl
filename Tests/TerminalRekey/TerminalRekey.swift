@@ -259,16 +259,21 @@ private enum TerminalRekey {
         AppShortcuts.configure(custom)
         try refuse("custom paste", "v", 9, .control)
         try refuse("custom drawing", "r", 15, .option)
+        canvas.zoom(to: 0.5)
         let zoom = canvas.viewport.zoom
         hideNotice()
         key("=", 24, .control)
-        try require(canvas.viewport.zoom > zoom && !refusalVisible(), "custom non-Command Zoom In must still zoom")
+        try require(canvas.viewport.zoom > zoom && !refusalVisible(), "custom non-Command Zoom In must still zoom: before=\(zoom) after=\(canvas.viewport.zoom) refused=\(refusalVisible())")
         hideNotice()
         key("z", 6, .command)
         try require(!refusalVisible(), "Command-Z must retain existing undo routing")
         hideNotice()
         key("m", 46, .command)
-        try require(window.isMiniaturized && !refusalVisible(), "Command-M must still minimize the window")
+        for _ in 0..<100 {
+            if window.isMiniaturized { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(window.isMiniaturized && !refusalVisible(), "Command-M must still minimize the window: minimized=\(window.isMiniaturized) refused=\(refusalVisible())")
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         let neighbor = board.create(type: .terminal, props: .object([:]),
