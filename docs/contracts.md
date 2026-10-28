@@ -626,11 +626,13 @@ A v0.3.0 client can still use the current easld without receipt fields or previe
 
   | Key or resolved action | Before host ID confirmation |
   |---|---|
-  | Character keys, Return, Escape, and unassigned chords | Refuse visibly, without changing objects, selection, or keyboard ownership |
+  | Character keys, Return, plain Escape, and unassigned chords | Refuse visibly, without changing objects, selection, or keyboard ownership |
   | Paste, Copy, Select All, Delete Selection, Find in Page, and non-Hyper Paste Mentions bindings | Refuse visibly, including configured Command, Control, or Option bindings |
   | Drawing tools | Refuse visibly, including custom modified bindings |
-  | Undo and Redo | Preserve existing routing, including terminal ownership when canvas undo does not apply |
+  | Undo and Redo | Preserve Command bindings and enabled canvas undo actions. Refuse non-Command bindings when canvas undo does not apply |
   | Command-Option arrows | Preserve neighboring-tile navigation |
+  | Command-Escape | Leave the focused tile, without a refusal |
+  | Ghostty New Terminal or Close Terminal remaps without a menu binding, except Escape | Preserve existing terminal-remap routing |
   | Enabled application, board, navigation, and window menu commands, including Close and Write Prompt | Preserve existing routing, including configured non-Command bindings |
   | Hyper chords | Preserve existing Hyper routing |
   | Composer input or input owned by another tile or window | Unchanged |

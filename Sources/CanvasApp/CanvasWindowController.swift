@@ -1445,13 +1445,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
                                                              #selector(AppDelegate.undoCanvas(_:)), #selector(AppDelegate.redoCanvas(_:)), #selector(AppDelegate.findInPage(_:))]
 
     static func allowsProvisionalTerminalKey(_ event: NSEvent) -> Bool {
-        guard event.keyCode != 53 else { return false }
         if tileHeading(for: event) != nil { return true }
         if AppShortcuts.action(for: event)?.group == "Drawing" { return false }
         guard let item = menuItem(for: event, in: NSApp.mainMenu),
-              let action = item.action else { return false }
+              let action = item.action else {
+            guard event.keyCode != 53 else { return false }
+            return keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] } != nil
+        }
         if action == #selector(AppDelegate.undoCanvas(_:)) || action == #selector(AppDelegate.redoCanvas(_:)) {
-            return true
+            return AppShortcuts.isEnabled(item) || event.modifierFlags.contains(.command)
         }
         return AppShortcuts.isEnabled(item) && !terminalMenuActions.contains(action) && action != #selector(pasteMentions(_:))
     }

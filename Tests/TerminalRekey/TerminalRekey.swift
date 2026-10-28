@@ -40,6 +40,10 @@ private enum TerminalRekey {
         app.finishLaunching()
         Task { @MainActor in
             do {
+                let ghostty = URL(fileURLWithPath: home).appendingPathComponent("ghostty")
+                try FileManager.default.createDirectory(at: ghostty, withIntermediateDirectories: true)
+                try "keybind = super+d=new_split:right\nkeybind = super+shift+d=close_surface\n"
+                    .write(to: ghostty.appendingPathComponent("config"), atomically: true, encoding: .utf8)
                 for owner in Owner.allCases {
                     try await exercise(owner, root: URL(fileURLWithPath: home).appendingPathComponent(owner.rawValue))
                 }
@@ -324,6 +328,17 @@ private enum TerminalRekey {
                     "refused keys must not replay into the composer after canonical replacement")
         key("x", 7, [])
         try require(editor.string == "xx", "composer must keep accepting keys after canonical replacement")
+        canvas.showNew(neighbor)
+        hideNotice()
+        let priorIDs = Set(board.objects.keys)
+        key("d", 2, .command)
+        let created = Set(board.objects.keys).subtracting(priorIDs)
+        try require(created.count == 1 && created.first.flatMap { board.objects[$0]?.type } == .terminal &&
+                    canvas.selection == created && canvas.focusedTerminal == created.first && !refusalVisible(),
+                    "Ghostty New Terminal remap must create and focus one provisional terminal")
+        key("d", 2, [.command, .shift])
+        try require(Set(board.objects.keys) == priorIDs && created.allSatisfy { canvas.tiles[$0] == nil } && !refusalVisible(),
+                    "Ghostty Close Terminal remap must remove only the newly focused terminal")
         print("CHECK provisional refusal, application commands, canonical terminal, and composer")
     }
 
