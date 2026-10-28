@@ -898,7 +898,7 @@ A terminal tile keeps a log of the commands its shell finished since easl attach
 
 Typed delivery returns `delivery: "typed"` only after the full text and Enter are accepted by the same live terminal attachment. This result does not acknowledge shell execution or an agent turn. The attachment must remain live through both steps. A missing, exited, or replaced attachment, or a refused Enter, fails the submission instead of reporting `typed`.
 
-A failed submission can leave some or all of the text in the terminal. The composer retains the draft and warns that text may already be present. It does not replay the submission automatically. Prompt submission receipts still prevent duplicate dispatch and retain the original outcome. A `not-delivered` refusal is not proof that no text reached the terminal.
+A failed submission can leave some or all of the text in the terminal. If no target accepts the complete submission, the composer retains the draft. It warns about each failed target and any text that may already be present. It does not replay the submission automatically. Prompt submission receipts still prevent duplicate dispatch and retain the original outcome. A `not-delivered` refusal is not proof that no text reached the terminal.
 
 The existing 80 ms delay between paste and Enter remains for running TUIs to process pasted text before submission. The delay does not establish attachment readiness or successful delivery.
 

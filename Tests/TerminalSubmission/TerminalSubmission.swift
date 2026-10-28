@@ -86,7 +86,6 @@ private enum TerminalSubmission {
         defer { f.close() }
         for index in 0..<20 {
             f.view.configuration = TerminalSurfaceOptions(command: "/usr/bin/true", waitAfterCommand: true)
-            // Keep the main actor blocked so the exited child's mailbox event is not drained.
             letExitQueueWithoutMainTurns()
             let receipt = f.receipt.appendingPathExtension("replacement-\(index)")
             f.view.configuration = TerminalSurfaceOptions(
