@@ -248,12 +248,14 @@ private enum TerminalRekey {
         func refuse(_ name: String, _ characters: String, _ code: UInt16,
                     _ flags: NSEvent.ModifierFlags) throws {
             hideNotice()
+            let zoom = canvas.viewport.zoom
             key(characters, code, flags)
             try require(board.objects == objects && canvas.selection == selection,
                         "\(name): refused key must not mutate board or selection")
             try require(window.firstResponder === first.terminal,
                         "\(name): refused key must keep terminal keyboard ownership")
-            try require(refusalVisible(), "\(name): refusal must visibly explain that nothing was typed")
+            try require(canvas.viewport.zoom == zoom, "\(name): refused key must not change zoom")
+            try require(refusalVisible(), "\(name): refusal must visibly explain that nothing was typed; zoom before=\(zoom) after=\(canvas.viewport.zoom)")
         }
         try refuse("Escape", "\u{1b}", 53, [])
         try refuse("Command-V", "v", 9, .command)
@@ -278,6 +280,14 @@ private enum TerminalRekey {
         try refuse("custom paste", "v", 9, .control)
         try refuse("custom drawing", "r", 15, .option)
         try refuse("non-Command Ghostty remap", "d", 2, .option)
+        canvas.zoom(to: 0.5)
+        var optionZoom = custom
+        try optionZoom.set(ShortcutBinding(key: "=", modifiers: .option), for: "zoomIn")
+        AppShortcuts.configure(optionZoom)
+        try refuse("Option-only menu shortcut", "=", 24, .option)
+        try refuse("plain e", "e", 14, [])
+        try refuse("plain f", "f", 3, [])
+        AppShortcuts.configure(custom)
         var customUndo = custom
         try customUndo.set(ShortcutBinding(key: "z", modifiers: .control), for: "undoCanvas")
         try customUndo.set(ShortcutBinding(key: "z", modifiers: [.control, .shift]), for: "redoCanvas")
