@@ -259,10 +259,10 @@ final class CanvasTerminalView: TerminalView {
         return attachment.isProcessRunning || keyIsBinding(event, on: attachment)
     }
 
-    private func refuseInput() {
+    private func refuseInput(on attachment: TerminalSurface?) {
         onImageProblem?("Input not sent: the terminal attachment is unavailable. Inspect the terminal before typing again.")
-        if let surface, !surface.isProcessRunning {
-            surface.requestClose()
+        if let attachment, surface === attachment, !attachment.isProcessRunning {
+            attachment.requestClose()
         }
     }
 
@@ -382,10 +382,13 @@ final class CanvasTerminalView: TerminalView {
             inputIndex += 1
             switch input {
             case .key(let event, let attachment):
-                guard let attachment, surface === attachment else { continue }
+                guard let attachment, surface === attachment else {
+                    if event.type == .keyDown { refuseInput(on: attachment) }
+                    continue
+                }
                 switch event.type {
                 case .keyDown:
-                    guard acceptsKey(event, on: attachment) else { refuseInput(); continue }
+                    guard acceptsKey(event, on: attachment) else { refuseInput(on: attachment); continue }
                     super.keyDown(with: event)
                 case .keyUp: super.keyUp(with: event)
                 case .flagsChanged: super.flagsChanged(with: event)
@@ -598,7 +601,7 @@ final class CanvasTerminalView: TerminalView {
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
         onUserInput?()
-        guard acceptsKey(event, on: surface) else { refuseInput(); return }
+        guard acceptsKey(event, on: surface) else { refuseInput(on: surface); return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if !event.isARepeat { pasteKeyUp = nil }

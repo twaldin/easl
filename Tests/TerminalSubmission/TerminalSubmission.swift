@@ -161,6 +161,7 @@ private enum TerminalSubmission {
     static func replacementDuringEnterGapRefusesDelivery() async throws {
         let f = Fixture()
         defer { f.close() }
+        try await until { f.surface != nil }
         var pasted = false
         let submission = Task { @MainActor in
             await f.view.submitOrdered({
@@ -178,6 +179,38 @@ private enum TerminalSubmission {
         let control = await f.submit("explicit-gap-control")
         try require(control, "the replacement must accept an explicit new submission")
         try await until { (try? String(contentsOf: receipt, encoding: .utf8)) == "explicit-gap-control\n" }
+    }
+
+    static func queuedKeyCannotDisappearOrReachReplacement() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        try await until { f.surface != nil }
+        var pasted = false
+        var notices: [String] = []
+        f.view.onImageProblem = { notices.append($0) }
+        let submission = Task { @MainActor in
+            await f.view.submitOrdered({
+                pasted = f.view.paste(text: "original-only")
+                return pasted
+            }, delay: TerminalTile.submitDelay)
+        }
+        try await until { pasted }
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                    timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: f.window.windowNumber, context: nil,
+                                    characters: "e", charactersIgnoringModifiers: "e",
+                                    isARepeat: false, keyCode: 14)!
+        f.view.keyDown(with: event)
+        let receipt = f.receipt.appendingPathExtension("queued-key")
+        var options = f.view.configuration
+        options.command = ShellWords.quote(["/bin/sh", "-c", "exec /bin/cat > " + ShellWords.quote([receipt.path])])
+        f.view.configuration = options
+        let accepted = await submission.value
+        try require(!accepted, "the replaced submission must not complete")
+        try await until { notices.count == 1 }
+        let control = await f.submit("explicit-key-control")
+        try require(control, "refusing an old key must not close the replacement")
+        try await until { (try? String(contentsOf: receipt, encoding: .utf8)) == "explicit-key-control\n" }
     }
 
     static func exitedTerminalStillCopiesSelection() async throws {
@@ -257,6 +290,7 @@ private enum TerminalSubmission {
             ("exited attachment refuses prompt delivery", exitedAttachmentIsNotSuccessfulDelivery),
             ("replacement cannot inherit a submission", replacementCannotReceiveTheOriginalEnter),
             ("replacement during Enter gap refuses delivery", replacementDuringEnterGapRefusesDelivery),
+            ("queued key is refused without reaching replacement", queuedKeyCannotDisappearOrReachReplacement),
             ("exited terminal still copies selection", exitedTerminalStillCopiesSelection),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
             ("exited attachment keeps composer draft", exitedAttachmentKeepsComposerDraft),

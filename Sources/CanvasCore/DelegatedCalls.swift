@@ -231,11 +231,14 @@ final class DelegatedCalls {
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         let terminal = try terminal(p)
         guard let text = p["text"]?.string else { throw ApiRouter.Failure("invalid_params", "missing text") }
-        guard let before = window.surfaceTail(terminal.id, ApiRouter.promptMarkLines) else {
-            throw ApiRouter.Failure("unavailable", "terminal \(terminal.id) has no attached surface")
+        let before = window.surfaceTail(terminal.id, ApiRouter.promptMarkLines)
+        guard await window.submit(terminal.id, text) else {
+            let message = before == nil
+                ? "terminal \(terminal.id) has no attached surface"
+                : "terminal \(terminal.id) did not accept the full submission. Some text may already be present; inspect the terminal before sending again"
+            throw ApiRouter.Failure("unavailable", message)
         }
-        guard await window.submit(terminal.id, text) else { throw ApiRouter.Failure("unavailable", "terminal \(terminal.id) did not accept the full submission. Some text may already be present; inspect the terminal before sending again") }
-        promptMarks[terminal.id] = PromptMark(before)
+        promptMarks[terminal.id] = PromptMark(before ?? TerminalTail.Tail(rows: [], positions: []))
         let current = board.objects[terminal.id] ?? terminal
         return .object([
             "agent": agentEntry(current),
