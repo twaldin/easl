@@ -47,6 +47,8 @@ jobs:
         run: python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML tile keyboard regression
         run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native terminal rekey focus regression
+        run: python3 Tests/TerminalRekey/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML page send trust regression
         run: python3 Tests/HtmlSend/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native muted video regression

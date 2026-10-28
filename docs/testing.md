@@ -379,6 +379,17 @@ The runner also exercises hostile click handlers, including delayed script evalu
 
 `--clobbered-click` rejects a `<form name="activeElement" contenteditable>` shadowing `document.activeElement`, and `--stale-focus-click` rejects a plain-page click while a field retains DOM focus. Both require a later real field click to work. `--document-grants` grants keys, rewrites the tile's HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click to grant again. These cases also run in the default suite. The document case awaits the expected key-event count: a JavaScript timer turn alone is not a barrier for WebKit's native input IPC.
 
+### Remote terminal keyboard ownership
+
+Run this AppKit regression in a claimed GUI guest:
+
+```sh
+	swift build --build-system native -j 2 --product Easl
+	python3 Tests/TerminalRekey/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The runner launches a private bundle with a disposable home and real key windows. It checks synchronous terminal focus and selection across host-ID replacement. Composer, another terminal, and another key window must keep focus if the user moved there first. It also checks a composer focus change before initial terminal focus could be deferred. This runner has no live host session or WindowServer captures. Use the terminal and remote-board journeys in `.agents/skills/verify-easl/` for native pixels and shell execution.
+
 ### Move tool input isolation
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.

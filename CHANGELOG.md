@@ -6,6 +6,7 @@ Each version's section is its GitHub release's notes.
 
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
 - Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
+- New remote terminals keep keyboard focus when the host assigns their final ID, without taking it back from the composer, another tile, or another window. Typing before that confirmation is visibly refused rather than queued.
 
 ## 0.3.3
 
