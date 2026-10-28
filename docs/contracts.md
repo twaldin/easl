@@ -629,11 +629,12 @@ A v0.3.0 client can still use the current easld without receipt fields or previe
   | Character keys, Return, plain Escape, and unassigned chords | Refuse visibly, without changing objects, selection, or keyboard ownership |
   | Paste, Copy, Select All, Delete Selection, Find in Page, and non-Hyper Paste Mentions bindings | Refuse visibly, including configured Command, Control, or Option bindings |
   | Drawing tools | Refuse visibly, including custom modified bindings |
-  | Undo and Redo | Preserve Command bindings and enabled canvas undo actions. Refuse non-Command bindings when canvas undo does not apply |
+  | Undo and Redo | Preserve Command bindings and enabled Control canvas-undo actions. Refuse Option-only bindings and disabled Control bindings |
   | Command-Option arrows | Preserve neighboring-tile navigation |
   | Command-Escape | Leave the focused tile, without a refusal |
   | Command-modified Ghostty New Terminal or Close Terminal remaps without a menu binding, except Escape | Preserve existing terminal-remap routing. Refuse non-Command remaps without an enabled menu action |
-  | Enabled application, board, navigation, and window menu commands, including Close and Write Prompt | Preserve existing routing, including configured non-Command bindings |
+  | Enabled application, board, navigation, and window menu commands with Command or Control, including Close and Write Prompt | Preserve existing routing, including configured Control bindings |
+  | Option-only menu bindings, even for enabled commands | Refuse visibly; native AppKit does not dispatch them as key equivalents |
   | Hyper chords | Preserve existing Hyper routing |
   | Composer input or input owned by another tile or window | Unchanged |
   | Host-confirmed terminal input | Unchanged, including existing attachment-readiness checks |

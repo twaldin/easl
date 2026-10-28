@@ -1452,6 +1452,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard event.modifierFlags.contains(.command), event.keyCode != 53 else { return false }
             return keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] } != nil
         }
+        guard !event.modifierFlags.isDisjoint(with: [.command, .control]) else { return false }
         if action == #selector(AppDelegate.undoCanvas(_:)) || action == #selector(AppDelegate.redoCanvas(_:)) {
             return AppShortcuts.isEnabled(item) || event.modifierFlags.contains(.command)
         }

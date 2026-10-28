@@ -393,6 +393,7 @@ The runner launches a private bundle with a disposable home and real key windows
 The added key-routing cases send native events through the installed canvas monitor and the real window controller and menu. Escape, Command-V, raw typing, Return, custom Control-V paste, custom Option-R drawing, an Option-D Ghostty remap, and unavailable custom Control-Z Undo/Redo must preserve board objects, selection, and terminal focus while showing the refusal pill. Controls exercise custom Control-= zoom, Command-Z routing, Command-Escape Leave Tile, Command-M minimization, Command-Option-Right tile navigation, Command-W close confirmation, Command-modified Ghostty New Terminal and Close Terminal remaps, and the real composer across rekey. A separate real socket/router fixture loads a host-confirmed terminal identity and checks that its typing does not receive the provisional refusal. These cases do not prove PTY delivery or no replay into a live shell; retain that evidence in the delayed-host guest journey.
 
 The fixture uses `CanvasApplication` with development input enabled. Escape, Command-V, and typing replayed to a non-key board window must show the same refusal without changing that board or its terminal focus.
+The native key-window cases also refuse an enabled Zoom In command bound to Option-= and plain e/f. Every refusal must leave zoom unchanged; the Option-only case starts at 50% so a dispatched Zoom In would be observable.
 
 ### Move tool input isolation
 
