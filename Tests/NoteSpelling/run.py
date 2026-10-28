@@ -106,10 +106,11 @@ def run(args, parser, scratch):
     artifacts.mkdir(parents=True, exist_ok=True)
     permutations = ("unset", "off", "on") if args.defaults == "all" else (args.defaults,)
     failed = []
-    keys = ("NSContinuousSpellCheckingEnabled", "NSGrammarCheckingEnabled",
+    keys = ("NSAllowContinuousSpellChecking", "NSContinuousSpellCheckingEnabled", "NSGrammarCheckingEnabled",
             "NSAutomaticSpellingCorrectionEnabled", "NSAutomaticTextCompletionEnabled",
             "NSAutomaticQuoteSubstitutionEnabled", "NSAutomaticDashSubstitutionEnabled",
-            "NSAutomaticTextReplacementEnabled")
+            "NSAutomaticTextReplacementEnabled", "NSAutomaticLinkDetectionEnabled",
+            "NSAutomaticDataDetectionEnabled")
     for permutation in permutations:
         directory = artifacts / permutation
         directory.mkdir(parents=True, exist_ok=True)
@@ -121,7 +122,7 @@ def run(args, parser, scratch):
                 defaults.update({key: permutation == "on" for key in keys})
             (preferences / ".GlobalPreferences.plist").write_bytes(plistlib.dumps(defaults))
             environment = os.environ.copy()
-            environment.update(HOME=temporary, EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
+            environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                                XDG_CONFIG_HOME=temporary, XDG_CACHE_HOME=temporary,
                                EASL_NO_ACTIVATE="1", EASL_RESOURCES=str(root))
             environment.pop("EASL_ROOT", None)
