@@ -576,6 +576,8 @@ final class TerminalSurfaceCoordinator {
         resizeThrottleTrailing = false
         pendingImmediateTick = true
         controller?.remove(bridge)
+        // Ghostty identifies queued messages by pointer; drain before that address can be reused.
+        if hadSurface { controller?.tick() }
         if hadSurface {
             (delegate as? any TerminalSurfaceLifecycleDelegate)?
                 .terminalDidDetachSurface()

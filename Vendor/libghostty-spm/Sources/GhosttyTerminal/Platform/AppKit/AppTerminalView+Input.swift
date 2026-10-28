@@ -269,7 +269,7 @@
             NSMenu.popUpContextMenu(menu, with: event, for: self)
         }
 
-        private func keyIsBinding(
+        public func keyIsBinding(
             _ event: NSEvent,
             on surface: TerminalSurface
         ) -> Bool {

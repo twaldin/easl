@@ -151,13 +151,15 @@ final class CanvasTerminalView: TerminalView {
     @MainActor
     private final class Submission {
         let id: UUID
+        let attachment: TerminalSurface
         let paste: @MainActor () -> Bool
         let delay: Duration
         let cancellation: SubmissionCancellation
         private var continuation: CheckedContinuation<Bool, Never>?
 
-        init(id: UUID, paste: @escaping @MainActor () -> Bool, delay: Duration, cancellation: SubmissionCancellation, continuation: CheckedContinuation<Bool, Never>) {
+        init(id: UUID, attachment: TerminalSurface, paste: @escaping @MainActor () -> Bool, delay: Duration, cancellation: SubmissionCancellation, continuation: CheckedContinuation<Bool, Never>) {
             self.id = id
+            self.attachment = attachment
             self.paste = paste
             self.delay = delay
             self.cancellation = cancellation
@@ -176,7 +178,7 @@ final class CanvasTerminalView: TerminalView {
     }
 
     private enum Input {
-        case key(NSEvent)
+        case key(NSEvent, TerminalSurface?)
         case text(String)
         case images([TerminalImageInput], TerminalPasteDestination)
         case submission(Submission)
@@ -228,6 +230,7 @@ final class CanvasTerminalView: TerminalView {
     }
 
     func submitOrdered(_ paste: @escaping @MainActor () -> Bool, delay: Duration) async -> Bool {
+        guard let attachment = surface, acceptsInput(on: attachment) else { return false }
         let id = UUID()
         let cancellation = SubmissionCancellation()
         let cancelOnMain: @MainActor @Sendable () -> Void = { [weak self] in self?.cancelSubmission(id) }
@@ -237,13 +240,30 @@ final class CanvasTerminalView: TerminalView {
                     continuation.resume(returning: false)
                     return
                 }
-                enqueue(.submission(Submission(id: id, paste: paste, delay: delay, cancellation: cancellation, continuation: continuation)))
+                enqueue(.submission(Submission(id: id, attachment: attachment, paste: paste, delay: delay, cancellation: cancellation, continuation: continuation)))
             }
         } onCancel: {
             cancellation.cancel()
             Task { await cancelOnMain() }
         }
         return result && !Task.isCancelled
+    }
+
+    private func acceptsInput(on attachment: TerminalSurface?) -> Bool {
+        guard let attachment, surface === attachment else { return false }
+        return attachment.isProcessRunning
+    }
+
+    private func acceptsKey(_ event: NSEvent, on attachment: TerminalSurface?) -> Bool {
+        guard let attachment, surface === attachment else { return false }
+        return attachment.isProcessRunning || keyIsBinding(event, on: attachment)
+    }
+
+    private func refuseInput(on attachment: TerminalSurface?) {
+        onImageProblem?("Input not sent: the terminal attachment is unavailable. Inspect the terminal before typing again.")
+        if let attachment, surface === attachment, !attachment.isProcessRunning {
+            attachment.requestClose()
+        }
     }
 
     private func cancelSubmission(_ id: UUID) {
@@ -361,9 +381,15 @@ final class CanvasTerminalView: TerminalView {
             let input = pendingInput[inputIndex]
             inputIndex += 1
             switch input {
-            case .key(let event):
+            case .key(let event, let attachment):
+                guard let attachment, surface === attachment else {
+                    if event.type == .keyDown { refuseInput(on: attachment) }
+                    continue
+                }
                 switch event.type {
-                case .keyDown: super.keyDown(with: event)
+                case .keyDown:
+                    guard acceptsKey(event, on: attachment) else { refuseInput(on: attachment); continue }
+                    super.keyDown(with: event)
                 case .keyUp: super.keyUp(with: event)
                 case .flagsChanged: super.flagsChanged(with: event)
                 default: break
@@ -380,21 +406,25 @@ final class CanvasTerminalView: TerminalView {
                 let token = submission.id
                 let task = Task { [weak self] in
                     guard self?.activeInput?.token == token else { return }
-                    guard !Task.isCancelled, submission.isPending, submission.paste() else {
+                    guard !Task.isCancelled, submission.isPending, let self,
+                          self.acceptsInput(on: submission.attachment), submission.paste(),
+                          self.acceptsInput(on: submission.attachment) else {
                         self?.finishInput(token)
                         return
                     }
                     do {
                         try await Task.sleep(for: submission.delay)
                     } catch {
-                        self?.finishInput(token)
+                        self.finishInput(token)
                         return
                     }
-                    guard !Task.isCancelled, submission.isPending, let self, self.activeInput?.token == token else {
-                        self?.finishInput(token)
+                    guard !Task.isCancelled, submission.isPending, self.activeInput?.token == token,
+                          self.acceptsInput(on: submission.attachment) else {
+                        self.finishInput(token)
                         return
                     }
-                    self.finishInput(token, result: self.sendKey(.enter))
+                    let accepted = self.sendKey(.enter)
+                    self.finishInput(token, result: accepted && self.acceptsInput(on: submission.attachment))
                 }
                 activeInput = ActiveInput(token: token, task: task, submission: submission)
                 return
@@ -571,6 +601,7 @@ final class CanvasTerminalView: TerminalView {
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
         onUserInput?()
+        guard acceptsKey(event, on: surface) else { refuseInput(on: surface); return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if !event.isARepeat { pasteKeyUp = nil }
@@ -587,7 +618,7 @@ final class CanvasTerminalView: TerminalView {
             }
         }
         if activeInput != nil {
-            enqueue(.key(event))
+            enqueue(.key(event, surface))
             return
         }
         let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
@@ -603,11 +634,11 @@ final class CanvasTerminalView: TerminalView {
             pasteKeyUp = nil
             return
         }
-        if activeInput != nil { enqueue(.key(event)) } else { super.keyUp(with: event) }
+        if activeInput != nil { enqueue(.key(event, surface)) } else { super.keyUp(with: event) }
     }
 
     override func flagsChanged(with event: NSEvent) {
-        if activeInput != nil { enqueue(.key(event)) } else { super.flagsChanged(with: event) }
+        if activeInput != nil { enqueue(.key(event, surface)) } else { super.flagsChanged(with: event) }
         guard let window else { return }
         updateHover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil), command: event.modifierFlags.contains(.command))
     }

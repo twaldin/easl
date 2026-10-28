@@ -27,6 +27,16 @@ public final class TerminalSurface {
     }
 
     // MARK: - Input
+    public var isProcessRunning: Bool {
+        guard let surface else { return false }
+        return !ghostty_surface_process_exited(surface)
+    }
+
+    public func requestClose() {
+        guard let surface else { return }
+        ghostty_surface_request_close(surface)
+    }
+
 
     @discardableResult
     func sendKeyEvent(_ event: ghostty_input_key_s) -> Bool {

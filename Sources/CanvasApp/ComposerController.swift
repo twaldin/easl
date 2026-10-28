@@ -268,7 +268,7 @@ final class ComposerController {
                     } catch {
                         let message = (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
                         failures.append("\(self?.name(delivery.terminal) ?? delivery.terminal): \(message)")
-                        self?.notice("Not sent to " + failures.joined(separator: "; "))
+                        self?.notice("Submission incomplete for " + failures.joined(separator: "; "))
                         return .refused
                     }
                 }
@@ -296,7 +296,7 @@ final class ComposerController {
         state.draft = settled.draft
         if !settled.sent { state.returned(outgoing.draft) }
         if !failures.isEmpty {
-            notice((settled.sent ? "Not sent to " : "Nothing sent: ") + failures.joined(separator: "; ") + (settled.mentionsReturned ? ". The mentions stay staged" : ""))
+            notice("Submission incomplete for " + failures.joined(separator: "; ") + (settled.mentionsReturned ? ". The mentions stay staged" : ""))
         }
         scheduleSave()
     }
