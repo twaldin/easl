@@ -153,9 +153,52 @@ private enum TerminalSubmission {
         try require(!accepted, "a replaced attachment must not complete the original submission")
         let control = await f.submit("replacement-control")
         try require(control, "the replacement must accept a new explicit submission")
-        try await until { FileManager.default.fileExists(atPath: replacementReceipt.path) }
+        try await until { (try? String(contentsOf: replacementReceipt, encoding: .utf8)) == "replacement-control\n" }
         let received = try String(contentsOf: replacementReceipt, encoding: .utf8)
         try require(received == "replacement-control\n", "the replacement must not receive a stray Enter or replayed text")
+    }
+
+    static func replacementDuringEnterGapRefusesDelivery() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        var pasted = false
+        let submission = Task { @MainActor in
+            await f.view.submitOrdered({
+                pasted = f.view.paste(text: "partial-original")
+                return pasted
+            }, delay: TerminalTile.submitDelay)
+        }
+        try await until { pasted }
+        let receipt = f.receipt.appendingPathExtension("gap")
+        var options = f.view.configuration
+        options.command = ShellWords.quote(["/bin/sh", "-c", "exec /bin/cat > " + ShellWords.quote([receipt.path])])
+        f.view.configuration = options
+        let accepted = await submission.value
+        try require(!accepted, "replacement during the paste-to-Enter gap must refuse delivery")
+        let control = await f.submit("explicit-gap-control")
+        try require(control, "the replacement must accept an explicit new submission")
+        try await until { (try? String(contentsOf: receipt, encoding: .utf8)) == "explicit-gap-control\n" }
+    }
+
+    static func exitedTerminalStillCopiesSelection() async throws {
+        let marker = "copy-after-process-exit"
+        let f = Fixture(command: ShellWords.quote(["/bin/sh", "-c", "printf " + ShellWords.quote([marker])]))
+        defer { f.close() }
+        try await until { f.exited }
+        try require(f.view.performBindingAction("select_all"), "the exited screen must remain selectable")
+        var notices: [String] = []
+        f.view.onImageProblem = { notices.append($0) }
+        let before = NSPasteboard.general.changeCount
+        let copy = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                   timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: f.window.windowNumber, context: nil,
+                                   characters: "c", charactersIgnoringModifiers: "c",
+                                   isARepeat: false, keyCode: 8)!
+        f.view.keyDown(with: copy)
+        try require(notices.isEmpty, "Copy must not be refused or dismiss the exited terminal")
+        try require(NSPasteboard.general.changeCount != before, "Copy must update the clipboard")
+        try require(NSPasteboard.general.string(forType: .string)?.contains(marker) == true,
+                    "Copy must preserve the exited terminal's selected output")
     }
 
     static func exitedAttachmentKeepsComposerDraft() async throws {
@@ -213,6 +256,8 @@ private enum TerminalSubmission {
             ("cancelled submission does not send Enter", cancelledSubmissionDoesNotSendEnter),
             ("exited attachment refuses prompt delivery", exitedAttachmentIsNotSuccessfulDelivery),
             ("replacement cannot inherit a submission", replacementCannotReceiveTheOriginalEnter),
+            ("replacement during Enter gap refuses delivery", replacementDuringEnterGapRefusesDelivery),
+            ("exited terminal still copies selection", exitedTerminalStillCopiesSelection),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
             ("exited attachment keeps composer draft", exitedAttachmentKeepsComposerDraft),
         ]

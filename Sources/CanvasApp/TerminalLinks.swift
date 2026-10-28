@@ -250,14 +250,19 @@ final class CanvasTerminalView: TerminalView {
     }
 
     private func acceptsInput(on attachment: TerminalSurface?) -> Bool {
-        guard let attachment, surface === attachment, let handle = attachment.handle else { return false }
-        return !ghostty_surface_process_exited(handle)
+        guard let attachment, surface === attachment else { return false }
+        return attachment.isProcessRunning
+    }
+
+    private func acceptsKey(_ event: NSEvent, on attachment: TerminalSurface?) -> Bool {
+        guard let attachment, surface === attachment else { return false }
+        return attachment.isProcessRunning || keyIsBinding(event, on: attachment)
     }
 
     private func refuseInput() {
         onImageProblem?("Input not sent: the terminal attachment is unavailable. Inspect the terminal before typing again.")
-        if let handle = surface?.handle, ghostty_surface_process_exited(handle) {
-            ghostty_surface_request_close(handle)
+        if let surface, !surface.isProcessRunning {
+            surface.requestClose()
         }
     }
 
@@ -379,7 +384,7 @@ final class CanvasTerminalView: TerminalView {
             case .key(let event, let attachment):
                 switch event.type {
                 case .keyDown:
-                    guard acceptsInput(on: attachment) else { refuseInput(); continue }
+                    guard acceptsKey(event, on: attachment) else { refuseInput(); continue }
                     super.keyDown(with: event)
                 case .keyUp: super.keyUp(with: event)
                 case .flagsChanged: super.flagsChanged(with: event)
@@ -414,7 +419,7 @@ final class CanvasTerminalView: TerminalView {
                         self.finishInput(token)
                         return
                     }
-                    let accepted = submission.attachment.sendKey(.enter)
+                    let accepted = self.sendKey(.enter)
                     self.finishInput(token, result: accepted && self.acceptsInput(on: submission.attachment))
                 }
                 activeInput = ActiveInput(token: token, task: task, submission: submission)
@@ -592,7 +597,7 @@ final class CanvasTerminalView: TerminalView {
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
         onUserInput?()
-        guard acceptsInput(on: surface) else { refuseInput(); return }
+        guard acceptsKey(event, on: surface) else { refuseInput(); return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if !event.isARepeat { pasteKeyUp = nil }
