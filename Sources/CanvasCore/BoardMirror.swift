@@ -216,6 +216,9 @@ public final class BoardMirror: BoardHost {
 
     /// The host's objects as last heard (a reply, an event, a read), by host id.
     private var known: [ObjectID: CanvasObject] = [:]
+
+    public func isProvisional(_ id: ObjectID) -> Bool { known[id] == nil }
+
     /// Writes not answered yet, by the written object's id here, oldest first (the first is in flight).
     private var queues: [ObjectID: [RemoteWrite]] = [:]
     private var pumps: [ObjectID: Task<Void, Never>] = [:]
