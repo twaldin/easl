@@ -304,7 +304,7 @@ What it sets up:
 
 Browser tests: `EASL_DEV_DOWNLOADS=<folder>` (passed through by `dev.sh`) saves browser downloads there instead of ~/Downloads, and `EASL_DEV_EXTERNAL_OPEN=log` makes links handed to the default browser or another app (⌥-click, `mailto:`) only log `easl: … → <app>` in `app.log`, so a test never opens a window in the user's browser. A page's open panel runs out of process, where no replayed click or key reaches: `input panel <path>` chooses the file.
 
-To replay input in Settings or a specific board window, add `--window <id>` to `input click`, `input key`, `input shortcut`, or `input text`. The ID must belong to that instance's PID. Without this option, replay still targets the frontmost board. A stale window ID drops the input rather than sending it to another window. Keyboard actions follow the selected window's responder chain, including while another window has focus.
+To replay input in Settings or a specific board window, add `--window <id>` to `input click`, `rightclick`, `drag`, `release`, `menu`, `move`, `flags`, `magnify`, `scroll`, `text`, `command`, `key`, `shortcut`, or `panel`. The ID must belong to that instance's PID. Without this option, window-dependent replay targets the frontmost board. A stale window ID drops the input rather than sending it to another window. Keyboard actions follow the selected window's responder chain, including while another window has focus. `input close <id>` takes its window ID as a positional argument. `mainmenu`, `reopen`, `remote`, `state`, and the performance controls do not use `--window`.
 
 Run `scripts/dev.sh stop` when the test is done, not at the end of the session: it also kills the instance's zmx sessions.
 
@@ -389,6 +389,11 @@ Run this AppKit regression in a claimed GUI guest:
 ```
 
 The runner launches a private bundle with a disposable home and real key windows. It checks synchronous terminal focus and selection across host-ID replacement. Composer, another terminal, and another key window must keep focus if the user moved there first. It also checks a composer focus change before initial terminal focus could be deferred. This runner has no live host session or WindowServer captures. Use the terminal and remote-board journeys in `.agents/skills/verify-easl/` for native pixels and shell execution.
+
+The added key-routing cases send native events through the installed canvas monitor and the real window controller and menu. Escape, Command-V, raw typing, Return, custom Control-V paste, custom Option-R drawing, an Option-D Ghostty remap, and unavailable custom Control-Z Undo/Redo must preserve board objects, selection, and terminal focus while showing the refusal pill. Controls exercise custom Control-= zoom, Command-Z routing, Command-Escape Leave Tile, Command-M minimization, Command-Option-Right tile navigation, Command-W close confirmation, Command-modified Ghostty New Terminal and Close Terminal remaps, and the real composer across rekey. A separate real socket/router fixture loads a host-confirmed terminal identity and checks that its typing does not receive the provisional refusal. These cases do not prove PTY delivery or no replay into a live shell; retain that evidence in the delayed-host guest journey.
+
+The fixture uses `CanvasApplication` with development input enabled. Escape, Command-V, and typing replayed to a non-key board window must show the same refusal without changing that board or its terminal focus.
+The native key-window cases also refuse an enabled Zoom In command bound to Option-= and plain e/f. Every refusal must leave zoom unchanged; the Option-only case starts at 50% so a dispatched Zoom In would be observable.
 
 ### Move tool input isolation
 

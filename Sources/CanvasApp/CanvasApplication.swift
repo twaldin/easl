@@ -36,6 +36,8 @@ final class CanvasApplication: NSApplication {
            window.captureKeyEvent(event) { return }
         if DevInput.enabled, event.type == .keyDown || event.type == .keyUp,
            let window = event.window, window !== keyWindow, window.windowController is CanvasWindowController {
+            if event.type == .keyDown, let controller = window.windowController as? CanvasWindowController,
+               !controller.canvas.admitsKeyDown(event) { return }
             if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }
             return window.sendEvent(event)
         }

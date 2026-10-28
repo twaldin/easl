@@ -1,0 +1,60 @@
+diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Input.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Input.swift
+index dc768866..e1139736 100644
+--- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Input.swift
++++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView+Input.swift
+@@ -269,7 +269,7 @@
+             NSMenu.popUpContextMenu(menu, with: event, for: self)
+         }
+ 
+-        private func keyIsBinding(
++        public func keyIsBinding(
+             _ event: NSEvent,
+             on surface: TerminalSurface
+         ) -> Bool {
+diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+index 5e7ba3a5..f6beec7d 100644
+--- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
++++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
+@@ -53,7 +53,7 @@
+             core.resizeThrottleInterval = milliseconds.map { max(0, $0) / 1000 }
+         }
+ 
+-        var surface: TerminalSurface? {
++        public var surface: TerminalSurface? {
+             core.surface
+         }
+ 
+diff --git a/Sources/GhosttyTerminal/Surface/TerminalSurface.swift b/Sources/GhosttyTerminal/Surface/TerminalSurface.swift
+index b676402a..69b3f88f 100644
+--- a/Sources/GhosttyTerminal/Surface/TerminalSurface.swift
++++ b/Sources/GhosttyTerminal/Surface/TerminalSurface.swift
+@@ -27,6 +27,16 @@ public final class TerminalSurface {
+     }
+ 
+     // MARK: - Input
++    public var isProcessRunning: Bool {
++        guard let surface else { return false }
++        return !ghostty_surface_process_exited(surface)
++    }
++
++    public func requestClose() {
++        guard let surface else { return }
++        ghostty_surface_request_close(surface)
++    }
++
+ 
+     @discardableResult
+     func sendKeyEvent(_ event: ghostty_input_key_s) -> Bool {
+diff --git a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+index 4e0d7975..d9865f1f 100644
+--- a/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
++++ b/Sources/GhosttyTerminal/Surface/TerminalSurfaceCoordinator.swift
+@@ -576,6 +576,8 @@ final class TerminalSurfaceCoordinator {
+         resizeThrottleTrailing = false
+         pendingImmediateTick = true
+         controller?.remove(bridge)
++        // Ghostty identifies queued messages by pointer; drain before that address can be reused.
++        if hadSurface { controller?.tick() }
+         if hadSurface {
+             (delegate as? any TerminalSurfaceLifecycleDelegate)?
+                 .terminalDidDetachSurface()
