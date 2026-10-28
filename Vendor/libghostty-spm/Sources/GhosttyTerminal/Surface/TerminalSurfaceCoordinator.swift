@@ -565,6 +565,8 @@ final class TerminalSurfaceCoordinator {
         let hadSurface = surface != nil
         surface?.setFocus(false)
         surface?.free()
+        // Ghostty identifies queued messages by pointer; drain before that address can be reused.
+        if hadSurface { controller?.tick() }
         surface = nil
         lastMetrics = nil
         syncedViewSize = nil

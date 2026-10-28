@@ -53,7 +53,7 @@
             core.resizeThrottleInterval = milliseconds.map { max(0, $0) / 1000 }
         }
 
-        var surface: TerminalSurface? {
+        public var surface: TerminalSurface? {
             core.surface
         }
 

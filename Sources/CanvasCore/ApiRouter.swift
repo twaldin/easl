@@ -1457,7 +1457,7 @@ public final class ApiRouter {
         guard submitted else {
             board.commit(handed.map { $0.id })
             if let queued { board.withdrawComposerPrompt(queued) }
-            throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
+            throw Failure("unavailable", "terminal \(terminal.id) did not accept the full submission. Some text may already be present; inspect the terminal before sending again")
         }
         // Only a reporting agent's next report can end the pre-prompt state. An agent reporting
         // by notification is `unknown` from now until its next one (`NotifyingAgent`). An agent
