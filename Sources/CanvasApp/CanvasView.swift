@@ -826,14 +826,19 @@ final class CanvasView: NSScrollView {
         remote.mirror.userInput()
     }
 
+    func admitsKeyDown(_ event: NSEvent) -> Bool {
+        guard !isHidden, remote?.mirror.availability != .closed, event.window === window,
+              !HyperMonitor.isHyper(event.modifierFlags) else { return true }
+        guard let remote, let id = focusedTerminal, remote.mirror.isProvisional(id),
+              !CanvasWindowController.allowsProvisionalTerminalKey(event) else { return true }
+        showNotice("Terminal not ready. Nothing typed; try again after it starts.")
+        return false
+    }
+
     private func handleMouse(_ event: NSEvent) -> NSEvent? {
+        if event.type == .keyDown { return admitsKeyDown(event) ? event : nil }
         guard !isHidden, remote?.mirror.availability != .closed, event.window === window, !HyperMonitor.isHyper(event.modifierFlags) else { return event }
         switch event.type {
-        case .keyDown:
-            guard let remote, let id = focusedTerminal, remote.mirror.isProvisional(id),
-                  !CanvasWindowController.allowsProvisionalTerminalKey(event) else { return event }
-            showNotice("Terminal not ready. Nothing typed; try again after it starts.")
-            return nil
         case .leftMouseDown:
             guard let hit = hitView(event), hit.isDescendant(of: document) else { return event }
             let point = docPoint(event)
