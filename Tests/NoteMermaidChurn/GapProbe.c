@@ -5,6 +5,7 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/mach_vm.h>
+#include <mach/thread_policy.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -38,6 +39,7 @@ void easl_gap_stop(void);
 #define GAP_NS UINT64_C(30000000)
 #define POLL_NS UINT64_C(5000000)
 #define STACK_PERIOD_NS UINT64_C(10000000)
+#define STACK_TRIGGER_NS UINT64_C(20000000)
 #define WALK_BUDGET_NS UINT64_C(2000000)
 #define INTERVAL_CAPACITY 32768
 #define OVERFLOW_GAP_CAPACITY 1024
@@ -46,6 +48,8 @@ void easl_gap_stop(void);
 #define STACK_CAPACITY 2048
 #define FRAME_CAPACITY 64
 #define FIXTURE_CAPACITY 256
+#define EXIT_RESUME_FAILED 86
+#define EXIT_JOIN_FAILED 87
 
 typedef struct {
     uint64_t sequence;
@@ -266,6 +270,7 @@ typedef struct {
 typedef struct {
     CPUStats cpu_stats;
     uint64_t wake_count;
+    kern_return_t realtime_policy_error;
     uint64_t wake_dropped;
     uint64_t wake_lateness_total_ns;
     uint64_t wake_lateness_max_ns;
@@ -397,6 +402,7 @@ static uintptr_t strip_code_pointer(uintptr_t value) {
 }
 
 static uintptr_t strip_frame_pointer(uintptr_t value) {
+    value &= ~(UINT64_C(1) << 60);
 #if defined(__arm64__) && __has_feature(ptrauth_calls)
     return (uintptr_t)ptrauth_strip((void *)value, ptrauth_key_process_independent_data);
 #else
@@ -528,7 +534,6 @@ static void capture_stack(StackRecord *record) {
     record->suspended_ns = now_ns();
     record->at_ns = record->suspended_ns;
     record->observed_version = atomic_load_explicit(&publication.publication, memory_order_seq_cst);
-    // Main marks publication busy before measuring a beat or a context transition.
     if (record->observed_version != record->candidate.version ||
         atomic_load_explicit(&publication.stop, memory_order_acquire) ||
         !atomic_load_explicit(&publication.active, memory_order_acquire)) {
@@ -545,8 +550,7 @@ static void capture_stack(StackRecord *record) {
         if (!record->first_resume_error) record->first_resume_error = error;
         watchdog_stats.resume_errors++;
         watchdog_stats.last_resume_error = error;
-        // No output or cleanup can safely precede termination if resume is impossible.
-        if (record->resume_attempts == 3) session.exit_process(86);
+        if (record->resume_attempts == 3) session.exit_process(EXIT_RESUME_FAILED);
     }
     record->resume_end_ns = now_ns();
     uint64_t envelope = record->resume_end_ns - record->suspend_begin_ns;
@@ -562,6 +566,17 @@ static void *watchdog_main(void *unused) {
     watchdog_stats.signal_mask_error = pthread_sigmask(SIG_SETMASK, &blocked, NULL);
     uint64_t poll_ticks = (uint64_t)(((__uint128_t)POLL_NS * session.timebase.denom +
                                      session.timebase.numer - 1) / session.timebase.numer);
+    thread_time_constraint_policy_data_t policy = {
+        .period = (uint32_t)poll_ticks,
+        .computation = (uint32_t)(poll_ticks / 5),
+        .constraint = (uint32_t)(poll_ticks * 3 / 5),
+        .preemptible = true
+    };
+    thread_t self = mach_thread_self();
+    watchdog_stats.realtime_policy_error = thread_policy_set(
+        self, THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&policy,
+        THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+    mach_port_deallocate(mach_task_self(), self);
     uint64_t deadline = mach_absolute_time() + poll_ticks;
     uint64_t last_interval = 0;
     uint64_t last_attempt_ns = 0;
@@ -604,7 +619,7 @@ static void *watchdog_main(void *unused) {
             last_interval = wake.snapshot.interval_sequence;
             last_attempt_ns = 0;
         }
-        if (wake.at_ns <= wake.snapshot.beat_at_ns || wake.at_ns - wake.snapshot.beat_at_ns <= GAP_NS ||
+        if (wake.at_ns <= wake.snapshot.beat_at_ns || wake.at_ns - wake.snapshot.beat_at_ns <= STACK_TRIGGER_NS ||
             (last_attempt_ns && wake.at_ns - last_attempt_ns < STACK_PERIOD_NS)) continue;
         last_attempt_ns = wake.at_ns;
         watchdog_stats.stack_count++;
@@ -773,6 +788,7 @@ static void account_main_probe(uint64_t begin_ns) {
 void easl_gap_beat(void) {
     if (!session.live || !session.enabled) return;
     atomic_fetch_add_explicit(&publication.publication, 1, memory_order_seq_cst);
+    atomic_thread_fence(memory_order_release);
     CPU cpu = sample_cpu(&session.cpu_stats);
     Interval record = {
         .sequence = next_sequence(),
@@ -819,6 +835,7 @@ static void close_context(CPU cpu, Context next, bool stopping) {
 void easl_gap_context(int edit, int phase) {
     if (!session.live || !session.enabled) return;
     atomic_fetch_add_explicit(&publication.publication, 1, memory_order_seq_cst);
+    atomic_thread_fence(memory_order_release);
     CPU cpu = sample_cpu(&session.cpu_stats);
     Context next = { .sequence = session.context.sequence + 1, .edit = edit, .phase = phase };
     close_context(cpu, next, false);
@@ -1053,7 +1070,14 @@ static void emit_stack(const StackRecord *record) {
         if (i) fputc(',', stdout);
         emit_frame(&record->frames[i], i);
     }
-    fputs("]}\n", stdout);
+    fputs("],\"linkRegisterFrame\":", stdout);
+    if (record->lr) {
+        Frame lr = { .raw_pc = record->raw_lr, .pc = record->lr };
+        emit_frame(&lr, 1);
+    } else {
+        fputs("null", stdout);
+    }
+    fputs("}\n", stdout);
 }
 
 static void emit_cpu_stats(const CPUStats *stats) {
@@ -1078,6 +1102,8 @@ static const char *start_name(StartResult result) {
 static void emit_summary(void) {
     emit_header("instrumentation-summary", next_sequence(), session.context, session.stop_ns);
     fprintf(stdout, ",\"watchdogCreated\":%s", session.watchdog_created ? "true" : "false");
+    fprintf(stdout, ",\"watchdogRealtimePolicyError\":%d", watchdog_stats.realtime_policy_error);
+    fprintf(stdout, ",\"stackTriggerNs\":%" PRIu64, STACK_TRIGGER_NS);
     fprintf(stdout, ",\"enabled\":%s,\"startResult\":\"%s\",\"clock\":\"mach_absolute_time\""
                     ",\"timebaseNumer\":%u,\"timebaseDenom\":%u,\"timebaseError\":%d"
                     ",\"startNs\":%" PRIu64 ",\"stopNs\":%" PRIu64 ",\"joinedNs\":%" PRIu64
@@ -1145,6 +1171,7 @@ void easl_gap_stop(void) {
     if (!session.live) return;
     if (session.enabled) {
         atomic_fetch_add_explicit(&publication.publication, 1, memory_order_seq_cst);
+        atomic_thread_fence(memory_order_release);
         atomic_store_explicit(&publication.active, 0, memory_order_relaxed);
         atomic_store_explicit(&publication.stop, 1, memory_order_release);
         CPU cpu = sample_cpu(&session.cpu_stats);
@@ -1157,8 +1184,7 @@ void easl_gap_stop(void) {
     }
     if (session.watchdog_created) {
         session.join_error = pthread_join(session.watchdog, NULL);
-        // Storage and the main thread right must outlive the watchdog, even on join failure.
-        if (session.join_error) session.exit_process(87);
+        if (session.join_error) session.exit_process(EXIT_JOIN_FAILED);
     }
     if (session.timebase.numer && session.timebase.denom) session.joined_ns = now_ns();
     if (session.main_thread) session.deallocate_error = mach_port_deallocate(session.task, session.main_thread);

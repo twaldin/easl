@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: mermaid-churn-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   BASELINE_SHA: 500cc93b93d4e122625793b10fbd04a807e9dd0f
 
@@ -14,6 +18,8 @@ jobs:
   smoke:
     name: Churn smoke / experiment
     runs-on: macos-26
+    outputs:
+      probe_ok: ${{ steps.probe-health.outputs.ok }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -24,8 +30,7 @@ jobs:
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
       - name: Confirm unchanged product code
-        run: |
-          git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
+        run: git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
       - name: Record host and run identity
         run: |
           printf 'side=experiment index=smoke baseline=%s experiment=%s checkout=' "$BASELINE_SHA" "$GITHUB_SHA"
@@ -41,20 +46,25 @@ jobs:
       - name: Run full churn regression with original 50ms gate
         env:
           EASL_GAP_CALIBRATE: "1"
-        run: python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+        run: python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/churn-smoke-artifacts" --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+      - name: Validate diagnostic calibration
+        id: probe-health
+        if: always()
+        run: |
+          python3 Tests/NoteMermaidChurn/check_probe.py "$RUNNER_TEMP/churn-smoke-artifacts/native.jsonl"
+          printf 'ok=true\n' >> "$GITHUB_OUTPUT"
 
   matrix:
-    name: Churn / ${{ matrix.side }} / ${{ matrix.index }}
+    name: Churn pair / ${{ matrix.index }}
     needs: smoke
+    if: ${{ always() && needs.smoke.outputs.probe_ok == 'true' }}
     runs-on: macos-26
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
         index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-        side: [main, experiment]
     env:
-      SIDE: ${{ matrix.side }}
       INDEX: ${{ matrix.index }}
     steps:
       - uses: actions/checkout@v5
@@ -62,20 +72,14 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Confirm unchanged product code
-        run: |
-          git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
-      - name: Restore pinned baseline runner without probe links
-        if: matrix.side == 'main'
-        run: |
-          git show "$BASELINE_SHA:Tests/NoteMermaidChurn/NoteMermaidChurn.swift" > Tests/NoteMermaidChurn/NoteMermaidChurn.swift
-          git show "$BASELINE_SHA:Tests/NoteMermaidChurn/run.py" > Tests/NoteMermaidChurn/run.py
+        run: git diff --exit-code "$BASELINE_SHA" "$GITHUB_SHA" -- . ':!Tests/NoteMermaidChurn' ':!.github/workflows/ci.yml'
       - name: Select Command Line Tools
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
       - name: Record host and run identity
         run: |
-          printf 'side=%s index=%s baseline=%s experiment=%s checkout=' "$SIDE" "$INDEX" "$BASELINE_SHA" "$GITHUB_SHA"
+          printf 'index=%s baseline=%s experiment=%s checkout=' "$INDEX" "$BASELINE_SHA" "$GITHUB_SHA"
           git rev-parse HEAD
           uname -a
           arch
@@ -83,10 +87,27 @@ jobs:
           sysctl hw.ncpu hw.physicalcpu hw.logicalcpu hw.memsize vm.loadavg
           vm_stat
           ps -axo pid,ppid,%cpu,%mem,etime,comm -r
-      - name: Build optimized Easl
+      - name: Build identical optimized product objects once
         run: swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-      - name: Run full churn regression with original 50ms gate
+      - name: Run paired baseline and experiment without discarding failures
         run: |
-          uptime
-          sysctl vm.loadavg
-          python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+          build=$(swift build --build-system native -c release --show-bin-path)
+          if (( INDEX % 2 )); then sides="main experiment"; else sides="experiment main"; fi
+          status=0
+          for side in $sides; do
+            ref="$GITHUB_SHA"
+            if [[ "$side" == main ]]; then ref="$BASELINE_SHA"; fi
+            git show "$ref:Tests/NoteMermaidChurn/NoteMermaidChurn.swift" > Tests/NoteMermaidChurn/NoteMermaidChurn.swift
+            git show "$ref:Tests/NoteMermaidChurn/run.py" > Tests/NoteMermaidChurn/run.py
+            printf '{"event":"side-start","side":"%s","index":%s,"source":"%s"}\n' "$side" "$INDEX" "$ref"
+            uptime
+            sysctl vm.loadavg
+            if python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/churn-$side" --bin-path "$build"; then
+              code=0
+            else
+              code=$?
+              status=1
+            fi
+            printf '{"event":"side-end","side":"%s","index":%s,"returnCode":%s}\n' "$side" "$INDEX" "$code"
+          done
+          exit "$status"

@@ -100,6 +100,7 @@ def run(args, parser, scratch):
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
     probe_object = scratch / "GapProbe.o"
     subprocess.run(["xcrun", "clang", "-O2", "-g", "-fno-omit-frame-pointer",
+                    "-target", f"{platform.machine()}-apple-macosx14.0",
                     "-c", str(root / "Tests/NoteMermaidChurn/GapProbe.c"),
                     "-o", str(probe_object)], cwd=root, check=True)
     command = [compiler, "-O", "-g", "-swift-version", "6", "-parse-as-library", "-enable-testing",
