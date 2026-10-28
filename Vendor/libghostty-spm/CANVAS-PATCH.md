@@ -76,4 +76,28 @@ The existing AppKit `TerminalPasteboardContent.text(from:)` reader is public so 
 queued text pastes at the keypress. It retains the same URL precedence and shell escaping as
 Ghostty's clipboard callback without changing the pasteboard.
 
+### Surface lifetime and attachment-aware input
+
+The #205 changes touch four files:
+
+- `Surface/TerminalSurfaceCoordinator.swift` drains the retiring controller with `tick()` after
+  freeing the old surface, clearing wrapper state, and removing its callback bridge, but before
+  the detach callback or replacement allocation. Ghostty queues child-exit messages with a raw
+  surface pointer and validates that pointer by membership, not generation. If a replacement
+  reuses the freed address before the queue drains, Ghostty accepts the stale exit for the live
+  replacement. The next encoded key dismisses that supposedly exited surface instead of reaching
+  its PTY, even though Ghostty reports the key as accepted.
+- `Surface/TerminalSurface.swift` exposes `isProcessRunning`, which reads Ghostty's exited flag
+  and returns false after free, and `requestClose()`, which requests closure only while a raw
+  surface exists. The flag is not an independent OS process-liveness check.
+- `Platform/AppKit/AppTerminalView.swift` makes the current `surface` public so hosts can bind a
+  complete input submission to one wrapper identity rather than accidentally target a replacement.
+- `Platform/AppKit/AppTerminalView+Input.swift` makes `keyIsBinding(_:on:)` public so hosts can
+  preserve Copy, selection, and font bindings on exited screens while refusing process input.
+
+The standalone diff contains only these #205 changes, not the earlier resource, frame-link,
+clipboard, or paste changes: `patches/libghostty-spm-surface-lifetime.patch`. It applies directly
+to the pinned upstream tag and composes with the existing resource and frame-link patches.
+It does not change the prebuilt Ghostty binary or make key acceptance a PTY-delivery guarantee.
+
 To update, copy the new tag's files as above, reapply the patches, and drop the test target again.

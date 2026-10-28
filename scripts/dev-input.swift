@@ -28,7 +28,9 @@
 //                                                    upload), which runs out of process where no click reaches
 //   dev-input <pid> remote <ssh target> <board> [host home]  open another easl's board as a remote board (the
 //                                                    host found over ssh; host home: its support directory)
-//   click, text, key, shortcut: --window <id>          target that instance's exact window; stale IDs drop input
+//   window-dependent kinds: --window <id>           click, rightclick, drag, release, menu, move, flags, magnify,
+//                                                    scroll, text, command, key, shortcut, and panel target that
+//                                                    instance's exact window; stale IDs drop input
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 //   scroll/magnify --oscillate N                     reverse direction every N repeated steps
 //   scroll/magnify --realtime                        coalesce missed ticks; keep the scheduled burst duration
