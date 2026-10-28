@@ -60,8 +60,6 @@ final class NoteTile: NSView, TileContent {
     private var session: NoteEditSession?
     var isEditing: Bool { session != nil }
     private var clickMonitor: Any?
-    private static var spellingPreparation: Task<Void, Never>?
-    private var editorChecksGrammar = false
 
     init(object: CanvasObject, board: Board, files: HostFiles? = nil) {
         self.object = object
@@ -75,8 +73,6 @@ final class NoteTile: NSView, TileContent {
         display.wantsLayer = true
         display.isEditable = false
         display.isSelectable = false
-        // Noneditable text views still schedule inherited substitutions and language checking.
-        display.enabledTextCheckingTypes = 0
         display.drawsBackground = false
         display.textContainerInset = ObjectMeasure.noteInset
         display.textContainer?.lineFragmentPadding = ObjectMeasure.noteLineFragmentPadding
@@ -90,9 +86,14 @@ final class NoteTile: NSView, TileContent {
         editor.textColor = .labelColor
         editor.backgroundColor = .textBackgroundColor
         editor.textContainerInset = Self.editorInset
-        editorChecksGrammar = editor.isGrammarCheckingEnabled
-        editor.enabledTextCheckingTypes = 0
+        // Misspellings are underlined, but nothing is changed as the user types: markdown and
+        // code want their quotes, dashes and words as typed.
+        editor.isContinuousSpellCheckingEnabled = true
+        editor.isAutomaticSpellingCorrectionEnabled = false
         editor.isAutomaticTextCompletionEnabled = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false
         editor.autoresizingMask = [.width]
         editor.onCommit = { [weak self] in self?.endEditing(.confirmed) }
         // Esc leaves like a click away (saving), except that with a conflict shown it keeps
@@ -130,11 +131,6 @@ final class NoteTile: NSView, TileContent {
         }
         display.isSelectable = closed
         editor.isEditable = !closed
-        if closed {
-            editor.enabledTextCheckingTypes = 0
-        } else if session != nil {
-            startSpelling()
-        }
         if !closed, live {
             renderDisplay()
             resolve()
@@ -676,7 +672,6 @@ final class NoteTile: NSView, TileContent {
         editorScroll.isHidden = false
         window?.makeFirstResponder(editor)
         editor.scrollRangeToVisible(editor.selectedRange())
-        startSpelling()
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self, self.session != nil, event.window === self.window else { return }
@@ -684,22 +679,6 @@ final class NoteTile: NSView, TileContent {
                 if !self.bounds.contains(point) { self.endEditing(.implicit) }
             }
             return event
-        }
-    }
-
-    private func startSpelling() {
-        guard let session else { return }
-        let text = editor.string
-        let preparation = Self.spellingPreparation ?? Task.detached(priority: .userInitiated) {
-            // Initialize the singleton and its spell-server connection away from AppKit's main-thread preflight.
-            _ = NSSpellChecker.shared.checkSpelling(of: text, startingAt: 0)
-        }
-        Self.spellingPreparation = preparation
-        Task { [weak self] in
-            await preparation.value
-            guard let self, self.session === session, !self.hostBoardClosed else { return }
-            self.editor.isGrammarCheckingEnabled = self.editorChecksGrammar
-            self.editor.isContinuousSpellCheckingEnabled = true
         }
     }
 
@@ -752,7 +731,6 @@ final class NoteTile: NSView, TileContent {
 
     private func finishEditing(returningFocus: Bool) {
         session = nil
-        editor.enabledTextCheckingTypes = 0
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
         hideBanner()
