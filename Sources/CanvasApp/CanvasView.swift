@@ -831,7 +831,7 @@ final class CanvasView: NSScrollView {
         switch event.type {
         case .keyDown:
             guard let remote, let id = focusedTerminal, remote.mirror.isProvisional(id),
-                  !event.modifierFlags.contains(.command), event.keyCode != 53 else { return event }
+                  !CanvasWindowController.allowsProvisionalTerminalKey(event) else { return event }
             showNotice("Terminal not ready. Nothing typed; try again after it starts.")
             return nil
         case .leftMouseDown:

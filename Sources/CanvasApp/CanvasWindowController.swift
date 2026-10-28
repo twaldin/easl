@@ -1444,6 +1444,18 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private static let terminalMenuActions: Set<Selector> = [#selector(NSText.copy(_:)), #selector(NSText.paste(_:)), #selector(NSText.selectAll(_:)), #selector(AppDelegate.deleteSelection(_:)),
                                                              #selector(AppDelegate.undoCanvas(_:)), #selector(AppDelegate.redoCanvas(_:)), #selector(AppDelegate.findInPage(_:))]
 
+    static func allowsProvisionalTerminalKey(_ event: NSEvent) -> Bool {
+        guard event.keyCode != 53 else { return false }
+        if tileHeading(for: event) != nil { return true }
+        if AppShortcuts.action(for: event)?.group == "Drawing" { return false }
+        guard let item = menuItem(for: event, in: NSApp.mainMenu),
+              let action = item.action else { return false }
+        if action == #selector(AppDelegate.undoCanvas(_:)) || action == #selector(AppDelegate.redoCanvas(_:)) {
+            return true
+        }
+        return AppShortcuts.isEnabled(item) && !terminalMenuActions.contains(action) && action != #selector(pasteMentions(_:))
+    }
+
     /// The main-menu item `event` is the key equivalent of.
     static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {
         if let action = AppShortcuts.action(for: event), let item = menuItem(id: action.id, in: menu) { return item }

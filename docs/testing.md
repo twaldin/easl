@@ -390,6 +390,8 @@ Run this AppKit regression in a claimed GUI guest:
 
 The runner launches a private bundle with a disposable home and real key windows. It checks synchronous terminal focus and selection across host-ID replacement. Composer, another terminal, and another key window must keep focus if the user moved there first. It also checks a composer focus change before initial terminal focus could be deferred. This runner has no live host session or WindowServer captures. Use the terminal and remote-board journeys in `.agents/skills/verify-easl/` for native pixels and shell execution.
 
+The added key-routing cases send native events through the installed canvas monitor and the real window controller and menu. Escape, Command-V, raw typing, Return, custom Control-V paste, and custom Option-R drawing must preserve board objects, selection, and terminal focus while showing the refusal pill. Controls exercise custom Control-= zoom, Command-Z routing, Command-M minimization, Command-Option-Right tile navigation, Command-W close confirmation, and the real composer across rekey. A separate real socket/router fixture loads a host-confirmed terminal identity and checks that its typing does not receive the provisional refusal. These cases do not prove PTY delivery or no replay into a live shell; retain that evidence in the delayed-host guest journey.
+
 ### Move tool input isolation
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.
