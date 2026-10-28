@@ -88,7 +88,6 @@ final class NoteTile: NSView, TileContent {
         editor.textContainerInset = Self.editorInset
         // Misspellings are underlined, but nothing is changed as the user types: markdown and
         // code want their quotes, dashes and words as typed.
-        editor.isContinuousSpellCheckingEnabled = true
         editor.isAutomaticSpellingCorrectionEnabled = false
         editor.isAutomaticTextCompletionEnabled = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
@@ -666,6 +665,7 @@ final class NoteTile: NSView, TileContent {
         session = NoteEditSession(object)
         enteredByKeyboard = false
         let text = markdown
+        editor.isContinuousSpellCheckingEnabled = true
         editor.string = text
         editor.setSelectedRange(NSRange(location: point.map { caretOffset(at: $0, in: text) } ?? (text as NSString).length, length: 0))
         displayScroll.isHidden = true
