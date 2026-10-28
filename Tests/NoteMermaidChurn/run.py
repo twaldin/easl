@@ -98,7 +98,11 @@ def run(args, parser, scratch):
         parser.error(f"Missing compiled objects: {missing}")
     compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
-    command = [compiler, "-O", "-swift-version", "6", "-parse-as-library", "-enable-testing",
+    probe_object = scratch / "GapProbe.o"
+    subprocess.run(["xcrun", "clang", "-O2", "-g", "-fno-omit-frame-pointer",
+                    "-c", str(root / "Tests/NoteMermaidChurn/GapProbe.c"),
+                    "-o", str(probe_object)], cwd=root, check=True)
+    command = [compiler, "-O", "-g", "-swift-version", "6", "-parse-as-library", "-enable-testing",
                "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx14.0",
                "-I", str(build / "Modules"), "-I", str(build)]
     app = next(value for value in description["swiftCommands"].values() if value["moduleName"] == "CanvasApp")
@@ -110,6 +114,7 @@ def run(args, parser, scratch):
             command.extend(["-I", arguments[index + 1]])
     executable = scratch / "NoteMermaidChurn"
     command.append(str(source))
+    command.append(str(probe_object))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty",
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
