@@ -5,7 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
-- Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. A refused or partial submission keeps the composer draft and warns that text may already be present. The app does not replay it automatically.
+- Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
 
 ## 0.3.3
 

@@ -382,6 +382,7 @@ final class CanvasTerminalView: TerminalView {
             inputIndex += 1
             switch input {
             case .key(let event, let attachment):
+                guard let attachment, surface === attachment else { continue }
                 switch event.type {
                 case .keyDown:
                     guard acceptsKey(event, on: attachment) else { refuseInput(); continue }
