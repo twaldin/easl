@@ -42,7 +42,7 @@ private enum TerminalRekey {
             do {
                 let ghostty = URL(fileURLWithPath: home).appendingPathComponent("ghostty")
                 try FileManager.default.createDirectory(at: ghostty, withIntermediateDirectories: true)
-                try "keybind = super+d=new_split:right\nkeybind = super+shift+d=close_surface\n"
+                try "keybind = super+d=new_split:right\nkeybind = super+shift+d=close_surface\nkeybind = alt+d=new_split:right\n"
                     .write(to: ghostty.appendingPathComponent("config"), atomically: true, encoding: .utf8)
                 for owner in Owner.allCases {
                     try await exercise(owner, root: URL(fileURLWithPath: home).appendingPathComponent(owner.rawValue))
@@ -263,6 +263,7 @@ private enum TerminalRekey {
         AppShortcuts.configure(custom)
         try refuse("custom paste", "v", 9, .control)
         try refuse("custom drawing", "r", 15, .option)
+        try refuse("non-Command Ghostty remap", "d", 2, .option)
         var customUndo = custom
         try customUndo.set(ShortcutBinding(key: "z", modifiers: .control), for: "undoCanvas")
         try customUndo.set(ShortcutBinding(key: "z", modifiers: [.control, .shift]), for: "redoCanvas")

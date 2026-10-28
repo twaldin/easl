@@ -1449,7 +1449,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if AppShortcuts.action(for: event)?.group == "Drawing" { return false }
         guard let item = menuItem(for: event, in: NSApp.mainMenu),
               let action = item.action else {
-            guard event.keyCode != 53 else { return false }
+            guard event.modifierFlags.contains(.command), event.keyCode != 53 else { return false }
             return keyChord(for: event).flatMap { TerminalConfig.shared.remaps[$0] } != nil
         }
         if action == #selector(AppDelegate.undoCanvas(_:)) || action == #selector(AppDelegate.redoCanvas(_:)) {

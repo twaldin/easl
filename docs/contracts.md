@@ -632,7 +632,7 @@ A v0.3.0 client can still use the current easld without receipt fields or previe
   | Undo and Redo | Preserve Command bindings and enabled canvas undo actions. Refuse non-Command bindings when canvas undo does not apply |
   | Command-Option arrows | Preserve neighboring-tile navigation |
   | Command-Escape | Leave the focused tile, without a refusal |
-  | Ghostty New Terminal or Close Terminal remaps without a menu binding, except Escape | Preserve existing terminal-remap routing |
+  | Command-modified Ghostty New Terminal or Close Terminal remaps without a menu binding, except Escape | Preserve existing terminal-remap routing. Refuse non-Command remaps without an enabled menu action |
   | Enabled application, board, navigation, and window menu commands, including Close and Write Prompt | Preserve existing routing, including configured non-Command bindings |
   | Hyper chords | Preserve existing Hyper routing |
   | Composer input or input owned by another tile or window | Unchanged |
