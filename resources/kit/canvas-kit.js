@@ -324,8 +324,6 @@
   customElements.define('canvas-link', CanvasLink);
   customElements.define('canvas-decisions', CanvasDecisions);
 
-  // ---- Mermaid syntax, rendered by Pele only when the page has diagrams ----
-
   let peleReady = null;
   let diagramSerial = 0;
   const diagramWork = new WeakMap();

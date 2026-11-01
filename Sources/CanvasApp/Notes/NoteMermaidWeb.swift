@@ -243,7 +243,6 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
     document.body.replaceChildren(host);
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
     // Pele counts source/SVG UTF-16 code units, not bytes or raster pixels.
-    // Core admission still enforces 51,200 UTF-8 bytes before this page is used.
     const diagramSource = source.replace(/^(?:[^\S\r\n]*\r?\n)+/, '').replace(/^\uFEFF+/, '');
     const result = pele.render(diagramSource, {
       idPrefix: 'noteDiagram',
