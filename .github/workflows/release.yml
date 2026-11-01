@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       SIGNED: ${{ secrets.EASL_CERT_P12 != '' && (secrets.EASL_NOTARY_KEY != '' || secrets.EASL_NOTARY_PASSWORD != '') }}
       PUBLISH: ${{ github.event_name == 'push' }}
@@ -63,10 +63,8 @@ jobs:
           done
           echo "no gettext-0.24.tar.gz with SHA-256 $GETTEXT_SHA256" >&2
           exit 1
-      - name: Select Command Line Tools
-        run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
+      - name: Select Swift 6.4
+        run: scripts/select-ci-swift.sh
       - name: Import the Developer ID certificate
         if: env.SIGNED == 'true'
         env:
