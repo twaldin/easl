@@ -409,6 +409,10 @@ extension HtmlTile {
         await sanitizeStyle(element);
         return;
       }
+      if (tag === 'textarea' || tag === 'title') {
+        element.textContent = tag === 'textarea' && element.namespaceURI === htmlNS ? element.value : element.textContent;
+        return;
+      }
       const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
       for (const child of [...children.childNodes]) {
         if (child.nodeType === Node.ELEMENT_NODE) await sanitize(child);

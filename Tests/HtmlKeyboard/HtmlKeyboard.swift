@@ -260,6 +260,7 @@ private enum HtmlKeyboard {
           expect(!css.includes('beacon.invalid'), 'no resource URLs hidden by variable shorthand expansion');
           expect(!css.includes('probe.png'), 'no Unicode whitespace reinterpreted as a relative resource URL');
           expect(getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none', 'no CSS activated by foreign-style entity decoding');
+          expect(document.querySelector('#rcdata')?.value === '', 'textarea retains displayed text rather than serialized child markup');
           const image = document.querySelector('#picture');
           expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
                  'inlined image decoded at 3x2');
@@ -448,6 +449,12 @@ private enum HtmlKeyboard {
         entityTarget.id = 'entity-target';
         entityTarget.className = 'entity-target';
         document.body.append(entityTarget);
+        const rcdata = document.createElement('textarea');
+        rcdata.id = 'rcdata';
+        const rcdataChild = document.createElement('b');
+        rcdataChild.title = '</textarea><img src=data:image/png,invalid onerror="document.title=\'rcdata-executed\'">';
+        rcdata.append(rcdataChild);
+        document.body.append(rcdata);
         customElements.define('x-export-attack', class extends HTMLElement {
           static observedAttributes = ['onload'];
           attributeChangedCallback(name, oldValue, value) {
