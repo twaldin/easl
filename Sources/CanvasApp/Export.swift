@@ -315,10 +315,10 @@ extension HtmlTile {
     );
     const cssURLs = (value) => {
       const decoded = decodeCSS(value);
-      const starts = [...decoded.matchAll(/url\s*\(/gi)];
-      const urls = [...decoded.matchAll(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/gi)];
+      const starts = [...decoded.matchAll(/url[ \t\n\r\f]*\(/gi)];
+      const urls = [...decoded.matchAll(/url[ \t\n\r\f]*\([ \t\n\r\f]*(?:"([^"]*)"|'([^']*)'|([^'")]*))[ \t\n\r\f]*\)/gi)];
       if (starts.length !== urls.length || (starts.length && value.includes('\\'))) return null;
-      return urls.map((match) => (match[1] ?? match[2] ?? match[3]).trim());
+      return urls.map((match) => (match[1] ?? match[2] ?? match[3]).replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, ''));
     };
     const safeCSS = (value) => {
       if (/(?:expression|(?:-webkit-)?image-set|image|src|paint)\s*\(/i.test(decodeCSS(value))) return false;
