@@ -259,6 +259,7 @@ private enum HtmlKeyboard {
           expect(!decoded.includes('expression(') && !/url\(["']?(javascript|vbscript):/.test(decoded), 'no dangerous CSS, including escapes');
           expect(!css.includes('beacon.invalid'), 'no resource URLs hidden by variable shorthand expansion');
           expect(!css.includes('probe.png'), 'no Unicode whitespace reinterpreted as a relative resource URL');
+          expect(getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none', 'no CSS activated by foreign-style entity decoding');
           const image = document.querySelector('#picture');
           expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
                  'inlined image decoded at 3x2');
@@ -302,6 +303,7 @@ private enum HtmlKeyboard {
         document.title === 'export-clean' && !document.body.hasAttribute('data-executed') &&
         document.scripts.length === 0 && !document.querySelector('meta[http-equiv], [onerror], [onload]') &&
         !!document.querySelector('#diagram svg') && !!document.querySelector('#formula .katex-html') &&
+        getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none' &&
         document.querySelector('#picture').naturalWidth === 3 &&
         document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
         """) as? Bool
@@ -439,6 +441,13 @@ private enum HtmlKeyboard {
         mismatchedRect.setAttribute('cursor', 'url(https://example.invalid/cursor.png), auto');
         mismatchedSVG.append(mismatchedRect);
         document.body.append(mismatchedSVG);
+        const mismatchedStyle = document.createElement('style');
+        mismatchedStyle.textContent = '.unused { --x: &#x7d .entity-target{background:&#x75rl(https://entity.invalid/leak)} }';
+        mismatchedSVG.append(mismatchedStyle);
+        const entityTarget = document.createElement('div');
+        entityTarget.id = 'entity-target';
+        entityTarget.className = 'entity-target';
+        document.body.append(entityTarget);
         customElements.define('x-export-attack', class extends HTMLElement {
           static observedAttributes = ['onload'];
           attributeChangedCallback(name, oldValue, value) {
