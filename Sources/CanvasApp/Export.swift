@@ -356,7 +356,8 @@ extension HtmlTile {
     const sanitizeRules = async (container, base) => {
       for (let i = container.cssRules.length - 1; i >= 0; i--) {
         const rule = container.cssRules[i];
-        if (rule.type === 3 || rule.type === 10) {
+        if (rule.type === 10) continue;
+        if (rule.type === 3) {
           container.deleteRule(i);
           continue;
         }
@@ -372,8 +373,12 @@ extension HtmlTile {
     const sanitizeStyle = async (element) => {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(element.textContent);
-      await sanitizeRules(sheet, styleBases.get(element) || document.baseURI);
-      element.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n')
+      const base = styleBases.get(element) || document.baseURI;
+      await sanitizeRules(sheet, base);
+      const reparsed = new CSSStyleSheet();
+      reparsed.replaceSync([...sheet.cssRules].map((rule) => rule.cssText).join('\n'));
+      await sanitizeRules(reparsed, base);
+      element.textContent = [...reparsed.cssRules].map((rule) => rule.cssText).join('\n')
         .replace(/&(?=[#a-z])/gi, '\\26 ').replace(/<(?=[a-z/!?])/gi, '\\3c ');
     };
     const sanitize = async (element) => {

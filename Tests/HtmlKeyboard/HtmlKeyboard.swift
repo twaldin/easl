@@ -276,6 +276,7 @@ private enum HtmlKeyboard {
           expect(document.querySelector('#table td')?.textContent === 'table survives' &&
                  document.querySelector('#table').getBoundingClientRect().height > 0, 'table content and print-only styles');
           expect(getComputedStyle(document.querySelector('#responsive')).color === 'rgb(1, 2, 3)', 'responsive CSS range query');
+          expect(getComputedStyle(document.querySelector('#namespace-rect')).fill === 'rgb(255, 0, 0)', 'namespaced static SVG styling');
           expect(getComputedStyle(document.querySelector('canvas-pane'), '::before').content.includes('Before'), 'kit pane label');
           for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
                                     ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
@@ -305,6 +306,7 @@ private enum HtmlKeyboard {
         document.scripts.length === 0 && !document.querySelector('meta[http-equiv], [onerror], [onload]') &&
         !!document.querySelector('#diagram svg') && !!document.querySelector('#formula .katex-html') &&
         getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none' &&
+        getComputedStyle(document.body).backgroundImage === 'none' &&
         document.querySelector('#picture').naturalWidth === 3 &&
         document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
         """) as? Bool
@@ -426,7 +428,10 @@ private enum HtmlKeyboard {
           .variable-shorthand { --c:red; background:var(--c) url(https://beacon.invalid/sheet) }
           .variable-fallback { background:var(--missing, url('javascript:document.title=5')) }
           .comment-strings::before { content:"/*" url(https://beacon.invalid/comment) "*/" }
+          :dir(ltr\)\{\}body\{background\:url\(https\:\/\/beacon\.invalid\/dir\)\}\:dir\(ltr) { color:red }
           </style>
+          <style>@namespace svg "http://www.w3.org/2000/svg"; svg|rect#namespace-rect { fill:rgb(255,0,0) }</style>
+          <svg width="20" height="20"><rect id="namespace-rect" width="20" height="20"/></svg>
         </template>
         <script>
         const attacks = document.getElementById('attacks');
