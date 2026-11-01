@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Pin macOS CI and release builds to Xcode 27.0 with Swift 6.4. Fail before building if the runner no longer provides the selected Xcode build or Swift minor version.
 - Before a remote terminal receives its host ID, Escape, paste, and drawing shortcuts now show the same visible refusal as typing. Close, undo, navigation, and window commands keep their existing routing, including configured Control app shortcuts. Option-only input is refused. Refused input is never queued or replayed.
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
 - Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
