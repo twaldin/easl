@@ -235,7 +235,7 @@ extension HtmlTile {
     /// and diagrams are already in the DOM). It opens anywhere: a browser, an email attachment.
     func exportDocument() async throws -> String {
         let (html, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
-            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .page) as? String
+            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .defaultClient) as? String
         }
         guard let html = html ?? nil else { throw ExportFailure(reason ?? "the page produced no document") }
         return html
@@ -255,7 +255,11 @@ extension HtmlTile {
       });
     };
     const images = [...document.querySelectorAll('img')];
-    const clone = document.documentElement.cloneNode(true);
+    const inert = document.implementation.createHTMLDocument();
+    const base = inert.createElement('base');
+    base.href = document.baseURI;
+    inert.head.append(base);
+    let clone = inert.importNode(document.documentElement, true);
     const copies = [...clone.querySelectorAll('img')];
     for (let i = 0; i < copies.length; i++) {
       const source = images[i] && (images[i].currentSrc || images[i].src);
@@ -271,7 +275,13 @@ extension HtmlTile {
         link.replaceWith(style);
       } catch (error) { link.remove(); }
     }
-    for (const active of clone.querySelectorAll('script,iframe,frame,frameset,object,embed,portal,base,link,meta[http-equiv]')) active.remove();
+    for (const element of clone.querySelectorAll('*')) {
+      if (element.localName.toLowerCase() === 'style') {
+        element.textContent = element.textContent.replace(/<\\/style/gi, match => String.raw`<\\/` + match.slice(2));
+      }
+    }
+    clone = new DOMParser().parseFromString(clone.outerHTML, 'text/html').documentElement;
+    for (const active of clone.querySelectorAll('script,iframe,frame,frameset,object,embed,portal,base,link,meta[http-equiv],template,noscript')) active.remove();
     for (const control of clone.querySelectorAll('.ck-mermaid-size')) control.remove();
     const urlAttributes = new Set(['href', 'xlink:href', 'src', 'action', 'formaction']);
     for (const element of [clone, ...clone.querySelectorAll('*')]) {
