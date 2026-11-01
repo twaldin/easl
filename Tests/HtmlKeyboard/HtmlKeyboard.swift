@@ -569,6 +569,7 @@ private enum HtmlKeyboard {
           return b.left > a.right && Math.abs(b.top - a.top) < 2 &&
             svg.getBoundingClientRect().width > viewport.clientWidth &&
             getComputedStyle(viewport).overflowX === 'auto' &&
+            viewport.scrollHeight <= viewport.clientHeight &&
             control.tabIndex === 0 && !!control.getAttribute('aria-label');
         })()
         """) as? Bool
@@ -599,7 +600,14 @@ private enum HtmlKeyboard {
         try require(fit == true, "Fit must shrink the displayed diagram without changing its natural viewBox")
         try await click("#declared button", in: web, window: window)
         try await pageTurn(web)
-        let natural = await js(web, "document.querySelector('#declared svg').getBoundingClientRect().width > document.querySelector('#declared svg').parentElement.clientWidth") as? Bool
+        let natural = await js(web, """
+        (() => {
+          const svg = document.querySelector('#declared svg');
+          const viewport = svg.parentElement;
+          return svg.getBoundingClientRect().width > viewport.clientWidth &&
+            viewport.scrollHeight <= viewport.clientHeight;
+        })()
+        """) as? Bool
         try require(natural == true, "100% must restore natural-size overflow")
         let exported = try await tile.exportDocument()
         let browser = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 500),
@@ -618,6 +626,7 @@ private enum HtmlKeyboard {
           return document.scripts.length === 0 && !document.querySelector('.mermaid button') &&
             svg.getBoundingClientRect().height > 0 &&
             svg.getBoundingClientRect().width > viewport.clientWidth &&
+            viewport.scrollHeight <= viewport.clientHeight &&
             getComputedStyle(viewport).overflowX === 'auto';
         })()
         """) as? Bool
