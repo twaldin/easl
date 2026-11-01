@@ -377,6 +377,8 @@ The runner links the prebuilt `CanvasApp`, opens a board in a disposable home, a
 
 The runner also exercises hostile click handlers, including delayed script evaluation and stale native interactions. Its `--missing-selector` mode makes `_setShouldSuppressFirstResponderChanges:` unavailable and requires the native keyboard gate to keep page-initiated focus from taking the keyboard. Both `--hostile-clicks` and `--missing-selector` run in the default suite. For a focused run, pass either flag directly to the linked `HtmlKeyboard` executable with the disposable environment that `run.py` sets. `run.py` does not forward mode flags.
 
+The default suite also checks Mermaid markup, narrow LR direction, source diagnostics, Fit/100%, resize and intrinsic-width geometry, and scriptless export. The runner passes `-AppleShowScrollBars Always` only to its test process and requires actual space-consuming scroll bars; a direct default-suite executable launch needs the same arguments.
+
 `--clobbered-click` rejects a `<form name="activeElement" contenteditable>` shadowing `document.activeElement`, and `--stale-focus-click` rejects a plain-page click while a field retains DOM focus. Both require a later real field click to work. `--document-grants` grants keys, rewrites the tile's HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click to grant again. These cases also run in the default suite. The document case awaits the expected key-event count: a JavaScript timer turn alone is not a barrier for WebKit's native input IPC.
 
 ### Remote terminal keyboard ownership

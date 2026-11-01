@@ -207,8 +207,7 @@
     aspect-ratio: var(--ck-mermaid-aspect-ratio);
     overflow-y: hidden;
   }
-  .ck-mermaid-viewport > svg { display: block; max-width: none; margin-inline: auto; }
-  .mermaid[data-mermaid-size="fit"] > .ck-mermaid-viewport > svg { max-width: 100%; }
+  .ck-mermaid-viewport > svg { display: block; margin-inline: auto; }
   .ck-mermaid-size {
     display: block;
     margin: 0 0 6px auto;

@@ -75,6 +75,8 @@ HTML diagrams use vendored Pele 1.9.1 offline with strict security stripping, di
 
 Use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. The undocumented `window.mermaid` global is removed. Failed diagrams show source and a short diagnostic. No stored HTML or Markdown migration is needed.
 
+To change a rendered diagram, replace its element with a new `<pre class="mermaid">` and call `canvasKit.renderMermaid()`.
+
 Pele accepts the sampled `%%{init}%%` directives but ignores their `themeVariables`. Use the app's CSS palette rather than directive theme overrides. Sampled `classDef` colours and stroke widths work. Family coverage is not a promise of full syntax parity. Quote radar labels.
 
 - Give diagrams the full width. HTML diagrams start at their natural viewBox size with overflow scrolling, not automatic downscaling. Fit can shrink labels in a narrow column; 100% restores natural size and lets the reader scroll. Keep diagrams in their own full-width section, with details underneath.

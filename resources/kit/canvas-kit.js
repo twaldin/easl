@@ -451,6 +451,7 @@
           control.className = 'ck-mermaid-size';
           const size = (value) => {
             node.dataset.mermaidSize = value;
+            svg.style.maxWidth = value === 'natural' ? 'none' : '100%';
             control.textContent = value === 'natural' ? 'Fit' : '100%';
             control.setAttribute('aria-label', value === 'natural' ? 'Fit diagram to width' : 'Show diagram at 100%');
             if (viewport.isConnected) viewport.resize();

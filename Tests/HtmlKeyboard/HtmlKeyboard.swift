@@ -506,6 +506,7 @@ private enum HtmlKeyboard {
         let titledSource = "\n\u{00a0}\n  ---\n  title: Flow\n  ---\n  " +
             source.replacingOccurrences(of: "\n", with: "\n  ")
         let html = """
+        <style>svg { max-width: 100% }</style>
         <div style="display:flex;gap:12px">
         <div style="flex:1"><pre class="mermaid" id="declared">\(source)</pre></div>
         <aside id="sidebar" style="width:80px;flex-shrink:0">Sidebar</aside>
