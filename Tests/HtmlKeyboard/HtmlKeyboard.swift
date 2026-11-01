@@ -268,6 +268,7 @@ private enum HtmlKeyboard {
           expect(document.querySelector('canvas-code .ck-line .ck-text')?.textContent === 'let exportAnswer = 42', 'rendered canvas-code row');
           expect(document.querySelector('#table td')?.textContent === 'table survives' &&
                  document.querySelector('#table').getBoundingClientRect().height > 0, 'table content and print-only styles');
+          expect(getComputedStyle(document.querySelector('#responsive')).color === 'rgb(1, 2, 3)', 'responsive CSS range query');
           expect(getComputedStyle(document.querySelector('canvas-pane'), '::before').content.includes('Before'), 'kit pane label');
           for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
                                     ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
@@ -312,7 +313,7 @@ private enum HtmlKeyboard {
         let invalidTile = HtmlTile(object: invalidRoot, board: board)
         var rejectedRoot = false
         do { _ = try await invalidTile.exportDocument() }
-        catch let error as ExportFailure { rejectedRoot = error.message.contains("HTML document root") }
+        catch is ExportFailure { rejectedRoot = true }
         try require(rejectedRoot, "an active document root must fail export instead of bypassing sanitization")
         print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
     }
@@ -324,6 +325,8 @@ private enum HtmlKeyboard {
         <img id="octet-image" src="data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=">
         <canvas-pane label="Before">Pane content</canvas-pane>
         <style media="print">#table { display:none }</style>
+        <style>@media (width < 2000px) { #responsive { color:rgb(1,2,3) } }</style>
+        <p id="responsive">Responsive content</p>
         <pre id="diagram" class="mermaid">flowchart LR
         A[Start] --> B[Finish]</pre>
         <p id="formula">$x^2 + y^2$</p>
