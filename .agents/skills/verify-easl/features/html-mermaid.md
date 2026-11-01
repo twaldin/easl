@@ -55,11 +55,11 @@ Use native Save as HTML and Open in Browser on a settled tile. Inspect the saved
 
 ## Mixed-version storage
 
-Use a real v0.3.3 app and the candidate, each with its own isolated app home, opening the same scratch board in turn. Preserve backups and close one writer before opening the other. Include HTML examples for all documented entry points and the complete note corpus.
+Use a real v0.3.3 app and the candidate sequentially with one isolated scratch app home and the same local board. Preserve backups and close one writer before opening the other. Include HTML examples for all documented entry points and the complete note corpus.
 
 1. Save exact UTF-8 `props.html` and `props.markdown` values to evidence files before either app edits the board. Preserve whitespace, escapes, fences, directives, and final newlines.
-2. In v0.3.3, edit natively and save. Save those committed source values as the comparison baseline. Reopen in the candidate and require byte-identical values, then save and reopen again. Compare both API readback and persisted board props against the baseline.
-3. Reverse the sequence with a native edit in the candidate, then save and reopen in v0.3.3 and again in the candidate. Require byte-identical committed HTML and Markdown. Compare source bytes, not JSON serialization order, screenshots, or diagram dimensions. Different layouts are expected. No migration or stored renderer state is required.
+2. In v0.3.3, edit HTML through its documented `object.update` API and Markdown through the native note editor, then save. There is no native HTML-source editor. Save those committed source values as the comparison baseline. Reopen in the candidate and require byte-identical values, then save and reopen again. Compare both API readback and persisted board props against the baseline.
+3. Reverse the sequence with an API HTML edit and native Markdown edit in the candidate, then save and reopen in v0.3.3 and again in the candidate. Require byte-identical committed HTML and Markdown. Compare source bytes, not JSON serialization order, screenshots, or diagram dimensions. Different layouts are expected. No migration or stored renderer state is required.
 
 Retain every comparison and failure. These journeys do not establish a GUI pass until exercised on the exact candidate. Follow [note Mermaid](note-mermaid.md) for static bitmap centring, bounds, local and remote coverage, cold launch, deadline termination, pool, retries, cancellation, and churn. Record vendor and application bundle bytes before and after separately from layout proof.
 
