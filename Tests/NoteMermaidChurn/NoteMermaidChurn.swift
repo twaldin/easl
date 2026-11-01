@@ -5,6 +5,15 @@ import Darwin
 @testable import CanvasApp
 @testable import CanvasCore
 
+@_silgen_name("easl_gap_start")
+private func gapStart(_ fixture: UnsafePointer<CChar>)
+@_silgen_name("easl_gap_context")
+private func gapContext(_ edit: Int32, _ phase: Int32)
+@_silgen_name("easl_gap_beat")
+private func gapBeat()
+@_silgen_name("easl_gap_stop")
+private func gapStop()
+
 @MainActor
 private final class Heartbeat {
     private var timer: DispatchSourceTimer?
@@ -25,6 +34,7 @@ private final class Heartbeat {
 
     func sample() {
         let now = ProcessInfo.processInfo.systemUptime
+        gapBeat()
         maximumMilliseconds = max(maximumMilliseconds, (now - last) * 1000)
         last = now
         samples += 1
@@ -512,25 +522,34 @@ private enum NoteMermaidChurn {
         if profile { try await Task.sleep(for: .seconds(3)) }
 
         let heartbeat = Heartbeat()
+        fixture.name.withCString { gapStart($0) }
         heartbeat.start()
         var immediateCounts: [Int] = []
         var settledCounts: [Int] = []
         do {
             try await Task.sleep(for: .milliseconds(20))
             for edit in 0..<editCount {
+                gapContext(Int32(edit), 1)
                 heartbeat.sample()
                 tile.update(try board.update(object.id, props: .object(["markdown": .string(fixture.markdown(edit: edit))])))
                 heartbeat.sample()
+                gapContext(Int32(edit), 2)
                 immediateCounts.append(try check(tile, fixture: fixture, edit: edit))
+                gapContext(Int32(edit), 3)
                 try await Task.sleep(for: .milliseconds(20))
                 heartbeat.sample()
+                gapContext(Int32(edit), 4)
                 settledCounts.append(try check(tile, fixture: fixture, edit: edit))
             }
+            gapContext(Int32(editCount - 1), 5)
             try await Task.sleep(for: .milliseconds(200))
+            gapContext(Int32(editCount - 1), 6)
             _ = try check(tile, fixture: fixture, edit: editCount - 1)
             heartbeat.stop()
+            gapStop()
         } catch {
             heartbeat.stop()
+            gapStop()
             emit(["event": "churn-failure", "fixture": fixture.name, "completedEdits": immediateCounts.count,
                   "immediateImageCounts": immediateCounts, "settledImageCounts": settledCounts,
                   "maxGapMs": heartbeat.maximumMilliseconds, "error": String(describing: error)])
@@ -854,6 +873,21 @@ private enum NoteMermaidChurn {
             argument += 1
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.environment["EASL_GAP_CALIBRATE"] == "1" {
+            "calibration-cpu".withCString { gapStart($0) }
+            gapContext(-1, 7)
+            gapBeat()
+            let began = ProcessInfo.processInfo.systemUptime
+            while ProcessInfo.processInfo.systemUptime - began < 0.08 {}
+            gapBeat()
+            gapStop()
+            "calibration-blocked".withCString { gapStart($0) }
+            gapContext(-1, 8)
+            gapBeat()
+            usleep(80_000)
+            gapBeat()
+            gapStop()
+        }
         try await timeoutRecovery(profile: profile)
         if recoveryOnly {
             emit(["event": "result", "status": "passed", "proof": "timeout-recovery"])

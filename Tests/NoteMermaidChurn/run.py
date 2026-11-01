@@ -30,6 +30,37 @@ def cleanup(process):
             "nativeReturnCode": process.returncode, "nativeReaped": process.poll() is not None}
 
 
+@contextlib.contextmanager
+def sample_processes(executable, artifacts):
+    with (artifacts / "processes.jsonl").open("w") as log:
+        process = subprocess.Popen(["sudo", "-n", str(executable)], stdin=subprocess.PIPE, stdout=log)
+        try:
+            yield
+        finally:
+            process.stdin.close()
+            code = process.wait(timeout=5)
+            emit({"event": "sampler-cleanup", "ownedLauncherPid": process.pid, "returnCode": code})
+            previous = {}
+            with (artifacts / "processes.jsonl").open() as samples:
+                for line in samples:
+                    record = json.loads(line)
+                    active = []
+                    for row in record.get("processes", []):
+                        key = row["pid"], row.get("birthUs")
+                        old = previous.get(key)
+                        if old is not None and "userNs" in row:
+                            row.update(previousStartNs=old["startNs"], previousEndNs=old["endNs"],
+                                       previousUserNs=old["userNs"], previousSystemNs=old["systemNs"])
+                        if old is None or "userNs" not in row or (row["userNs"], row["systemNs"]) != (old["userNs"], old["systemNs"]):
+                            active.append(row)
+                        previous[key] = row
+                    if "processes" in record:
+                        record["processes"] = active
+                    emit(record)
+            if code:
+                raise RuntimeError(f"Process sampler failed with exit {code}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Link an optimized native NoteTile proof against an existing build, then measure geometry, lifecycle and warm prose churn. Never rebuilds Easl.",
@@ -98,7 +129,16 @@ def run(args, parser, scratch):
         parser.error(f"Missing compiled objects: {missing}")
     compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
-    command = [compiler, "-O", "-swift-version", "6", "-parse-as-library", "-enable-testing",
+    probe_object = scratch / "GapProbe.o"
+    subprocess.run(["xcrun", "clang", "-O2", "-g", "-fno-omit-frame-pointer",
+                    "-target", f"{platform.machine()}-apple-macosx14.0",
+                    "-c", str(root / "Tests/NoteMermaidChurn/GapProbe.c"),
+                    "-o", str(probe_object)], cwd=root, check=True)
+    sampler = scratch / "ProcessSampler"
+    subprocess.run(["xcrun", "clang", "-O2", "-Wall", "-Wextra", "-Werror",
+                    str(root / "Tests/NoteMermaidChurn/ProcessSampler.c"),
+                    "-lproc", "-o", str(sampler)], cwd=root, check=True)
+    command = [compiler, "-O", "-g", "-swift-version", "6", "-parse-as-library", "-enable-testing",
                "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx14.0",
                "-I", str(build / "Modules"), "-I", str(build)]
     app = next(value for value in description["swiftCommands"].values() if value["moduleName"] == "CanvasApp")
@@ -110,6 +150,7 @@ def run(args, parser, scratch):
             command.extend(["-I", arguments[index + 1]])
     executable = scratch / "NoteMermaidChurn"
     command.append(str(source))
+    command.append(str(probe_object))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty",
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
@@ -120,7 +161,7 @@ def run(args, parser, scratch):
     artifacts.mkdir(parents=True, exist_ok=True)
     cleanup_record = None
     timed_out = False
-    with tempfile.TemporaryDirectory(prefix="easl-note-mermaid-churn-", dir=scratch) as temporary:
+    with sample_processes(sampler, artifacts), tempfile.TemporaryDirectory(prefix="easl-note-mermaid-churn-", dir=scratch) as temporary:
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary,
                            XDG_CONFIG_HOME=temporary, XDG_CACHE_HOME=temporary,

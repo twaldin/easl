@@ -8,8 +8,19 @@ on:
 jobs:
   test:
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        index: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v5
+      - name: Inventory job startup
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ'
+          uptime
+          sysctl hw.ncpu hw.memsize vm.loadavg
+          sudo ps -A -o pid,ppid,lstart,pcpu,time,state,comm
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
@@ -56,9 +67,18 @@ jobs:
       - name: Native note Mermaid regression
         run: python3 Tests/NoteMermaid/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native note Mermaid prose churn regression
+        env:
+          EASL_GAP_CALIBRATE: "1"
         run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ'
+          uptime
+          sysctl vm.loadavg
+          sudo ps -A -o pid,ppid,lstart,pcpu,time,state,comm
           swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-          python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+          python3 Tests/NoteMermaidChurn/run.py --artifacts "$RUNNER_TEMP/churn" --bin-path "$(swift build --build-system native -c release --show-bin-path)"
+      - name: Validate probe calibration
+        if: always()
+        run: python3 Tests/NoteMermaidChurn/check_probe.py "$RUNNER_TEMP/churn/native.jsonl"
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
