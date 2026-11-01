@@ -15,8 +15,12 @@
 static volatile sig_atomic_t stopped;
 static mach_timebase_info_data_t timebase;
 
+static uint64_t ticks_to_ns(uint64_t ticks) {
+    return (uint64_t)(((__uint128_t)ticks * timebase.numer) / timebase.denom);
+}
+
 static uint64_t now_ns(void) {
-    return (uint64_t)(((__uint128_t)mach_absolute_time() * timebase.numer) / timebase.denom);
+    return ticks_to_ns(mach_absolute_time());
 }
 
 static void stop(int sig) { (void)sig; stopped = 1; }
@@ -43,7 +47,7 @@ int main(void) {
     pid_t *pids = calloc((size_t)capacity, sizeof(*pids));
     if (!pids) return 4;
     printf("{\"event\":\"sampler-start\",\"pid\":%d,\"startNs\":%" PRIu64 ",\"epochNs\":%" PRIu64 ",\"periodNs\":%" PRIu64 ",\"clock\":\"mach_absolute_time\",\"cpus\":%ld}\n",
-           getpid(), start, (uint64_t)time(NULL) * UINT64_C(1000000000), period, sysconf(_SC_NPROCESSORS_ONLN));
+           getpid(), start, clock_gettime_nsec_np(CLOCK_REALTIME), period, sysconf(_SC_NPROCESSORS_ONLN));
     fflush(stdout);
     while (!stopped && now_ns() - start < UINT64_C(650000000000)) {
         uint64_t at = now_ns();
@@ -66,7 +70,7 @@ int main(void) {
                cpu.cpu_ticks[CPU_STATE_USER], cpu.cpu_ticks[CPU_STATE_SYSTEM], cpu.cpu_ticks[CPU_STATE_IDLE], cpu.cpu_ticks[CPU_STATE_NICE]);
         int emitted = 0, errors = 0;
         for (int i = 0; i < count; i++) {
-            if (pids[i] <= 0) continue;
+            if (pids[i] < 0) continue;
             struct proc_taskallinfo info = {0};
             uint64_t before = now_ns();
             int bytes = proc_pidinfo(pids[i], PROC_PIDTASKALLINFO, 0, &info, sizeof(info));
@@ -83,7 +87,7 @@ int main(void) {
             printf(",\"ppid\":%u,\"status\":%u,\"birthUs\":%" PRIu64 ",\"userNs\":%" PRIu64 ",\"systemNs\":%" PRIu64 ",\"threads\":%d,\"runningThreads\":%d,\"name\":",
                    info.pbsd.pbi_ppid, info.pbsd.pbi_status,
                    (uint64_t)info.pbsd.pbi_start_tvsec * UINT64_C(1000000) + info.pbsd.pbi_start_tvusec,
-                   info.ptinfo.pti_total_user, info.ptinfo.pti_total_system,
+                   ticks_to_ns(info.ptinfo.pti_total_user), ticks_to_ns(info.ptinfo.pti_total_system),
                    info.ptinfo.pti_threadnum, info.ptinfo.pti_numrunning);
             string(info.pbsd.pbi_name[0] ? info.pbsd.pbi_name : info.pbsd.pbi_comm);
             putchar('}');

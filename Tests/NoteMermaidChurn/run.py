@@ -32,7 +32,10 @@ def cleanup(process):
 
 @contextlib.contextmanager
 def sample_processes(executable, artifacts):
-    with (artifacts / "processes.jsonl").open("w") as log:
+    sample_dir = artifacts / "sampler.noindex"
+    sample_dir.mkdir()
+    sample_path = sample_dir / "processes.jsonl"
+    with sample_path.open("w") as log:
         process = subprocess.Popen(["sudo", "-n", str(executable)], stdin=subprocess.PIPE, stdout=log)
         try:
             yield
@@ -41,7 +44,7 @@ def sample_processes(executable, artifacts):
             code = process.wait(timeout=5)
             emit({"event": "sampler-cleanup", "ownedLauncherPid": process.pid, "returnCode": code})
             previous = {}
-            with (artifacts / "processes.jsonl").open() as samples:
+            with sample_path.open() as samples:
                 for line in samples:
                     record = json.loads(line)
                     active = []
@@ -51,11 +54,14 @@ def sample_processes(executable, artifacts):
                         if old is not None and "userNs" in row:
                             row.update(previousStartNs=old["startNs"], previousEndNs=old["endNs"],
                                        previousUserNs=old["userNs"], previousSystemNs=old["systemNs"])
-                        if old is None or "userNs" not in row or (row["userNs"], row["systemNs"]) != (old["userNs"], old["systemNs"]):
+                        if old is None or "userNs" not in row or row.get("runningThreads", 0) > 0 or (row["userNs"], row["systemNs"]) != (old["userNs"], old["systemNs"]):
                             active.append(row)
                         previous[key] = row
                     if "processes" in record:
-                        record["processes"] = active
+                        record["processCount"] = len(active)
+                        del record["processes"]
+                        for row in active:
+                            emit({"event": "process-cpu", "sequence": record["sequence"], **row})
                     emit(record)
             if code:
                 raise RuntimeError(f"Process sampler failed with exit {code}")

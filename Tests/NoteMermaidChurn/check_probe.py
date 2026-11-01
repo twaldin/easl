@@ -35,3 +35,29 @@ for fixture, busy in (("calibration-cpu", True), ("calibration-blocked", False))
     print(json.dumps({"event": "probe-calibration-validated", "fixture": fixture,
                       "wallMs": gap["wallNs"] / 1e6, "cpuMs": gap["cpuDeltaNs"] / 1e6,
                       "usableStacks": len(stacks), "maxWakeLatenessMs": summary["deadlineLatenessNsMax"] / 1e6}, sort_keys=True))
+
+native_pid = json.loads((args.log.parent / "runner-cleanup.json").read_text())["ownedPid"]
+cpu_gap = next(r for r in records if r["event"] == "gap" and r["fixture"] == "calibration-cpu")
+previous = None
+calibration_cpu = 0
+summary = None
+with (args.log.parent / "sampler.noindex" / "processes.jsonl").open() as stream:
+    for line in stream:
+        sample = json.loads(line)
+        if sample["event"] == "sampler-summary":
+            summary = sample
+        for row in sample.get("processes", []):
+            if row["pid"] != native_pid or "userNs" not in row:
+                continue
+            if previous is not None and previous["birthUs"] == row["birthUs"]:
+                if previous["startNs"] < cpu_gap["endNs"] and row["endNs"] > cpu_gap["startNs"]:
+                    calibration_cpu += row["userNs"] + row["systemNs"] - previous["userNs"] - previous["systemNs"]
+            previous = row
+assert calibration_cpu >= 0.7 * cpu_gap["wallNs"], "Sampler does not see the known-busy calibration CPU"
+assert summary is not None, "Missing sampler summary"
+fraction = summary["cpuNs"] / (summary["endNs"] - summary["startNs"])
+assert fraction <= 0.05, f"Sampler used {100*fraction:.3f}% of one CPU, above the 5% measurement bound"
+assert summary["maxLatenessNs"] <= 50_000_000, "Sampler wake lateness exceeds one 50ms period"
+print(json.dumps({"event": "sampler-validated", "calibrationCPUms": calibration_cpu / 1e6,
+                  "cpuPercentOneCore": fraction * 100, "maxScanMs": summary["maxScanNs"] / 1e6,
+                  "maxLatenessMs": summary["maxLatenessNs"] / 1e6}, sort_keys=True))
