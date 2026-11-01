@@ -41,7 +41,15 @@ for (const [index, item] of cases.entries()) {
 }'
 ```
 
-Create each request with `scripts/dev.sh cli object.create --json "$(cat REQUEST.json)"`. Retain the returned IDs and the exact input files. Repeat generation for `family-cases.json` using a separate directory.
+Create every generated request on the scratch board:
+
+```sh
+for request in "$OUT"/*.json; do
+	scripts/dev.sh cli object.create --json "$(cat "$request")"
+done
+```
+
+Retain the returned IDs and the exact input files. Repeat generation for `family-cases.json` and `family-expanded-cases.json` using separate directories.
 
 ## Drive the coverage journey
 
@@ -55,6 +63,8 @@ Create each request with `scripts/dev.sh cli object.create --json "$(cat REQUEST
 ## Export without scripts
 
 Use native Save as HTML and Open in Browser on a settled tile. Inspect the saved file for the diagram SVG, inlined CSS, and absence of scripts. Open the actual saved file in the guest browser with scripting disabled. Require visible labels and real horizontal wheel scrolling for a wide diagram. Repeat export after using Fit so the saved result does not depend on a live control. Capture both exports and retain their files and hashes. Exercise `view.render` while lazy rendering is pending and require completed diagram pixels rather than an unsettled source-only page. Remote viewer export restrictions remain unchanged; do not bypass them.
+
+With scripting enabled, export a harmless event-handler fixture and require that it does not execute in the browser. Also check script URLs and active embedded documents. Keep this inert-output proof separate from the scripting-disabled layout proof. Do not use a network-exfiltration payload.
 
 ## Mixed-version storage
 

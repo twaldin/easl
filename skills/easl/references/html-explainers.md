@@ -73,7 +73,7 @@ button.addEventListener('click', async () => {
 
 HTML diagrams use vendored Pele 1.9.1 offline with strict security stripping, disabled links and images, and the tile's CSS palette and font. Rendering preserves the declared direction with `autoDirection: false`. Notes use the same renderer in isolated WebKit, but display static, centred natural-size images that shrink only for available width and raster caps. Notes have no Fit control.
 
-Use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. The undocumented `window.mermaid` global is removed. Failed diagrams show source and a short diagnostic. No stored HTML or Markdown migration is needed.
+Use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, or `pre > code.language-mermaid`. For markup added after page load, call `canvasKit.renderMermaid()` after adding its element. The undocumented `window.mermaid` global is removed. Failed diagrams show source and a short diagnostic. No stored HTML or Markdown migration is needed.
 
 To change a rendered diagram, replace its element with a new `<pre class="mermaid">` and call `canvasKit.renderMermaid()`.
 
