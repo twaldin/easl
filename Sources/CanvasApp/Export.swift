@@ -254,6 +254,8 @@ extension HtmlTile {
         reader.readAsDataURL(blob);
       });
     };
+    if (document.documentElement?.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+        document.documentElement.localName !== 'html') throw new Error('The page has no HTML document root.');
     const images = [...document.querySelectorAll('img')];
     const clone = document.implementation.createHTMLDocument('').importNode(document.documentElement, true);
     const copies = [...clone.querySelectorAll('img')];
@@ -267,9 +269,11 @@ extension HtmlTile {
     const styleBases = new WeakMap();
     for (const link of [...clone.querySelectorAll('link[rel="stylesheet"]')]) {
       try {
+        const href = new URL(link.getAttribute('href'), document.baseURI).href;
         const style = document.createElement('style');
-        style.textContent = await (await fetch(link.href)).text();
-        styleBases.set(style, link.href);
+        style.media = link.media;
+        style.textContent = await (await fetch(href)).text();
+        styleBases.set(style, href);
         link.replaceWith(style);
       } catch (error) { link.remove(); }
     }
@@ -317,7 +321,7 @@ extension HtmlTile {
       return urls.map((match) => (match[1] ?? match[2] ?? match[3]).trim());
     };
     const safeCSS = (value) => {
-      if (/(?:expression|(?:-webkit-)?image-set|image|src|attr|paint)\s*\(/i.test(decodeCSS(value))) return false;
+      if (/(?:expression|(?:-webkit-)?image-set|image|src|paint)\s*\(/i.test(decodeCSS(value))) return false;
       const urls = cssURLs(value);
       return urls !== null && urls.every((url) => fragment(url) || imageData(url));
     };
@@ -364,9 +368,7 @@ extension HtmlTile {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(element.textContent);
       await sanitizeRules(sheet, styleBases.get(element) || document.baseURI);
-      const style = document.createElementNS(element.namespaceURI, 'style');
-      style.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n').replace(/</g, '\\3c ');
-      element.replaceWith(style);
+      element.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n').replace(/</g, '\\3c ');
     };
     const sanitize = async (element) => {
       const tag = element.localName.toLowerCase();
@@ -375,16 +377,12 @@ extension HtmlTile {
         element.remove();
         return;
       }
-      if (tag === 'style') {
-        await sanitizeStyle(element);
-        return;
-      }
       for (const attribute of [...element.attributes]) {
-        const name = attribute.localName.toLowerCase();
+        const name = attribute.name.toLowerCase().split(':').pop();
         const value = attribute.value.trim();
         let replacement = null;
         if (name.startsWith('on') || resourceAttributes.has(name)) {
-          if (name === 'src' && tag === 'img' && element.namespaceURI === htmlNS && imageData(value)) replacement = value;
+          if (name === 'src' && tag === 'img' && element.namespaceURI === htmlNS && /^data:/i.test(value)) replacement = value;
         } else if (name === 'href') {
           if (tag === 'a' || tag === 'area') replacement = navigationURL(value);
           else if (fragment(value) || (['image', 'feimage'].includes(tag) && element.namespaceURI === svgNS && imageData(value))) replacement = value;
@@ -400,6 +398,10 @@ extension HtmlTile {
         }
         if (replacement === null) element.removeAttributeNode(attribute);
         else attribute.value = replacement;
+      }
+      if (tag === 'style') {
+        await sanitizeStyle(element);
+        return;
       }
       const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
       for (const child of [...children.childNodes]) {

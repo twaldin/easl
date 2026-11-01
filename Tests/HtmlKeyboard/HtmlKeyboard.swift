@@ -230,7 +230,7 @@ private enum HtmlKeyboard {
           const policy = first?.content || '';
           for (const directive of ["default-src 'none'", "script-src 'none'", "object-src 'none'",
                                    "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
-                                   "img-src data:", "style-src 'unsafe-inline'"]) {
+                                   "img-src data:", "style-src 'unsafe-inline'", "font-src data:"]) {
             expect(policy.split(';').some(part => part.trim() === directive), 'CSP ' + directive);
           }
           expect(document.scripts.length === 0, 'no scripts');
@@ -245,7 +245,7 @@ private enum HtmlKeyboard {
               expect(name !== 'srcdoc', 'srcdoc attribute');
               if (!urlAttrs.has(name)) continue;
               const value = attribute.value.replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
-              const image = name === 'src' && element.localName === 'img' && value.startsWith('data:image/');
+              const image = name === 'src' && element.localName === 'img' && value.startsWith('data:');
               expect(image || !/^(javascript|vbscript|data):/.test(value), 'unsafe URL ' + element.localName + '.' + name);
             }
           }
@@ -259,12 +259,16 @@ private enum HtmlKeyboard {
           expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
                  'inlined image decoded at 3x2');
           expect(image?.getBoundingClientRect().width === 30 && image?.getBoundingClientRect().height === 20, 'image rendered at 30x20');
+          expect(document.querySelector('#octet-image')?.naturalWidth === 1, 'image bytes with generic MIME type');
           const diagram = document.querySelector('#diagram svg');
           expect(diagram && diagram.getBoundingClientRect().width > 0 && diagram.getBoundingClientRect().height > 0
                  && diagram.textContent.includes('Start') && diagram.textContent.includes('Finish'), 'settled real Mermaid SVG');
           expect(document.querySelector('#formula .katex .katex-html')?.getBoundingClientRect().height > 0, 'rendered KaTeX');
+          expect([...document.fonts].some(font => font.family.includes('KaTeX') && font.status === 'loaded'), 'embedded KaTeX fonts loaded');
           expect(document.querySelector('canvas-code .ck-line .ck-text')?.textContent === 'let exportAnswer = 42', 'rendered canvas-code row');
-          expect(document.querySelector('#table td')?.textContent === 'table survives', 'table content');
+          expect(document.querySelector('#table td')?.textContent === 'table survives' &&
+                 document.querySelector('#table').getBoundingClientRect().height > 0, 'table content and print-only styles');
+          expect(getComputedStyle(document.querySelector('canvas-pane'), '::before').content.includes('Before'), 'kit pane label');
           for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
                                     ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
             expect(document.getElementById(id)?.getAttribute('href') === href, 'ordinary link ' + id);
@@ -296,6 +300,20 @@ private enum HtmlKeyboard {
         document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
         """) as? Bool
         try require(independentlyInert == true, "sanitized export must remain inert without CSP, including comment and SVG reparsing")
+        let invalidRoot = board.create(type: .html, props: .object(["html": .string(#"""
+        <p>Replaced document root</p><script>
+        document.addEventListener('DOMContentLoaded', () => {
+          const frame = document.createElement('iframe');
+          frame.srcdoc = '<p>Active document root</p>';
+          document.replaceChild(frame, document.documentElement);
+        });
+        </script>
+        """#)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+        let invalidTile = HtmlTile(object: invalidRoot, board: board)
+        var rejectedRoot = false
+        do { _ = try await invalidTile.exportDocument() }
+        catch let error as ExportFailure { rejectedRoot = error.message.contains("HTML document root") }
+        try require(rejectedRoot, "an active document root must fail export instead of bypassing sanitization")
         print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
     }
 
@@ -303,6 +321,9 @@ private enum HtmlKeyboard {
         #"""
         <!doctype html><html><head><title>export-clean</title></head><body>
         <img id="picture" src="export.png" width="30" height="20">
+        <img id="octet-image" src="data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=">
+        <canvas-pane label="Before">Pane content</canvas-pane>
+        <style media="print">#table { display:none }</style>
         <pre id="diagram" class="mermaid">flowchart LR
         A[Start] --> B[Finish]</pre>
         <p id="formula">$x^2 + y^2$</p>
@@ -321,6 +342,7 @@ private enum HtmlKeyboard {
               <animate attributeName="href" values="javascript:document.title='animate-executed'" dur="1s"/>
             </a>
           </svg>
+          <svg><a id="dynamic-xlink"><text>script-created XLink</text></a></svg>
           <svg><style>.roundtrip { content: "&lt;img src=data:image/png,invalid onerror=document.title='style-executed'&gt;"; }</style></svg>
           <math onmouseover="document.title='math-executed'"><mi>x</mi></math>
           <a href="JaVa&#x09;ScRi&#x0a;Pt:document.title='link-executed'" ping="data:text/plain,ping">unsafe mixed/control link</a>
@@ -349,6 +371,9 @@ private enum HtmlKeyboard {
         document.body.append(attacks.content);
         attacks.remove();
         document.documentElement.insertBefore(document.createComment("--><script>document.title='comment-executed'<" + "/script><!--"), document.head);
+        document.querySelector('#dynamic-xlink').setAttribute('xlink:href', "javascript:document.title='dynamic-xlink-executed'");
+        document.documentElement.insertBefore(document.createElement('div'), document.head);
+        document.documentElement.insertBefore(document.createTextNode('text before head'), document.head);
         customElements.define('x-export-attack', class extends HTMLElement {
           static observedAttributes = ['onload'];
           attributeChangedCallback(name, oldValue, value) {
