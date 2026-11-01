@@ -55,7 +55,7 @@ Once, by the Account Holder, after enrolling in the Apple Developer Program:
 
 ## Release from this Mac
 
-Select Swift 6.4 with `xcode-select` or `DEVELOPER_DIR` before building. The package resolves swift-testing's paths for the selected toolchain; it does not require a fixed Command Line Tools installation. Both macOS CI jobs and the Release workflow use the `xcode-27` runner with `/Applications/Xcode_27.0.app`, build `27A266a`. `scripts/select-ci-swift.sh` checks that Xcode build and the Swift 6.4 minor version before any build, and prints the runner image and SDK version. The full Xcode installation provides swift-testing, the macOS SDK, and the signing and notarization tools. The pinned app is listed in the [Xcode 27 runner inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md); a missing or changed toolchain fails rather than falling back to the image's Command Line Tools.
+Select Swift 6.4 with `xcode-select` or `DEVELOPER_DIR` before building. The package resolves swift-testing's paths for the selected toolchain; it does not require a fixed Command Line Tools installation.
 
 Bump `VERSION` first (above). `notarize.sh` builds into `.build/dist`, never `.build/easl.app` (a running dev instance's); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
 
@@ -74,7 +74,7 @@ Drop `--generate-notes` while no earlier release is published (`gh release list 
 
 With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` tag.
 
-The release workflow selects the Command Line Tools on `macos-26`, as the CI build does. Verify the logged `swift --version` before interpreting a build result because the runner image can change.
+Both macOS CI jobs and the Release workflow use the `xcode-27` runner with the Xcode app and build pinned in `scripts/select-ci-swift.sh`. The script checks that build and the Swift 6.4 minor version before any build, and prints the runner image and SDK version. The full Xcode installation provides swift-testing, the macOS SDK, and the signing and notarization tools. The pinned app is listed in the [Xcode 27 runner inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md); a missing or changed toolchain fails rather than falling back to the image's Command Line Tools.
 
 ## After every release
 
