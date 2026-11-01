@@ -165,6 +165,10 @@ private enum HtmlKeyboard {
             try await exerciseWithoutSuppression(root: root)
             return
         }
+        if CommandLine.arguments.contains("--exports") {
+            try await exerciseExports(root: root)
+            return
+        }
         try await exercise(root: root, remote: nil, kind: "local")
         let host = RemoteHost(name: "html-keyboard-regression", sshTarget: "html-keyboard-regression.invalid",
                               socketPath: root.appendingPathComponent("absent.sock").path,
@@ -178,7 +182,153 @@ private enum HtmlKeyboard {
         try await exerciseStaleClicks()
         try await exerciseDOMClicks()
         try await exerciseDocumentGrant(root: root.appendingPathComponent("replacement", isDirectory: true))
+        try await exerciseExports(root: root.appendingPathComponent("exports", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
+    }
+
+    private static func exerciseExports(root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("let exportAnswer = 42\n".utf8).write(to: root.appendingPathComponent("export.swift"))
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3, pixelsHigh: 2,
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                      isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        for y in 0..<2 {
+            for x in 0..<3 { bitmap.setColor(.systemBlue, atX: x, y: y) }
+        }
+        try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("export.png"))
+        let board = Board(id: "html-export-regression", root: root)
+        let object = board.create(type: .html, props: .object(["html": .string(exportHTML())]),
+                                  frame: Frame(x: 0, y: 0, w: 900, h: 900))
+        let tile = HtmlTile(object: object, board: board)
+        let document = try await tile.exportDocument()
+        check("real HtmlTile.exportDocument returned \(document.utf8.count) bytes")
+        let file = root.appendingPathComponent("export.html")
+        try Data(document.utf8).write(to: file)
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 900),
+                            configuration: WKWebViewConfiguration())
+        let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView!.addSubview(web)
+        defer { web.stopLoading(); window.close() }
+        web.loadFileURL(file, allowingReadAccessTo: root)
+        var reopened = false
+        for _ in 0..<240 {
+            reopened = await js(web, "location.protocol === 'file:' && document.readyState === 'complete' && !!document.getElementById('picture')") as? Bool == true
+            if reopened { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try require(reopened, "the exported file must finish loading in an ordinary WKWebView")
+        try await pageTurn(web)
+        guard let failures = await js(web, #"""
+        (() => {
+          const failures = [];
+          const expect = (ok, name) => { if (!ok) failures.push(name); };
+          expect(document.title === 'export-clean' && !document.body.hasAttribute('data-executed'),
+                 'event execution: title=' + document.title + ', marker=' + document.body.getAttribute('data-executed'));
+          const first = document.head.firstElementChild;
+          expect(first?.localName === 'meta' && first.httpEquiv.toLowerCase() === 'content-security-policy', 'CSP first head element');
+          const policy = first?.content || '';
+          for (const directive of ["default-src 'none'", "script-src 'none'", "object-src 'none'",
+                                   "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
+                                   "img-src data:", "style-src 'unsafe-inline'"]) {
+            expect(policy.split(';').some(part => part.trim() === directive), 'CSP ' + directive);
+          }
+          expect(document.scripts.length === 0, 'no scripts');
+          expect(!document.querySelector('iframe,frame,object,embed,applet,portal,base,form'), 'no active elements or forms');
+          expect(![...document.querySelectorAll('meta[http-equiv]')].some(meta => meta.httpEquiv.toLowerCase() !== 'content-security-policy'), 'no author http-equiv meta');
+          expect(!document.querySelector('svg set,svg animate,svg animateMotion,svg animateTransform'), 'no SVG animation');
+          const urlAttrs = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background', 'ping']);
+          for (const element of document.querySelectorAll('*')) {
+            for (const attribute of element.attributes) {
+              const name = attribute.name.toLowerCase();
+              expect(!name.startsWith('on'), 'event attribute ' + element.localName + '.' + name);
+              expect(name !== 'srcdoc', 'srcdoc attribute');
+              if (!urlAttrs.has(name)) continue;
+              const value = attribute.value.replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
+              const image = name === 'src' && element.localName === 'img' && value.startsWith('data:image/');
+              expect(image || !/^(javascript|vbscript|data):/.test(value), 'unsafe URL ' + element.localName + '.' + name);
+            }
+          }
+          const decodeCSS = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\\([0-9a-f]{1,6})\s?|\\([^\r\n])/gi,
+            (_, hex, char) => hex ? String.fromCodePoint(parseInt(hex, 16) || 0xfffd) : char);
+          const css = [...document.querySelectorAll('style')].map(node => node.textContent)
+            .concat([...document.querySelectorAll('[style]')].map(node => node.getAttribute('style'))).join('\n');
+          const decoded = decodeCSS(css).replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
+          expect(!decoded.includes('expression(') && !/url\(["']?(javascript|vbscript):/.test(decoded), 'no dangerous CSS, including escapes');
+          const image = document.querySelector('#picture');
+          expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
+                 'inlined image decoded at 3x2');
+          expect(image?.getBoundingClientRect().width === 30 && image?.getBoundingClientRect().height === 20, 'image rendered at 30x20');
+          const diagram = document.querySelector('#diagram svg');
+          expect(diagram && diagram.getBoundingClientRect().width > 0 && diagram.getBoundingClientRect().height > 0
+                 && diagram.textContent.includes('Start') && diagram.textContent.includes('Finish'), 'settled real Mermaid SVG');
+          expect(document.querySelector('#formula .katex .katex-html')?.getBoundingClientRect().height > 0, 'rendered KaTeX');
+          expect(document.querySelector('canvas-code .ck-line .ck-text')?.textContent === 'let exportAnswer = 42', 'rendered canvas-code row');
+          expect(document.querySelector('#table td')?.textContent === 'table survives', 'table content');
+          for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
+                                    ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
+            expect(document.getElementById(id)?.getAttribute('href') === href, 'ordinary link ' + id);
+          }
+          expect(document.getElementById('form-text')?.textContent === 'form text survives', 'unwrapped form content');
+          return failures;
+        })()
+        """#) as? [String] else { throw Failure(message: "could not inspect reopened export") }
+        check("export reopened in ordinary WKWebView: \(failures.isEmpty ? "no violations" : failures.joined(separator: "; "))")
+        try require(failures.isEmpty, "export must be self-contained and inert: \(failures.joined(separator: "; "))")
+        print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
+    }
+
+    private static func exportHTML() -> String {
+        #"""
+        <!doctype html><html><head><title>export-clean</title></head><body>
+        <img id="picture" src="export.png" width="30" height="20">
+        <pre id="diagram" class="mermaid">flowchart LR
+        A[Start] --> B[Finish]</pre>
+        <p id="formula">$x^2 + y^2$</p>
+        <canvas-code path="export.swift" lines="1"></canvas-code>
+        <table id="table"><tr><td>table survives</td></tr></table>
+        <a id="https" href="https://example.invalid/export">HTTPS</a>
+        <a id="http" href="http://example.invalid/export">HTTP</a>
+        <a id="mail" href="mailto:export@example.invalid">Mail</a>
+        <a id="fragment" href="#table">Fragment</a>
+        <template id="attacks">
+          <img src="data:image/png,invalid" onerror="if(location.protocol==='file:'){document.title='image-executed';document.body.dataset.executed='image'}">
+          <svg xmlns="http://www.w3.org/2000/svg" onload="if(location.protocol==='file:'){document.title='svg-executed';document.body.dataset.executed='svg'}">
+            <a href="javascript:document.title='svg-link-executed'" xlink:href="javascript:document.title='xlink-executed'" xmlns:xlink="http://www.w3.org/1999/xlink"><text>unsafe SVG link</text>
+              <set attributeName="href" to="javascript:document.title='set-executed'" begin="0s"/>
+              <animate attributeName="href" values="javascript:document.title='animate-executed'" dur="1s"/>
+            </a>
+          </svg>
+          <math onmouseover="document.title='math-executed'"><mi>x</mi></math>
+          <a href="JaVa&#x09;ScRi&#x0a;Pt:document.title='link-executed'" ping="data:text/plain,ping">unsafe mixed/control link</a>
+          <a href="vbscript:msgbox(1)">VBScript</a><a href="data:text/html,active">data navigation</a>
+          <iframe srcdoc="&lt;script&gt;if(parent.location.protocol==='file:')parent.document.title='frame-executed'&lt;/script&gt;"></iframe>
+          <iframe src="data:text/html,frame"></iframe>
+          <form action="javascript:document.title='form-executed'"><span id="form-text">form text survives</span>
+            <button formaction="data:text/html,submit">Submit</button>
+          </form>
+          <object data="data:text/html,object"></object><embed src="data:text/html,embed">
+          <applet code="none"></applet><portal src="data:text/html,portal"></portal>
+          <meta http-equiv="refresh" content="3600;url=data:text/html,refresh">
+          <meta http-equiv="default-style" content="author-style">
+          <base href="#author-base">
+          <video poster="javascript:document.title='poster-executed'"></video>
+          <div background="javascript:document.title='background-executed'" onpointerenter="document.title='pointer-executed'"
+               style="width:expression(1);background-image:url('javascript:document.title=1')">unsafe CSS</div>
+          <div style="background-image:u\72l('java\73 cript:document.title=2');height:expre\73sion(1)">escaped inline CSS</div>
+          <style>
+          .attack { width:expression(1); background:url("javascript:document.title=3") }
+          .escaped { background:u\72l("java\73 cript:document.title=4");height:expre\73sion(1) }
+          </style>
+        </template>
+        <script>
+        // Parse hostile markup inertly, then insert before the kit settles. Only file reparses set execution markers.
+        const attacks = document.getElementById('attacks');
+        document.body.append(attacks.content);
+        attacks.remove();
+        </script>
+        </body></html>
+        """#
     }
 
     private final class NativeClickTarget: NSView {

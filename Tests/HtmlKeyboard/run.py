@@ -13,6 +13,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run the real AppKit HTML tile keyboard regression against an existing Easl build.")
     parser.add_argument("--bin-path", required=True, type=pathlib.Path,
                         help="The directory printed by swift build --show-bin-path after a native Easl build with testing enabled.")
+    parser.add_argument("--exports", action="store_true",
+                        help="Run only the real HTML export security and static-content regression.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS.")
@@ -56,7 +58,8 @@ def main():
         environment["XDG_CONFIG_HOME"] = temporary
         environment["EASL_NO_ACTIVATE"] = "1"
         environment.pop("EASL_ROOT", None)
-        subprocess.run([str(executable)], cwd=root, env=environment, check=True, timeout=120)
+        subprocess.run([str(executable), *(["--exports"] if args.exports else [])],
+                       cwd=root, env=environment, check=True, timeout=120)
 
 
 if __name__ == "__main__":
