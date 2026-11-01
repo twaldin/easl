@@ -324,42 +324,112 @@
   customElements.define('canvas-link', CanvasLink);
   customElements.define('canvas-decisions', CanvasDecisions);
 
-  // ---- Mermaid: loaded only when the page has diagrams (it is large) ----
+  // ---- Mermaid syntax, rendered by Pele only when the page has diagrams ----
 
-  let mermaidReady = null;
+  let peleReady = null;
+  let diagramSerial = 0;
+  const diagramWork = new WeakMap();
   function mermaidBlocks() {
     for (const code of document.querySelectorAll('pre > code.language-mermaid')) {
-      const div = document.createElement('div');
-      div.className = 'mermaid';
-      div.textContent = code.textContent;
-      code.parentElement.replaceWith(div);
+      code.parentElement.classList.add('mermaid');
     }
-    for (const pre of document.querySelectorAll('pre:not(.mermaid)')) {
-      const text = pre.textContent.trim();
-      if (!text.startsWith('```mermaid')) continue;
+    for (const pre of document.querySelectorAll('pre')) {
+      let source = pre.textContent;
+      if (!pre.classList.contains('mermaid')) {
+        if (!source.trim().startsWith('```mermaid')) continue;
+        source = source.trim().replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
+      }
       const div = document.createElement('div');
-      div.className = 'mermaid';
-      div.textContent = text.replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
+      for (const attribute of pre.attributes) div.setAttribute(attribute.name, attribute.value);
+      div.classList.add('mermaid');
+      div.textContent = source;
       pre.replaceWith(div);
     }
-    return [...document.querySelectorAll('.mermaid:not([data-processed])')];
+    return [...document.querySelectorAll('.mermaid')];
   }
 
   function renderMermaid() {
     const nodes = mermaidBlocks();
     if (!nodes.length) return Promise.resolve();
-    mermaidReady ||= new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/kit/vendor/mermaid.min.js';
-      script.onload = () => {
-        const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font') });
-        resolve(window.mermaid);
+    const jobs = nodes.map((node) => {
+      if (diagramWork.has(node)) return diagramWork.get(node);
+      if (node.dataset.mermaidState) return Promise.resolve();
+      const source = node.textContent;
+      node.dataset.mermaidState = 'loading';
+      peleReady ||= new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = '/kit/vendor/pele.global.js';
+        script.onload = () => typeof window.pele?.render === 'function'
+          ? resolve(window.pele) : reject(new Error('Pele is unavailable'));
+        script.onerror = () => reject(new Error('Pele could not load'));
+        document.head.append(script);
+      });
+      const fail = (message) => {
+        const pre = document.createElement('pre');
+        pre.textContent = source;
+        const diagnostic = document.createElement('p');
+        diagnostic.className = 'ck-mermaid-error';
+        diagnostic.setAttribute('role', 'status');
+        diagnostic.textContent = message;
+        node.replaceChildren(pre, diagnostic);
+        node.dataset.mermaidState = 'error';
       };
-      script.onerror = () => reject(new Error('mermaid failed to load'));
-      document.head.append(script);
+      const work = peleReady.then((pele) => {
+        try {
+          const result = pele.render(source, {
+            idPrefix: `canvas-mermaid-${++diagramSerial}`,
+            fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font'),
+            maxWidth: node.clientWidth, responsive: false, autoDirection: false,
+            links: false, images: false, maxEdges: 500,
+          });
+          const template = document.createElement('template');
+          template.innerHTML = result.svg;
+          for (const element of template.content.querySelectorAll('image,img,iframe,object,embed,script,video,audio,source,link,meta,base,foreignObject')) element.remove();
+          for (const element of template.content.querySelectorAll('*')) {
+            for (const attribute of [...element.attributes]) {
+              const name = attribute.name.toLowerCase();
+              const reference = name === 'href' || name === 'xlink:href';
+              if (/^on/i.test(name) || /^(?:src|srcset|action|formaction)$/.test(name) ||
+                  (reference && (element.localName === 'a' || !attribute.value.startsWith('#')))) element.removeAttribute(attribute.name);
+            }
+          }
+          const svg = template.content.querySelector('svg');
+          const box = svg?.viewBox.baseVal;
+          if (!box || ![box.width, box.height].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Invalid SVG');
+          svg.setAttribute('width', box.width);
+          svg.setAttribute('height', box.height);
+          svg.style.width = `${box.width}px`;
+          svg.style.height = 'auto';
+          svg.style.removeProperty('max-width');
+          const viewport = document.createElement('div');
+          viewport.className = 'ck-mermaid-viewport';
+          viewport.tabIndex = 0;
+          viewport.setAttribute('role', 'region');
+          viewport.setAttribute('aria-label', 'Mermaid diagram');
+          viewport.append(svg);
+          const control = document.createElement('button');
+          control.type = 'button';
+          control.className = 'ck-mermaid-size';
+          const size = (value) => {
+            node.dataset.mermaidSize = value;
+            control.textContent = value === 'natural' ? 'Fit' : '100%';
+            control.setAttribute('aria-label', value === 'natural' ? 'Fit diagram to width' : 'Show diagram at 100%');
+          };
+          control.addEventListener('click', () => {
+            size(node.dataset.mermaidSize === 'natural' ? 'fit' : 'natural');
+            settle();
+          });
+          size('natural');
+          node.replaceChildren(control, viewport);
+          node.dataset.mermaidState = 'ready';
+        } catch {
+          fail('Mermaid could not render this diagram.');
+        }
+      }, () => fail('Mermaid renderer could not load.'));
+      diagramWork.set(node, work);
+      return work;
     });
-    return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
+    return track(Promise.all(jobs));
   }
 
   // ---- Math: KaTeX loaded only when the page has formulas (it is large) ----

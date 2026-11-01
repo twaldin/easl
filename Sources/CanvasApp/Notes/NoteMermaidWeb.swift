@@ -234,25 +234,23 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
         }
     }
 
-    private static let networkRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/page$"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/mermaid\\.js$"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/kit\\.css$"},"action":{"type":"ignore-previous-rules"}}]"#
+    private static let networkRules = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/page$"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/pele\\.js$"},"action":{"type":"ignore-previous-rules"}},{"trigger":{"url-filter":"^easl-note-mermaid://renderer/kit\\.css$"},"action":{"type":"ignore-previous-rules"}}]"#
 
     private static let renderScript = #"""
     const host = document.createElement('div');
     host.id = 'diagram';
-    host.className = 'mermaid';
-    host.dataset.processed = 'true';
     host.style.width = width + 'px';
     document.body.replaceChildren(host);
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-    const configuration = {
-      startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default',
+    // Pele counts source/SVG UTF-16 code units, not bytes or raster pixels.
+    // Core admission still enforces 51,200 UTF-8 bytes before this page is used.
+    const result = pele.render(source, {
+      idPrefix: 'noteDiagram',
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font'),
-      maxTextSize: 51200, maxEdges: 500, suppressErrorRendering: true,
-      dompurifyConfig: { FORBID_TAGS: ['image', 'img', 'iframe', 'object', 'embed', 'script'] }
-    };
-    configuration.secure = [...new Set([...mermaid.mermaidAPI.getConfig().secure, 'dompurifyConfig', 'secure'])];
-    mermaid.initialize(configuration);
-    const result = await mermaid.render('noteDiagram', source, host);
+      maxWidth: width, responsive: false, autoDirection: false,
+      limit: 51200, outputLimit: 4000000, maxEdges: 500,
+      links: false, images: false
+    });
     host.innerHTML = result.svg;
     for (const node of host.querySelectorAll('image,img,iframe,object,embed,script,video,audio,source,link,meta,base')) node.remove();
     for (const node of host.querySelectorAll('*')) {
@@ -267,11 +265,11 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
     if (!svg) throw new Error('No SVG');
     host.style.display = 'block';
     host.style.margin = '0';
-    const box = svg.getBoundingClientRect();
-    if (![box.width, box.height].every(value => Number.isFinite(value) && value > 0)) throw new Error('Invalid dimensions');
-    const scale = Math.min(1, width / box.width, 8192 / box.width, 8192 / box.height, Math.sqrt(4194304 / box.width / box.height));
-    const outputWidth = Math.max(1, Math.floor(box.width * scale));
-    const outputHeight = Math.max(1, Math.floor(box.height * scale));
+    const natural = svg.viewBox.baseVal;
+    if (![natural.width, natural.height].every(value => Number.isFinite(value) && value > 0)) throw new Error('Invalid dimensions');
+    const scale = Math.min(1, width / natural.width, 8192 / natural.width, 8192 / natural.height, Math.sqrt(4194304 / natural.width / natural.height));
+    const outputWidth = Math.max(1, Math.floor(natural.width * scale));
+    const outputHeight = Math.max(1, Math.floor(natural.height * scale));
     if (outputWidth * outputHeight > 4194304) throw new Error('Raster limit');
     svg.style.width = outputWidth + 'px';
     svg.style.height = outputHeight + 'px';
@@ -289,14 +287,14 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
         private let css: Data
         private static let document = Data("""
         <!doctype html><html><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src easl-note-mermaid://renderer/mermaid.js; style-src 'unsafe-inline' easl-note-mermaid://renderer/kit.css; img-src 'none'; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src easl-note-mermaid://renderer/pele.js; style-src 'unsafe-inline' easl-note-mermaid://renderer/kit.css; img-src 'none'; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
         <link rel="stylesheet" href="easl-note-mermaid://renderer/kit.css">
         <style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body{font-family:var(--canvas-font)}svg{display:block}</style>
-        </head><body><script src="easl-note-mermaid://renderer/mermaid.js"></script></body></html>
+        </head><body><script src="easl-note-mermaid://renderer/pele.js"></script></body></html>
         """.utf8)
 
         init(kitRoot: URL) throws {
-            vendor = try Data(contentsOf: kitRoot.appendingPathComponent("vendor/mermaid.min.js"), options: .alwaysMapped)
+            vendor = try Data(contentsOf: kitRoot.appendingPathComponent("vendor/pele.global.js"), options: .alwaysMapped)
             css = try Data(contentsOf: kitRoot.appendingPathComponent("canvas-kit.css"), options: .alwaysMapped)
             super.init()
         }
@@ -310,7 +308,7 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
             let type: String
             switch url.absoluteString {
             case Self.pageURL.absoluteString: data = Self.document; type = "text/html"
-            case "easl-note-mermaid://renderer/mermaid.js": data = vendor; type = "text/javascript"
+            case "easl-note-mermaid://renderer/pele.js": data = vendor; type = "text/javascript"
             case "easl-note-mermaid://renderer/kit.css": data = css; type = "text/css"
             default:
                 task.didFailWithError(URLError(.noPermissionsToReadFile))
@@ -379,7 +377,7 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.callAsyncJavaScript("return typeof mermaid === 'object' && typeof mermaid.render === 'function';",
+            webView.callAsyncJavaScript("return typeof pele === 'object' && typeof pele.render === 'function';",
                                        arguments: [:], in: nil, in: .page) { [weak self] result in
                 MainActor.assumeIsolated {
                     guard let self, self.web.navigationDelegate === self else { return }

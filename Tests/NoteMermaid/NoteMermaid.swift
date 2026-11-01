@@ -198,6 +198,11 @@ private enum NoteMermaidRegression {
         let wide = await NoteMermaid.resolve(document, width: 1400, appearance: .light)
         let wideImage = try raster(wide, width: 1400, name: "small at 1400pt")
         try require(wideImage.size.width < 480 && abs(wideImage.size.width - narrowImage.size.width) <= 1 && abs(wideImage.size.height - narrowImage.size.height) <= 1, "small diagram must retain its natural dimensions at wide note widths: \(narrowImage.size) versus \(wideImage.size)")
+        let constrainedWidth: CGFloat = 160
+        let constrained = await NoteMermaid.resolve(document, width: constrainedWidth, appearance: .light)
+        let constrainedImage = try raster(constrained, width: constrainedWidth, name: "LR at narrow note width")
+        try require(constrainedImage.size.width > constrainedImage.size.height,
+                    "declared LR flowchart must stay horizontal when shrunk to a narrow note: \(constrainedImage.size)")
         let ordinary = [
             (name: "sequence at 1400pt", source: "sequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: Request\nalt Cached\nServer-->>Client: Hit\nelse Uncached\nServer-->>Client: Result\nend"),
             (name: "TD at 1400pt", source: "flowchart TD\nsubgraph Work\nA[Start] --> B[Build]\nend\nB --> C[Ship]"),

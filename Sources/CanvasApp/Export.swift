@@ -272,6 +272,7 @@ extension HtmlTile {
       } catch (error) { link.remove(); }
     }
     for (const script of [...clone.querySelectorAll('script')]) script.remove();
+    for (const control of clone.querySelectorAll('.ck-mermaid-size')) control.remove();
     return '<!doctype html>\\n' + clone.outerHTML;
     """
 }

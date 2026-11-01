@@ -63,8 +63,8 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 ## Also on the board
 
-- **Notes.** Markdown with fences that quote real files: an excerpt shows its code as it is now and follows it as lines move, and says it's stale only when that code is gone; a `propose` fence renders as a diff.
-- **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs.
+- **Notes.** Markdown with fences that quote real files: an excerpt shows its code as it is now and follows it as lines move, and says it's stale only when that code is gone; a `propose` fence renders as a diff. Exact `mermaid` fences render through Pele 1.9.1 as static, centred images at natural size, shrinking only for note width and raster caps. Invalid or timed-out diagrams retain source and a diagnostic. Stored Markdown is unchanged.
+- **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid syntax rendered by Pele 1.9.1, code excerpts); agents chain them into walkthroughs. Diagrams preserve declared direction and start at natural size with overflow scrolling. The labelled Fit/100% control fits to width or restores natural size. Scriptless HTML exports remain visible and scrollable. Use the [documented markup and page API](../skills/easl/references/html-explainers.md#mermaid), not the removed, undocumented `window.mermaid` global. No stored-data migration is needed.
 - **Browser tiles.** Agents drive them: omp with its `browser` tool, Claude Code, Codex and any other CLI with `easl browser` (snapshot, click, type, eval, screenshot). The page's errors show on the tile.
 - **Image tiles.** An image file with a caption, reloaded when the file changes.
 - **Diagram tiles.** Who calls a function, or what it calls, computed live by your language server: symbol-anchored nodes with the lines making each call. Click a node to open its next level, click its `path:line` for the code, Hyper-click to point your agent at it; a deleted function stays with a stale badge instead of vanishing.

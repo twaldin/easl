@@ -178,6 +178,7 @@ private enum HtmlKeyboard {
         try await exerciseStaleClicks()
         try await exerciseDOMClicks()
         try await exerciseDocumentGrant(root: root.appendingPathComponent("replacement", isDirectory: true))
+        try await exerciseMermaid(root: root.appendingPathComponent("mermaid", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
     }
 
@@ -481,6 +482,114 @@ private enum HtmlKeyboard {
                                        styleMask: [.titled], backing: .buffered, defer: false)
         try await exercise(root: root, remote: nil, kind: "missing-selector", window: boardWindow)
         check("absent suppression selector: focus-on-load refused; Return and native field clicks grant; Esc revokes")
+    }
+
+    private static func exerciseMermaid(root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let board = Board(id: "html-mermaid", root: root)
+        let canvas = CanvasView(board: board, viewport: nil, remote: nil)
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 700),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        canvas.frame = window.contentView!.bounds
+        window.contentView!.addSubview(canvas)
+        board.onEvent = { canvas.apply($0) }
+        defer {
+            board.onEvent = nil
+            canvas.discard()
+            window.close()
+        }
+        window.orderFrontRegardless()
+        let source = "flowchart LR\nA[Alpha] --> B[Beta] --> C[Gamma] --> D[Delta] --> E[Epsilon]"
+        let broken = "not a Mermaid diagram"
+        let html = """
+        <pre class="mermaid" id="declared">\(source)</pre>
+        <pre id="fenced">```mermaid
+        \(source)
+        ```</pre>
+        <pre id="language"><code class="language-mermaid">\(source)</code></pre>
+        <pre class="mermaid" id="broken">\(broken)</pre>
+        """
+        let frame = Frame(x: -210, y: -250, w: 420, h: 500)
+        canvas.show(Viewport(rect: Frame(x: -260, y: -300, w: 520, h: 600), zoom: 1))
+        let object = board.create(type: .html, props: .object(["html": .string(html)]), frame: frame)
+        let tile = try htmlTile(canvas, object)
+        let web = try await page(in: tile)
+        try await loaded(web)
+        let rendered = try await web.callAsyncJavaScript("""
+        await canvasKit.renderMermaid();
+        const manual = document.createElement('div');
+        manual.id = 'manual';
+        manual.className = 'mermaid';
+        manual.textContent = source;
+        document.body.append(manual);
+        await Promise.all([canvasKit.renderMermaid(), canvasKit.renderMermaid()]);
+        return ['declared', 'fenced', 'language', 'manual'].every(id => {
+          const svg = document.querySelector('#' + id + ' svg');
+          return svg && svg.getBoundingClientRect().height > 0;
+        });
+        """, arguments: ["source": source], contentWorld: .page) as? Bool
+        try require(rendered == true, "all documented markup forms and awaited renderMermaid() must produce visible diagrams")
+        let direction = await js(web, """
+        (() => {
+          const svg = document.querySelector('#declared svg');
+          const labels = [...svg.querySelectorAll('text')];
+          const a = labels.find(node => node.textContent === 'Alpha').getBoundingClientRect();
+          const b = labels.find(node => node.textContent === 'Beta').getBoundingClientRect();
+          const viewport = svg.parentElement;
+          const control = document.querySelector('#declared button');
+          return b.left > a.right && Math.abs(b.top - a.top) < 2 &&
+            svg.getBoundingClientRect().width > viewport.clientWidth &&
+            getComputedStyle(viewport).overflowX === 'auto' &&
+            control.tabIndex === 0 && !!control.getAttribute('aria-label');
+        })()
+        """) as? Bool
+        try require(direction == true, "a narrow HTML tile must keep declared LR direction and natural-size overflow with a labelled keyboard-reachable control")
+        let fallback = await js(web, """
+        (() => {
+          const host = document.querySelector('#broken');
+          return host.querySelector('pre').textContent === 'not a Mermaid diagram' &&
+            host.querySelector('[role="status"]').textContent.length > 0 &&
+            host.getBoundingClientRect().height > 0;
+        })()
+        """) as? Bool
+        try require(fallback == true, "a failed diagram must show its original source and a diagnostic")
+        try await click("#declared button", in: web, window: window)
+        try await pageTurn(web)
+        let fit = await js(web, """
+        (() => {
+          const svg = document.querySelector('#declared svg');
+          return svg.getBoundingClientRect().width <= svg.parentElement.clientWidth &&
+            svg.viewBox.baseVal.width > svg.parentElement.clientWidth;
+        })()
+        """) as? Bool
+        try require(fit == true, "Fit must shrink the displayed diagram without changing its natural viewBox")
+        try await click("#declared button", in: web, window: window)
+        try await pageTurn(web)
+        let natural = await js(web, "document.querySelector('#declared svg').getBoundingClientRect().width > document.querySelector('#declared svg').parentElement.clientWidth") as? Bool
+        try require(natural == true, "100% must restore natural-size overflow")
+        let exported = try await tile.exportDocument()
+        let browser = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 500),
+                                configuration: WKWebViewConfiguration())
+        window.contentView!.addSubview(browser)
+        defer { browser.removeFromSuperview() }
+        browser.loadHTMLString(exported, baseURL: nil)
+        for _ in 0..<240 {
+            if await js(browser, "!!document.querySelector('#declared svg')") as? Bool == true { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let standalone = await js(browser, """
+        (() => {
+          const svg = document.querySelector('#declared svg');
+          const viewport = svg.parentElement;
+          return document.scripts.length === 0 && !document.querySelector('.mermaid button') &&
+            svg.getBoundingClientRect().height > 0 &&
+            svg.getBoundingClientRect().width > viewport.clientWidth &&
+            getComputedStyle(viewport).overflowX === 'auto';
+        })()
+        """) as? Bool
+        try require(standalone == true, "script-free HTML export must retain visible scrollable diagrams without inert controls")
+        check("Mermaid markup, LR direction, source diagnostics, Fit/100%, and script-free export")
     }
 
     private static func exercise(root: URL, remote: RemoteSource?, kind: String, window suppliedWindow: NSWindow? = nil) async throws {
