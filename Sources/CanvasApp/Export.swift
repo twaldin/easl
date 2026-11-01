@@ -391,7 +391,7 @@ extension HtmlTile {
           style.cssText = attribute.value;
           await sanitizeDeclarations(style, document.baseURI);
           replacement = style.cssText;
-        } else if (element.namespaceURI === svgNS && svgCSSAttributes.has(name)) {
+        } else if (svgCSSAttributes.has(name)) {
           if (safeCSS(attribute.value)) replacement = attribute.value;
         } else {
           continue;

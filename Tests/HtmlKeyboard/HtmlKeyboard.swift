@@ -237,6 +237,7 @@ private enum HtmlKeyboard {
           expect(!document.querySelector('iframe,frame,object,embed,applet,portal,base,form'), 'no active elements or forms');
           expect(![...document.querySelectorAll('meta[http-equiv]')].some(meta => meta.httpEquiv.toLowerCase() !== 'content-security-policy'), 'no author http-equiv meta');
           expect(!document.querySelector('svg set,svg animate,svg animateMotion,svg animateTransform'), 'no SVG animation');
+          expect(!document.getElementById('namespace-cursor')?.hasAttribute('cursor'), 'no resource URL activated by namespace reparse');
           const urlAttrs = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background', 'ping']);
           for (const element of document.querySelectorAll('*')) {
             for (const attribute of element.attributes) {
@@ -377,6 +378,12 @@ private enum HtmlKeyboard {
         document.querySelector('#dynamic-xlink').setAttribute('xlink:href', "javascript:document.title='dynamic-xlink-executed'");
         document.documentElement.insertBefore(document.createElement('div'), document.head);
         document.documentElement.insertBefore(document.createTextNode('text before head'), document.head);
+        const mismatchedSVG = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        const mismatchedRect = document.createElement('rect');
+        mismatchedRect.id = 'namespace-cursor';
+        mismatchedRect.setAttribute('cursor', 'url(https://example.invalid/cursor.png), auto');
+        mismatchedSVG.append(mismatchedRect);
+        document.body.append(mismatchedSVG);
         customElements.define('x-export-attack', class extends HTMLElement {
           static observedAttributes = ['onload'];
           attributeChangedCallback(name, oldValue, value) {
