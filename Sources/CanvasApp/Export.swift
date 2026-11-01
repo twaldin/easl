@@ -347,6 +347,11 @@ extension HtmlTile {
           style.removeProperty(property);
         }
       }
+      if (!fontFace && !safeCSS(style.cssText)) {
+        for (const property of [...style]) {
+          if (style.getPropertyValue(property) === '') style.removeProperty(property);
+        }
+      }
     };
     const sanitizeRules = async (container, base) => {
       for (let i = container.cssRules.length - 1; i >= 0; i--) {

@@ -257,6 +257,7 @@ private enum HtmlKeyboard {
             .concat([...document.querySelectorAll('[style]')].map(node => node.getAttribute('style'))).join('\n');
           const decoded = decodeCSS(css).replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
           expect(!decoded.includes('expression(') && !/url\(["']?(javascript|vbscript):/.test(decoded), 'no dangerous CSS, including escapes');
+          expect(!css.includes('beacon.invalid'), 'no resource URLs hidden by variable shorthand expansion');
           const image = document.querySelector('#picture');
           expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
                  'inlined image decoded at 3x2');
@@ -409,9 +410,12 @@ private enum HtmlKeyboard {
           <div background="javascript:document.title='background-executed'" onpointerenter="document.title='pointer-executed'"
                style="width:expression(1);background-image:url('javascript:document.title=1')">unsafe CSS</div>
           <div style="background-image:u\72l('java\73 cript:document.title=2');height:expre\73sion(1)">escaped inline CSS</div>
+          <div style="--c:red;background:var(--c) url(https://beacon.invalid/inline)">variable shorthand</div>
           <style>
           .attack { width:expression(1); background:url("javascript:document.title=3") }
           .escaped { background:u\72l("java\73 cript:document.title=4");height:expre\73sion(1) }
+          .variable-shorthand { --c:red; background:var(--c) url(https://beacon.invalid/sheet) }
+          .variable-fallback { background:var(--missing, url('javascript:document.title=5')) }
           </style>
         </template>
         <script>
