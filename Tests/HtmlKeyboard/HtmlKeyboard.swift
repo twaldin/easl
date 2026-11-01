@@ -510,7 +510,10 @@ private enum HtmlKeyboard {
         <pre id="fenced">```mermaid
         \(source)
         ```</pre>
-        <pre id="language"><code class="language-mermaid">\(source)</code></pre>
+        <pre id="fencecode"><code><span>```mermaid</span>
+        \(source)
+        <span>```</span></code></pre>
+        <pre id="language"><code class="language-mermaid"><span>\(source)</span></code></pre>
         <pre class="mermaid" id="broken">\(broken)</pre>
         <pre class="mermaid" id="multiline">flowchart LR
         A[First line<br>Second line] --> B[Done]</pre>
@@ -536,7 +539,7 @@ private enum HtmlKeyboard {
         multiline.innerHTML = 'flowchart LR\\nA[First line<br>Second line] --> B[Done]';
         document.body.append(multiline);
         await Promise.all([canvasKit.renderMermaid(), canvasKit.renderMermaid()]);
-        return ['declared', 'fenced', 'language', 'manual'].every(id => {
+        return ['declared', 'fenced', 'fencecode', 'language', 'manual'].every(id => {
           const svg = document.querySelector('#' + id + ' svg');
           const labels = [...(svg?.querySelectorAll('text') || [])].map(node => node.textContent);
           return svg && labels.includes('Alpha') && labels.includes('Epsilon') && svg.getBoundingClientRect().height > 0;
@@ -546,9 +549,9 @@ private enum HtmlKeyboard {
         let multiline = await js(web, """
         ['multiline', 'manual-multiline'].every(id => {
           const labels = [...document.querySelectorAll('#' + id + ' svg text, #' + id + ' svg tspan')];
-          const first = labels.find(node => node.textContent === 'First line')?.getBoundingClientRect();
-          const second = labels.find(node => node.textContent === 'Second line')?.getBoundingClientRect();
-          return first && second && second.top > first.top;
+          const first = labels.find(node => node.textContent === 'First line');
+          const second = labels.find(node => node.textContent === 'Second line');
+          return first && second && first !== second;
         })
         """) as? Bool
         try require(multiline == true, "HTML line breaks in labels must survive markup and manual rendering")

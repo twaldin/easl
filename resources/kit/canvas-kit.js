@@ -331,18 +331,21 @@
   const diagramWork = new WeakMap();
   function mermaidSource(node) {
     const text = document.createElement('textarea');
-    text.innerHTML = (node.querySelector(':scope > code.language-mermaid') || node).innerHTML;
+    text.innerHTML = node.innerHTML;
     return text.value;
   }
   function mermaidBlocks() {
-    for (const code of document.querySelectorAll('pre > code.language-mermaid')) {
-      code.parentElement.classList.add('mermaid');
-    }
     for (const pre of document.querySelectorAll('pre')) {
-      let source = mermaidSource(pre);
-      if (!pre.classList.contains('mermaid')) {
-        if (!source.trim().startsWith('```mermaid')) continue;
-        source = source.trim().replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
+      if (pre.closest('.mermaid[data-mermaid-state]')) continue;
+      const code = pre.querySelector(':scope > code.language-mermaid');
+      let source;
+      if (code) {
+        source = code.textContent;
+      } else {
+        if (pre.classList.contains('mermaid')) continue;
+        source = pre.textContent.trim();
+        if (!source.startsWith('```mermaid')) continue;
+        source = source.replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
       }
       const div = document.createElement('div');
       for (const attribute of pre.attributes) div.setAttribute(attribute.name, attribute.value);
@@ -381,10 +384,15 @@
       };
       const work = peleReady.then((pele) => {
         try {
+          const inlineStyle = node.getAttribute('style');
+          node.style.width = '100%';
+          const availableWidth = node.clientWidth;
+          if (inlineStyle === null) node.removeAttribute('style');
+          else node.setAttribute('style', inlineStyle);
           const result = pele.render(source, {
             idPrefix: `canvas-mermaid-${++diagramSerial}`,
             fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font'),
-            maxWidth: node.clientWidth, responsive: false, autoDirection: false,
+            maxWidth: availableWidth, responsive: false, autoDirection: false,
             links: false, images: false, maxEdges: 500,
           });
           const template = document.createElement('template');
