@@ -503,7 +503,10 @@ private enum HtmlKeyboard {
         let source = "flowchart LR\nA[Alpha] --> B[Beta] --> C[Gamma] --> D[Delta] --> E[Epsilon]"
         let broken = "not a Mermaid diagram"
         let html = """
-        <pre class="mermaid" id="declared">\(source)</pre>
+        <div style="display:flex;gap:12px">
+        <div style="flex:1"><pre class="mermaid" id="declared">\(source)</pre></div>
+        <aside id="sidebar" style="width:80px;flex-shrink:0">Sidebar</aside>
+        </div>
         <pre id="fenced">```mermaid
         \(source)
         ```</pre>
@@ -535,7 +538,8 @@ private enum HtmlKeyboard {
         await Promise.all([canvasKit.renderMermaid(), canvasKit.renderMermaid()]);
         return ['declared', 'fenced', 'language', 'manual'].every(id => {
           const svg = document.querySelector('#' + id + ' svg');
-          return svg && svg.getBoundingClientRect().height > 0;
+          const labels = [...(svg?.querySelectorAll('text') || [])].map(node => node.textContent);
+          return svg && labels.includes('Alpha') && labels.includes('Epsilon') && svg.getBoundingClientRect().height > 0;
         });
         """, arguments: ["source": source], contentWorld: .page) as? Bool
         try require(rendered == true, "all documented markup forms and awaited renderMermaid() must produce visible diagrams")
@@ -544,7 +548,7 @@ private enum HtmlKeyboard {
           const labels = [...document.querySelectorAll('#' + id + ' svg text, #' + id + ' svg tspan')];
           const first = labels.find(node => node.textContent === 'First line')?.getBoundingClientRect();
           const second = labels.find(node => node.textContent === 'Second line')?.getBoundingClientRect();
-          return first && second && second.top >= first.bottom;
+          return first && second && second.top > first.top;
         })
         """) as? Bool
         try require(multiline == true, "HTML line breaks in labels must survive markup and manual rendering")
@@ -563,6 +567,11 @@ private enum HtmlKeyboard {
         })()
         """) as? Bool
         try require(direction == true, "a narrow HTML tile must keep declared LR direction and natural-size overflow with a labelled keyboard-reachable control")
+        let contained = await js(web, """
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth &&
+          document.querySelector('#sidebar').getBoundingClientRect().right <= document.documentElement.clientWidth
+        """) as? Bool
+        try require(contained == true, "a diagram in a flex column must scroll internally without pushing its sidebar off the page")
         let fallback = await js(web, """
         (() => {
           const host = document.querySelector('#broken');

@@ -401,11 +401,8 @@
           const svg = template.content.querySelector('svg');
           const box = svg?.viewBox.baseVal;
           if (!box || ![box.width, box.height].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Invalid SVG');
-          svg.setAttribute('width', box.width);
-          svg.setAttribute('height', box.height);
           svg.style.width = `${box.width}px`;
           svg.style.height = 'auto';
-          svg.style.removeProperty('max-width');
           const viewport = document.createElement('div');
           viewport.className = 'ck-mermaid-viewport';
           viewport.tabIndex = 0;

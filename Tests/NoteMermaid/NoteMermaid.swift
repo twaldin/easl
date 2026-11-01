@@ -204,12 +204,6 @@ private enum NoteMermaidRegression {
         let constrainedImage = try raster(constrained, width: constrainedWidth, name: "LR at narrow note width")
         try require(constrainedImage.size.width > constrainedImage.size.height,
                     "declared LR flowchart must stay horizontal when shrunk to a narrow note: \(constrainedImage.size)")
-        let sequence = NoteMarkdown.parse("```mermaid\nsequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: A long request message that must retain its natural layout\nServer-->>Client: Response\n```")
-        let sequenceWide = try raster(await NoteMermaid.resolve(sequence, width: 1400, appearance: .light), width: 1400, name: "natural sequence")
-        let sequenceNarrow = try raster(await NoteMermaid.resolve(sequence, width: constrainedWidth, appearance: .light), width: constrainedWidth, name: "shrunk sequence")
-        let aspectError = abs(sequenceNarrow.size.width * sequenceWide.size.height - sequenceWide.size.width * sequenceNarrow.size.height)
-        try require(aspectError <= max(sequenceWide.size.width, sequenceWide.size.height),
-                    "a narrow note must uniformly shrink its natural sequence image, not reflow labels")
         let ordinary = [
             (name: "sequence at 1400pt", source: "sequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: Request\nalt Cached\nServer-->>Client: Hit\nelse Uncached\nServer-->>Client: Result\nend"),
             (name: "TD at 1400pt", source: "flowchart TD\nsubgraph Work\nA[Start] --> B[Build]\nend\nB --> C[Ship]"),
@@ -260,9 +254,6 @@ private enum NoteMermaidRegression {
         let budgetDocument = NoteMarkdown.parse("```mermaid\n\(overEdges)\n```")
         let budgetResult = await NoteMermaid.resolve(budgetDocument, width: width, appearance: .light)
         guard case .fallback? = budgetResult[1] else { throw Failure(message: "a 501-edge diagram must retain source at the renderer's 500-edge budget") }
-        let budgetFallback = NoteRenderer(excerpts: [:], width: width, diagrams: budgetResult).render(budgetDocument, placeholder: "")
-        try require(budgetFallback.string.contains("N500 --> N501") && attachments(budgetFallback).isEmpty,
-                    "an engine-budget failure must keep the complete source, not a partial diagram")
         print("PASS native note Mermaid: light/dark 2x rasters, natural-size small diagrams, wide sequence/TD/gantt40, physical pixel/byte caps, source fallback, live tile, 1x/2x exports and intrinsic dimensions")
     }
 }

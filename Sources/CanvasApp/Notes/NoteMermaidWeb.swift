@@ -247,7 +247,7 @@ final class NoteMermaidWeb: NoteMermaidPreparingBackend {
     const result = pele.render(source, {
       idPrefix: 'noteDiagram',
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font'),
-      responsive: false, autoDirection: false,
+      maxWidth: width, responsive: false, autoDirection: false,
       limit: 51200, outputLimit: 4000000, maxEdges: 500,
       links: false, images: false
     });

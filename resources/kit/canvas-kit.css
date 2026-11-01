@@ -196,7 +196,7 @@
     color: var(--canvas-muted-foreground);
   }
 
-  .mermaid { display: block; min-width: 0; max-width: 100%; margin: 12px 0; }
+  .mermaid { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; margin: 12px 0; }
   .mermaid:not([data-mermaid-state="ready"]) { white-space: pre-wrap; font-family: var(--canvas-mono); color: var(--canvas-muted-foreground); }
   .mermaid > pre { margin: 0; overflow: auto; white-space: pre; }
   .ck-mermaid-error { margin: 8px 0 0; color: var(--canvas-warn); font: 12px/1.5 var(--canvas-font); white-space: normal; }
