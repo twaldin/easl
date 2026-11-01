@@ -255,7 +255,7 @@ extension HtmlTile {
       });
     };
     if (document.documentElement?.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
-        document.documentElement.localName !== 'html') throw new Error('The page has no HTML document root.');
+        document.documentElement.tagName.toLowerCase() !== 'html') throw new Error('The page has no HTML document root.');
     const images = [...document.querySelectorAll('img')];
     const clone = document.implementation.createHTMLDocument('').importNode(document.documentElement, true);
     const copies = [...clone.querySelectorAll('img')];
@@ -416,7 +416,7 @@ extension HtmlTile {
       if (tag === 'form') element.replaceWith(...element.childNodes);
     };
     await sanitize(clone);
-    let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.localName === 'head');
+    let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.tagName.toLowerCase() === 'head');
     if (!head) {
       head = document.createElement('head');
     }

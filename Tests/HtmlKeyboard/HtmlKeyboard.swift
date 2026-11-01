@@ -193,7 +193,7 @@ private enum HtmlKeyboard {
                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                       isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
         for y in 0..<2 {
-            for x in 0..<3 { bitmap.setColor(.systemBlue, atX: x, y: y) }
+            for x in 0..<3 { bitmap.setColor(NSColor(deviceRed: 0.1, green: 0.3, blue: 0.9, alpha: 1), atX: x, y: y) }
         }
         try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("export.png"))
         let board = Board(id: "html-export-regression", root: root)
@@ -305,20 +305,22 @@ private enum HtmlKeyboard {
         document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
         """) as? Bool
         try require(independentlyInert == true, "sanitized export must remain inert without CSP, including comment and SVG reparsing")
-        let invalidRoot = board.create(type: .html, props: .object(["html": .string(#"""
-        <p>Replaced document root</p><script>
-        document.addEventListener('DOMContentLoaded', () => {
-          const frame = document.createElement('iframe');
-          frame.srcdoc = '<p>Active document root</p>';
-          document.replaceChild(frame, document.documentElement);
-        });
-        </script>
-        """#)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
-        let invalidTile = HtmlTile(object: invalidRoot, board: board)
-        var rejectedRoot = false
-        do { _ = try await invalidTile.exportDocument() }
-        catch is ExportFailure { rejectedRoot = true }
-        try require(rejectedRoot, "an active document root must fail export instead of bypassing sanitization")
+        for tag in ["iframe", "x:html"] {
+            let invalidRoot = board.create(type: .html, props: .object(["html": .string("""
+            <p>Replaced document root</p><script>
+            document.addEventListener('DOMContentLoaded', () => {
+              const frame = document.createElementNS('http://www.w3.org/1999/xhtml', '\(tag)');
+              frame.setAttribute('srcdoc', '<p>Active document root</p>');
+              document.replaceChild(frame, document.documentElement);
+            });
+            </script>
+            """)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+            let invalidTile = HtmlTile(object: invalidRoot, board: board)
+            var rejectedRoot = false
+            do { _ = try await invalidTile.exportDocument() }
+            catch is ExportFailure { rejectedRoot = true }
+            try require(rejectedRoot, "a \(tag) document root must fail export instead of bypassing sanitization")
+        }
         let encodingObject = board.create(type: .html, props: .object(["html": .string(#"""
         <title>encoding-clean</title><p>Encoding proof</p><script>
         document.addEventListener('DOMContentLoaded', () => {
