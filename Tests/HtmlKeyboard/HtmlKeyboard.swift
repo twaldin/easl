@@ -251,7 +251,7 @@ private enum HtmlKeyboard {
               expect(image || !/^(javascript|vbscript|data):/.test(value), 'unsafe URL ' + element.localName + '.' + name);
             }
           }
-          const decodeCSS = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\\([0-9a-f]{1,6})\s?|\\([^\r\n])/gi,
+          const decodeCSS = text => text.replace(/\\([0-9a-f]{1,6})\s?|\\([^\r\n])/gi,
             (_, hex, char) => hex ? String.fromCodePoint(parseInt(hex, 16) || 0xfffd) : char);
           const css = [...document.querySelectorAll('style')].map(node => node.textContent)
             .concat([...document.querySelectorAll('[style]')].map(node => node.getAttribute('style'))).join('\n');
@@ -418,6 +418,7 @@ private enum HtmlKeyboard {
           .escaped { background:u\72l("java\73 cript:document.title=4");height:expre\73sion(1) }
           .variable-shorthand { --c:red; background:var(--c) url(https://beacon.invalid/sheet) }
           .variable-fallback { background:var(--missing, url('javascript:document.title=5')) }
+          .comment-strings::before { content:"/*" url(https://beacon.invalid/comment) "*/" }
           </style>
         </template>
         <script>

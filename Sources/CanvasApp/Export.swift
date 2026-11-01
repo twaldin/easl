@@ -312,7 +312,7 @@ extension HtmlTile {
         }
         return newline ? '' : character;
       }
-    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    );
     const cssURLs = (value) => {
       const decoded = decodeCSS(value);
       const starts = [...decoded.matchAll(/url\s*\(/gi)];
@@ -419,7 +419,6 @@ extension HtmlTile {
     let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.localName === 'head');
     if (!head) {
       head = document.createElement('head');
-      clone.prepend(head);
     }
     clone.prepend(head);
     const policy = document.createElement('meta');
