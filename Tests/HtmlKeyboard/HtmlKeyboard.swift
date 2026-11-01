@@ -275,6 +275,27 @@ private enum HtmlKeyboard {
         """#) as? [String] else { throw Failure(message: "could not inspect reopened export") }
         check("export reopened in ordinary WKWebView: \(failures.isEmpty ? "no violations" : failures.joined(separator: "; "))")
         try require(failures.isEmpty, "export must be self-contained and inert: \(failures.joined(separator: "; "))")
+        let withoutPolicy = document.replacingOccurrences(of: #"<meta http-equiv="Content-Security-Policy"[^>]*>"#,
+                                                          with: "", options: .regularExpression)
+        let fallback = root.appendingPathComponent("export-without-policy.html")
+        try Data(withoutPolicy.utf8).write(to: fallback)
+        web.loadFileURL(fallback, allowingReadAccessTo: root)
+        var fallbackLoaded = false
+        for _ in 0..<240 {
+            fallbackLoaded = await js(web, "location.pathname.endsWith('export-without-policy.html') && document.readyState === 'complete' && !!document.getElementById('picture')") as? Bool == true
+            if fallbackLoaded { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try require(fallbackLoaded, "the exported file without policy must finish loading")
+        try await pageTurn(web)
+        let independentlyInert = await js(web, """
+        document.title === 'export-clean' && !document.body.hasAttribute('data-executed') &&
+        document.scripts.length === 0 && !document.querySelector('meta[http-equiv], [onerror], [onload]') &&
+        !!document.querySelector('#diagram svg') && !!document.querySelector('#formula .katex-html') &&
+        document.querySelector('#picture').naturalWidth === 3 &&
+        document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
+        """) as? Bool
+        try require(independentlyInert == true, "sanitized export must remain inert without CSP, including comment and SVG reparsing")
         print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
     }
 
@@ -293,12 +314,14 @@ private enum HtmlKeyboard {
         <a id="fragment" href="#table">Fragment</a>
         <template id="attacks">
           <img src="data:image/png,invalid" onerror="if(location.protocol==='file:'){document.title='image-executed';document.body.dataset.executed='image'}">
+          <x-export-attack onload="void(0)"></x-export-attack>
           <svg xmlns="http://www.w3.org/2000/svg" onload="if(location.protocol==='file:'){document.title='svg-executed';document.body.dataset.executed='svg'}">
             <a href="javascript:document.title='svg-link-executed'" xlink:href="javascript:document.title='xlink-executed'" xmlns:xlink="http://www.w3.org/1999/xlink"><text>unsafe SVG link</text>
               <set attributeName="href" to="javascript:document.title='set-executed'" begin="0s"/>
               <animate attributeName="href" values="javascript:document.title='animate-executed'" dur="1s"/>
             </a>
           </svg>
+          <svg><style>.roundtrip { content: "&lt;img src=data:image/png,invalid onerror=document.title='style-executed'&gt;"; }</style></svg>
           <math onmouseover="document.title='math-executed'"><mi>x</mi></math>
           <a href="JaVa&#x09;ScRi&#x0a;Pt:document.title='link-executed'" ping="data:text/plain,ping">unsafe mixed/control link</a>
           <a href="vbscript:msgbox(1)">VBScript</a><a href="data:text/html,active">data navigation</a>
@@ -325,6 +348,16 @@ private enum HtmlKeyboard {
         const attacks = document.getElementById('attacks');
         document.body.append(attacks.content);
         attacks.remove();
+        document.documentElement.insertBefore(document.createComment("--><script>document.title='comment-executed'<" + "/script><!--"), document.head);
+        customElements.define('x-export-attack', class extends HTMLElement {
+          static observedAttributes = ['onload'];
+          attributeChangedCallback(name, oldValue, value) {
+            if (value === null) this.getRootNode().querySelector('#picture')?.setAttribute('onerror', "document.title='reaction-executed'");
+          }
+        });
+        Object.defineProperty(HTMLHtmlElement.prototype, 'outerHTML', {
+          get() { return '<html><head><title>forged-export</title></head><body><img id="picture" src="data:image/png,invalid" onerror="document.title=\'prototype-executed\'"></body></html>'; }
+        });
         </script>
         </body></html>
         """#

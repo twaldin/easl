@@ -235,7 +235,7 @@ extension HtmlTile {
     /// `<canvas-code>` rows and diagrams are already in the DOM). The file needs no scripts or network.
     func exportDocument() async throws -> String {
         let (html, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
-            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .page) as? String
+            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .world(name: "canvas-html-export")) as? String
         }
         guard let html = html ?? nil else { throw ExportFailure(reason ?? "the page produced no document") }
         return html
@@ -255,7 +255,7 @@ extension HtmlTile {
       });
     };
     const images = [...document.querySelectorAll('img')];
-    const clone = document.documentElement.cloneNode(true);
+    const clone = document.implementation.createHTMLDocument('').importNode(document.documentElement, true);
     const copies = [...clone.querySelectorAll('img')];
     for (let i = 0; i < copies.length; i++) {
       const source = images[i] && (images[i].currentSrc || images[i].src);
@@ -313,7 +313,6 @@ extension HtmlTile {
       const decoded = decodeCSS(value);
       const starts = [...decoded.matchAll(/url\s*\(/gi)];
       const urls = [...decoded.matchAll(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/gi)];
-      // Escaped URL tokens are rejected rather than reparsed with different quoting rules.
       if (starts.length !== urls.length || (starts.length && value.includes('\\'))) return null;
       return urls.map((match) => (match[1] ?? match[2] ?? match[3]).trim());
     };
@@ -365,9 +364,8 @@ extension HtmlTile {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(element.textContent);
       await sanitizeRules(sheet, styleBases.get(element) || document.baseURI);
-      const style = document.createElement('style');
-      // A CSS string must not close its HTML raw-text element when the file is reopened.
-      style.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n').replace(/<\/style/gi, '\\3c /style');
+      const style = document.createElementNS(element.namespaceURI, 'style');
+      style.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n').replace(/</g, '\\3c ');
       element.replaceWith(style);
     };
     const sanitize = async (element) => {
@@ -403,9 +401,10 @@ extension HtmlTile {
         if (replacement === null) element.removeAttributeNode(attribute);
         else attribute.value = replacement;
       }
-      for (const child of [...element.children]) await sanitize(child);
-      if (tag === 'template' && element.namespaceURI === htmlNS) {
-        for (const child of [...element.content.children]) await sanitize(child);
+      const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
+      for (const child of [...children.childNodes]) {
+        if (child.nodeType === Node.ELEMENT_NODE) await sanitize(child);
+        else if (child.nodeType !== Node.TEXT_NODE) child.remove();
       }
       if (tag === 'form') element.replaceWith(...element.childNodes);
     };
@@ -415,6 +414,7 @@ extension HtmlTile {
       head = document.createElement('head');
       clone.prepend(head);
     }
+    clone.prepend(head);
     const policy = document.createElement('meta');
     policy.setAttribute('http-equiv', 'Content-Security-Policy');
     policy.setAttribute('content', "default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; img-src data:; style-src 'unsafe-inline'" + (usesDataFonts ? "; font-src data:" : ""));
