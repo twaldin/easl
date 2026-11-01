@@ -223,6 +223,7 @@ private enum HtmlKeyboard {
         (() => {
           const failures = [];
           const expect = (ok, name) => { if (!ok) failures.push(name); };
+          expect(document.characterSet === 'UTF-8', 'export encoding stays UTF-8');
           expect(document.title === 'export-clean' && !document.body.hasAttribute('data-executed'),
                  'event execution: title=' + document.title + ', marker=' + document.body.getAttribute('data-executed'));
           const first = document.head.firstElementChild;
@@ -316,6 +317,49 @@ private enum HtmlKeyboard {
         do { _ = try await invalidTile.exportDocument() }
         catch is ExportFailure { rejectedRoot = true }
         try require(rejectedRoot, "an active document root must fail export instead of bypassing sanitization")
+        let encodingObject = board.create(type: .html, props: .object(["html": .string(#"""
+        <title>encoding-clean</title><p>Encoding proof</p><script>
+        document.addEventListener('DOMContentLoaded', () => {
+          for (const meta of document.querySelectorAll('meta[charset]')) meta.remove();
+          const charset = document.createElement('meta');
+          charset.setAttribute('charset', 'iso-2022-jp');
+          document.head.append(charset);
+          const escape = String.fromCharCode(27);
+          document.documentElement.setAttribute('data-shift', escape + '$B');
+          const reset = document.createElement('p');
+          reset.textContent = escape + '(B" ';
+          const image = document.createElement('img');
+          image.src = 'data:image/png,invalid';
+          image.alt = escape + '$B';
+          const tail = document.createElement('span');
+          tail.textContent = escape + '(B" onerror="document.title=\'encoding-executed\'" ';
+          document.body.replaceChildren(reset, image, tail);
+        });
+        </script>
+        """#)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+        let encodingTile = HtmlTile(object: encodingObject, board: board)
+        let encodedDocument = try await encodingTile.exportDocument()
+        for policy in [true, false] {
+            let contents = policy ? encodedDocument : encodedDocument.replacingOccurrences(
+                of: #"<meta http-equiv="Content-Security-Policy"[^>]*>"#, with: "", options: .regularExpression)
+            let encodedFile = root.appendingPathComponent("encoding-\(policy).html")
+            try Data(contents.utf8).write(to: encodedFile)
+            web.loadFileURL(encodedFile, allowingReadAccessTo: root)
+            var encodingLoaded = false
+            for _ in 0..<240 {
+                encodingLoaded = await js(web, "location.pathname.endsWith('encoding-\(policy).html') && document.readyState === 'complete'") as? Bool == true
+                if encodingLoaded { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try require(encodingLoaded, "the encoding regression file must load")
+            try await pageTurn(web)
+            let encodingSafe = await js(web, """
+            document.characterSet === 'UTF-8' && document.title === 'encoding-clean' &&
+            !document.querySelector('[onerror]') &&
+            (\(policy ? "true" : "false") === (document.head.firstElementChild?.getAttribute('http-equiv') === 'Content-Security-Policy'))
+            """) as? Bool
+            try require(encodingSafe == true, "author encoding must not reconstruct active markup or hide the policy")
+        }
         print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
     }
 

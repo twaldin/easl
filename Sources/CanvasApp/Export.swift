@@ -373,7 +373,7 @@ extension HtmlTile {
     const sanitize = async (element) => {
       const tag = element.localName.toLowerCase();
       if (![htmlNS, svgNS, mathNS].includes(element.namespaceURI) || removedElements.has(tag) ||
-          (tag === 'meta' && [...element.attributes].some((attribute) => attribute.localName.toLowerCase() === 'http-equiv'))) {
+          (tag === 'meta' && [...element.attributes].some((attribute) => ['http-equiv', 'charset'].includes(attribute.localName.toLowerCase())))) {
         element.remove();
         return;
       }
@@ -420,8 +420,11 @@ extension HtmlTile {
     const policy = document.createElement('meta');
     policy.setAttribute('http-equiv', 'Content-Security-Policy');
     policy.setAttribute('content', "default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; img-src data:; style-src 'unsafe-inline'" + (usesDataFonts ? "; font-src data:" : ""));
+    const charset = document.createElement('meta');
+    charset.setAttribute('charset', 'utf-8');
+    head.prepend(charset);
     head.prepend(policy);
-    return '<!doctype html>\n' + clone.outerHTML;
+    return '\uFEFF<!doctype html>\n' + clone.outerHTML;
     """#
 }
 
