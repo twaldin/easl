@@ -329,6 +329,34 @@
   let peleReady = null;
   let diagramSerial = 0;
   const diagramWork = new WeakMap();
+
+  class CanvasMermaidViewport extends HTMLElement {
+    connectedCallback() {
+      this.resize();
+      this.resizeObserver ||= new ResizeObserver(() => {
+        if (this.resizeScheduled || parseFloat(getComputedStyle(this).width) === this.observedWidth) return;
+        this.resizeScheduled = true;
+        track(new Promise((resolve) => setTimeout(() => {
+          this.resizeScheduled = false;
+          if (this.isConnected) this.resize();
+          resolve();
+        }, 0)));
+      });
+      this.resizeObserver.observe(this);
+    }
+
+    disconnectedCallback() { this.resizeObserver.disconnect(); }
+
+    resize() {
+      const box = this.querySelector('svg')?.viewBox?.baseVal;
+      if (!box) return;
+      this.observedWidth = parseFloat(getComputedStyle(this).width);
+      this.style.removeProperty('--ck-mermaid-height');
+      this.style.setProperty('--ck-mermaid-height', `${box.height + this.offsetHeight - this.clientHeight}px`);
+    }
+  }
+  customElements.define('canvas-mermaid-viewport', CanvasMermaidViewport);
+
   function mermaidSource(node) {
     const text = document.createElement('textarea');
     text.innerHTML = node.innerHTML;
@@ -412,8 +440,10 @@
           if (!box || ![box.width, box.height].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Invalid SVG');
           svg.style.width = `${box.width}px`;
           svg.style.height = 'auto';
-          const viewport = document.createElement('div');
+          const viewport = document.createElement('canvas-mermaid-viewport');
           viewport.className = 'ck-mermaid-viewport';
+          viewport.style.setProperty('--ck-mermaid-natural-height', `${box.height}px`);
+          viewport.style.setProperty('--ck-mermaid-aspect-ratio', `${box.width} / ${box.height}`);
           viewport.tabIndex = 0;
           viewport.setAttribute('role', 'region');
           viewport.setAttribute('aria-label', 'Mermaid diagram');
@@ -425,6 +455,7 @@
             node.dataset.mermaidSize = value;
             control.textContent = value === 'natural' ? 'Fit' : '100%';
             control.setAttribute('aria-label', value === 'natural' ? 'Fit diagram to width' : 'Show diagram at 100%');
+            if (viewport.isConnected) viewport.resize();
           };
           control.addEventListener('click', () => {
             size(node.dataset.mermaidSize === 'natural' ? 'fit' : 'natural');

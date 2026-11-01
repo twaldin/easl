@@ -56,7 +56,7 @@ def main():
         environment["XDG_CONFIG_HOME"] = temporary
         environment["EASL_NO_ACTIVATE"] = "1"
         environment.pop("EASL_ROOT", None)
-        subprocess.run([str(executable)], cwd=root, env=environment, check=True, timeout=120)
+        subprocess.run([str(executable), "-AppleShowScrollBars", "Always"], cwd=root, env=environment, check=True, timeout=120)
 
 
 if __name__ == "__main__":

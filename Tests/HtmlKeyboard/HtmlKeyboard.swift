@@ -485,6 +485,7 @@ private enum HtmlKeyboard {
     }
 
     private static func exerciseMermaid(root: URL) async throws {
+        try require(NSScroller.preferredScrollerStyle == .legacy, "the Mermaid regression must run with space-consuming scroll bars")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = Board(id: "html-mermaid", root: root)
         let canvas = CanvasView(board: board, viewport: nil, remote: nil)
@@ -519,6 +520,10 @@ private enum HtmlKeyboard {
         <pre class="mermaid" id="broken">\(broken)</pre>
         <pre class="mermaid" id="multiline">flowchart LR
         A[First line<br>Second line] --> B[Done]</pre>
+        <div id="available" style="display:flex;flex-direction:column;align-items:center">
+        <div style="display:inline-block;max-width:100%"><pre class="mermaid" id="intrinsic">\(source)</pre></div>
+        </div>
+        <p id="after-intrinsic">After the diagram.</p>
         """
         let frame = Frame(x: -210, y: -250, w: 420, h: 500)
         canvas.show(Viewport(rect: Frame(x: -260, y: -300, w: 520, h: 600), zoom: 1))
@@ -570,6 +575,7 @@ private enum HtmlKeyboard {
             svg.getBoundingClientRect().width > viewport.clientWidth &&
             getComputedStyle(viewport).overflowX === 'auto' &&
             viewport.scrollHeight <= viewport.clientHeight &&
+            viewport.offsetHeight > viewport.clientHeight &&
             control.tabIndex === 0 && !!control.getAttribute('aria-label');
         })()
         """) as? Bool
@@ -579,6 +585,38 @@ private enum HtmlKeyboard {
           document.querySelector('#sidebar').getBoundingClientRect().right <= document.documentElement.clientWidth
         """) as? Bool
         try require(contained == true, "a diagram in a flex column must scroll internally without pushing its sidebar off the page")
+        let intrinsic = await js(web, """
+        (() => {
+          const svg = document.querySelector('#intrinsic svg');
+          const available = document.querySelector('#available').clientWidth;
+          const viewport = svg.parentElement;
+          return viewport.clientWidth + 1 >= Math.min(svg.viewBox.baseVal.width, available) &&
+            viewport.scrollHeight <= viewport.clientHeight &&
+            document.querySelector('#intrinsic').getBoundingClientRect().bottom + 1 >= viewport.getBoundingClientRect().bottom &&
+            document.querySelector('#after-intrinsic').getBoundingClientRect().top >= viewport.getBoundingClientRect().bottom;
+        })()
+        """) as? Bool
+        try require(intrinsic == true, "a content-sized diagram container must use available diagram width, not just its button width")
+        for width in [1200, 240] {
+            _ = await js(web, "document.querySelector('#available').style.width = '\(width)px'")
+            var resized = false
+            for _ in 0..<240 {
+                resized = await js(web, """
+                (() => {
+                  const svg = document.querySelector('#intrinsic svg');
+                  const viewport = svg.parentElement;
+                  return viewport.scrollHeight <= viewport.clientHeight &&
+                    Math.abs(viewport.clientHeight - svg.getBoundingClientRect().height) <= 1 &&
+                    (svg.viewBox.baseVal.width > viewport.clientWidth) === (viewport.offsetHeight > viewport.clientHeight);
+                })()
+                """) as? Bool == true
+                if resized { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try require(resized, "resizing a diagram must reserve only its active horizontal scrollbar without clipping the SVG")
+        }
+        _ = await js(web, "document.querySelector('#available').style.removeProperty('width')")
+        try await pageTurn(web)
         let fallback = await js(web, """
         (() => {
           const host = document.querySelector('#broken');
@@ -594,7 +632,8 @@ private enum HtmlKeyboard {
         (() => {
           const svg = document.querySelector('#declared svg');
           return svg.getBoundingClientRect().width <= svg.parentElement.clientWidth &&
-            svg.viewBox.baseVal.width > svg.parentElement.clientWidth;
+            svg.viewBox.baseVal.width > svg.parentElement.clientWidth &&
+            Math.abs(svg.parentElement.clientHeight - svg.getBoundingClientRect().height) <= 1;
         })()
         """) as? Bool
         try require(fit == true, "Fit must shrink the displayed diagram without changing its natural viewBox")
