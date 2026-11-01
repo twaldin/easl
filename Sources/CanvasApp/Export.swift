@@ -262,8 +262,8 @@ extension HtmlTile {
     for (let i = 0; i < copies.length; i++) {
       const source = images[i] && (images[i].currentSrc || images[i].src);
       copies[i].removeAttribute('srcset');
-      if (source && !source.startsWith('data:')) {
-        try { copies[i].setAttribute('src', await dataURL(source)); } catch (error) {}
+      if (source) {
+        try { copies[i].setAttribute('src', /^data:/i.test(source) ? source : await dataURL(source)); } catch (error) {}
       }
     }
     const styleBases = new WeakMap();

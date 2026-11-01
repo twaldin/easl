@@ -263,6 +263,7 @@ private enum HtmlKeyboard {
                  'inlined image decoded at 3x2');
           expect(image?.getBoundingClientRect().width === 30 && image?.getBoundingClientRect().height === 20, 'image rendered at 30x20');
           expect(document.querySelector('#octet-image')?.naturalWidth === 1, 'image bytes with generic MIME type');
+          expect(document.querySelector('#selected-image')?.naturalWidth === 1, 'selected picture data source');
           const diagram = document.querySelector('#diagram svg');
           expect(diagram && diagram.getBoundingClientRect().width > 0 && diagram.getBoundingClientRect().height > 0
                  && diagram.textContent.includes('Start') && diagram.textContent.includes('Finish'), 'settled real Mermaid SVG');
@@ -369,6 +370,7 @@ private enum HtmlKeyboard {
         <!doctype html><html><head><title>export-clean</title></head><body>
         <img id="picture" src="export.png" width="30" height="20">
         <img id="octet-image" src="data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=">
+        <picture><source srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="><img id="selected-image" src="export.png"></picture>
         <canvas-pane label="Before">Pane content</canvas-pane>
         <style media="print">#table { display:none }</style>
         <style>@media (width < 2000px) { #responsive { color:rgb(1,2,3) } }</style>
