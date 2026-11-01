@@ -231,8 +231,8 @@ struct ExportFailure: Error {
 extension HtmlTile {
     /// The page as one self-contained file, as it renders now: loaded offscreen like a render
     /// (excerpts, Mermaid, and Tailwind settled), then its DOM with images inlined as `data:` URLs,
-    /// the kit stylesheet inlined, and scripts dropped (the generated styles, `<canvas-code>` rows
-    /// and diagrams are already in the DOM). It opens anywhere: a browser, an email attachment.
+    /// the kit stylesheet and math fonts inlined, and active content removed (the generated styles,
+    /// `<canvas-code>` rows and diagrams are already in the DOM). The file needs no scripts or network.
     func exportDocument() async throws -> String {
         let (html, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
             try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .page) as? String
@@ -242,7 +242,7 @@ extension HtmlTile {
     }
 
     /// Runs as the body of an async function in the page.
-    static let exportScript = """
+    static let exportScript = #"""
     const dataURL = async (url) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`${response.status}`);
@@ -264,16 +264,163 @@ extension HtmlTile {
         try { copies[i].setAttribute('src', await dataURL(source)); } catch (error) {}
       }
     }
+    const styleBases = new WeakMap();
     for (const link of [...clone.querySelectorAll('link[rel="stylesheet"]')]) {
       try {
         const style = document.createElement('style');
         style.textContent = await (await fetch(link.href)).text();
+        styleBases.set(style, link.href);
         link.replaceWith(style);
       } catch (error) { link.remove(); }
     }
-    for (const script of [...clone.querySelectorAll('script')]) script.remove();
-    return '<!doctype html>\\n' + clone.outerHTML;
-    """
+    const htmlNS = 'http://www.w3.org/1999/xhtml';
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const mathNS = 'http://www.w3.org/1998/Math/MathML';
+    const removedElements = new Set([
+      'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal', 'base', 'link',
+      'animate', 'animatecolor', 'animatemotion', 'animatetransform', 'set', 'discard',
+      'noscript', 'noembed', 'noframes', 'xmp', 'plaintext'
+    ]);
+    const resourceAttributes = new Set([
+      'src', 'srcset', 'imagesrcset', 'imagesizes', 'action', 'formaction', 'data', 'poster',
+      'background', 'ping', 'srcdoc', 'codebase', 'code', 'archive', 'classid', 'manifest',
+      'profile', 'longdesc', 'lowsrc', 'dynsrc', 'datasrc', 'definitionurl', 'base'
+    ]);
+    const svgCSSAttributes = new Set([
+      'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor', 'marker', 'marker-start',
+      'marker-mid', 'marker-end'
+    ]);
+    const imageData = (value) => /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(value);
+    const fragment = (value) => value.startsWith('#');
+    const navigationURL = (value) => {
+      if (fragment(value)) return value;
+      try {
+        const url = new URL(value, document.baseURI);
+        return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+      } catch (error) { return null; }
+    };
+    const decodeCSS = (value) => value.replace(
+      /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/gi,
+      (_, hex, newline, character) => {
+        if (hex) {
+          const point = parseInt(hex, 16);
+          return String.fromCodePoint(point && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? point : 0xfffd);
+        }
+        return newline ? '' : character;
+      }
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const cssURLs = (value) => {
+      const decoded = decodeCSS(value);
+      const starts = [...decoded.matchAll(/url\s*\(/gi)];
+      const urls = [...decoded.matchAll(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/gi)];
+      // Escaped URL tokens are rejected rather than reparsed with different quoting rules.
+      if (starts.length !== urls.length || (starts.length && value.includes('\\'))) return null;
+      return urls.map((match) => (match[1] ?? match[2] ?? match[3]).trim());
+    };
+    const safeCSS = (value) => {
+      if (/(?:expression|(?:-webkit-)?image-set|image|src|attr|paint)\s*\(/i.test(decodeCSS(value))) return false;
+      const urls = cssURLs(value);
+      return urls !== null && urls.every((url) => fragment(url) || imageData(url));
+    };
+    let usesDataFonts = false;
+    const sanitizeDeclarations = async (style, base, fontFace = false) => {
+      for (const property of [...style]) {
+        const value = style.getPropertyValue(property);
+        if (fontFace && property === 'src') {
+          let source = null;
+          for (const url of cssURLs(value) ?? []) {
+            try {
+              source = await dataURL(new URL(url, base).href);
+              break;
+            } catch (error) {}
+          }
+          if (source) {
+            style.setProperty('src', `url(${JSON.stringify(source)})`);
+            usesDataFonts = true;
+          } else {
+            style.removeProperty(property);
+          }
+        } else if (['behavior', '-moz-binding'].includes(property.toLowerCase()) || !safeCSS(value)) {
+          style.removeProperty(property);
+        }
+      }
+    };
+    const sanitizeRules = async (container, base) => {
+      for (let i = container.cssRules.length - 1; i >= 0; i--) {
+        const rule = container.cssRules[i];
+        if (rule.type === 3 || rule.type === 10) {
+          container.deleteRule(i);
+          continue;
+        }
+        if (rule.style) await sanitizeDeclarations(rule.style, base, rule.type === 5);
+        if (rule.cssRules) {
+          await sanitizeRules(rule, base);
+        } else if (!rule.style && !/^@layer\s+[^{}]+;$/i.test(rule.cssText) &&
+                   !(rule.cssText.startsWith('@property ') && safeCSS(rule.cssText))) {
+          container.deleteRule(i);
+        }
+      }
+    };
+    const sanitizeStyle = async (element) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(element.textContent);
+      await sanitizeRules(sheet, styleBases.get(element) || document.baseURI);
+      const style = document.createElement('style');
+      // A CSS string must not close its HTML raw-text element when the file is reopened.
+      style.textContent = [...sheet.cssRules].map((rule) => rule.cssText).join('\n').replace(/<\/style/gi, '\\3c /style');
+      element.replaceWith(style);
+    };
+    const sanitize = async (element) => {
+      const tag = element.localName.toLowerCase();
+      if (![htmlNS, svgNS, mathNS].includes(element.namespaceURI) || removedElements.has(tag) ||
+          (tag === 'meta' && [...element.attributes].some((attribute) => attribute.localName.toLowerCase() === 'http-equiv'))) {
+        element.remove();
+        return;
+      }
+      if (tag === 'style') {
+        await sanitizeStyle(element);
+        return;
+      }
+      for (const attribute of [...element.attributes]) {
+        const name = attribute.localName.toLowerCase();
+        const value = attribute.value.trim();
+        let replacement = null;
+        if (name.startsWith('on') || resourceAttributes.has(name)) {
+          if (name === 'src' && tag === 'img' && element.namespaceURI === htmlNS && imageData(value)) replacement = value;
+        } else if (name === 'href') {
+          if (tag === 'a' || tag === 'area') replacement = navigationURL(value);
+          else if (fragment(value) || (['image', 'feimage'].includes(tag) && element.namespaceURI === svgNS && imageData(value))) replacement = value;
+        } else if (name === 'style') {
+          const style = document.createElement('span').style;
+          style.cssText = attribute.value;
+          await sanitizeDeclarations(style, document.baseURI);
+          replacement = style.cssText;
+        } else if (element.namespaceURI === svgNS && svgCSSAttributes.has(name)) {
+          if (safeCSS(attribute.value)) replacement = attribute.value;
+        } else {
+          continue;
+        }
+        if (replacement === null) element.removeAttributeNode(attribute);
+        else attribute.value = replacement;
+      }
+      for (const child of [...element.children]) await sanitize(child);
+      if (tag === 'template' && element.namespaceURI === htmlNS) {
+        for (const child of [...element.content.children]) await sanitize(child);
+      }
+      if (tag === 'form') element.replaceWith(...element.childNodes);
+    };
+    await sanitize(clone);
+    let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.localName === 'head');
+    if (!head) {
+      head = document.createElement('head');
+      clone.prepend(head);
+    }
+    const policy = document.createElement('meta');
+    policy.setAttribute('http-equiv', 'Content-Security-Policy');
+    policy.setAttribute('content', "default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; img-src data:; style-src 'unsafe-inline'" + (usesDataFonts ? "; font-src data:" : ""));
+    head.prepend(policy);
+    return '<!doctype html>\n' + clone.outerHTML;
+    """#
 }
 
 extension NSPasteboard {

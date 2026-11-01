@@ -322,7 +322,6 @@ private enum HtmlKeyboard {
           </style>
         </template>
         <script>
-        // Parse hostile markup inertly, then insert before the kit settles. Only file reparses set execution markers.
         const attacks = document.getElementById('attacks');
         document.body.append(attacks.content);
         attacks.remove();

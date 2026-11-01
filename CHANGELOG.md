@@ -10,6 +10,10 @@ Each version's section is its GitHub release's notes.
 - Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
 - New remote terminals keep keyboard focus when the host assigns their final ID, without taking it back from the composer, another tile, or another window. Typing before that confirmation is visibly refused rather than queued.
 
+### Security
+
+- HTML exports now block scripts and network resources with an export-only content security policy and remove active page content. Save as HTML and Open in Browser keep rendered diagrams, math, code, links, and inlined images without retaining page behaviour.
+
 ## 0.3.3
 
 easl 0.3.3 draws Mermaid diagrams in notes and brings back `canvasKit.send` for HTML tiles made by omp agents on local boards. Oversized browser tiles now scroll natively.
