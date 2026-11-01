@@ -502,6 +502,8 @@ private enum HtmlKeyboard {
         window.orderFrontRegardless()
         let source = "flowchart LR\nA[Alpha] --> B[Beta] --> C[Gamma] --> D[Delta] --> E[Epsilon]"
         let broken = "not a Mermaid diagram"
+        let titledSource = "\n\u{00a0}\n  ---\n  title: Flow\n  ---\n  " +
+            source.replacingOccurrences(of: "\n", with: "\n  ")
         let html = """
         <div style="display:flex;gap:12px">
         <div style="flex:1"><pre class="mermaid" id="declared">\(source)</pre></div>
@@ -513,7 +515,7 @@ private enum HtmlKeyboard {
         <pre id="fencecode"><code><span>```mermaid</span>
         \(source)
         <span>```</span></code></pre>
-        <pre id="language"><code class="language-mermaid"><span>\(source)</span></code></pre>
+        <pre id="language"><code class="language-mermaid"><span>\(titledSource)</span></code></pre>
         <pre class="mermaid" id="broken">\(broken)</pre>
         <pre class="mermaid" id="multiline">flowchart LR
         A[First line<br>Second line] --> B[Done]</pre>
@@ -542,7 +544,8 @@ private enum HtmlKeyboard {
         return ['declared', 'fenced', 'fencecode', 'language', 'manual'].every(id => {
           const svg = document.querySelector('#' + id + ' svg');
           const labels = [...(svg?.querySelectorAll('text') || [])].map(node => node.textContent);
-          return svg && labels.includes('Alpha') && labels.includes('Epsilon') && svg.getBoundingClientRect().height > 0;
+          return svg && labels.includes('Alpha') && labels.includes('Epsilon') &&
+            (id !== 'language' || labels.includes('Flow')) && svg.getBoundingClientRect().height > 0;
         });
         """, arguments: ["source": source], contentWorld: .page) as? Bool
         try require(rendered == true, "all documented markup forms and awaited renderMermaid() must produce visible diagrams")

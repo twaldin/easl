@@ -389,7 +389,8 @@
           const availableWidth = node.clientWidth;
           if (inlineStyle === null) node.removeAttribute('style');
           else node.setAttribute('style', inlineStyle);
-          const result = pele.render(source, {
+          const diagramSource = source.replace(/^(?:[^\S\r\n]*\r?\n)+/, '').replace(/^\uFEFF+/, '');
+          const result = pele.render(diagramSource, {
             idPrefix: `canvas-mermaid-${++diagramSerial}`,
             fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font'),
             maxWidth: availableWidth, responsive: false, autoDirection: false,

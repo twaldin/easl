@@ -204,6 +204,9 @@ private enum NoteMermaidRegression {
         let constrainedImage = try raster(constrained, width: constrainedWidth, name: "LR at narrow note width")
         try require(constrainedImage.size.width > constrainedImage.size.height,
                     "declared LR flowchart must stay horizontal when shrunk to a narrow note: \(constrainedImage.size)")
+        let titled = NoteMarkdown.parse("```mermaid\n\n\u{feff}---\ntitle: Flow\n---\nflowchart LR\nAlpha --> Beta\n```")
+        _ = try raster(await NoteMermaid.resolve(titled, width: width, appearance: .light),
+                       width: width, name: "front matter after a blank line and BOM")
         let ordinary = [
             (name: "sequence at 1400pt", source: "sequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: Request\nalt Cached\nServer-->>Client: Hit\nelse Uncached\nServer-->>Client: Result\nend"),
             (name: "TD at 1400pt", source: "flowchart TD\nsubgraph Work\nA[Start] --> B[Build]\nend\nB --> C[Ship]"),
