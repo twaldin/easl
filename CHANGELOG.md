@@ -5,12 +5,18 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Replace Mermaid.js with Pele 1.9.1 as the only Mermaid renderer for HTML tiles and note fences. Thanks to @afowic for the original note integration. Declared direction is preserved. HTML diagrams keep natural size with overflow scrolling and a labelled, keyboard-reachable Fit/100% control; scriptless exports remain visible and scrollable. Wide diagrams keep their full height when macOS shows scroll bars. Note images stay static, centred, and natural-size, shrinking only for note width and existing raster caps. Source admission, preparation and active deadlines, process termination, single infrastructure retry, cancellation, pool limits, and source fallback remain unchanged.
-- No Markdown, HTML, or board-data migration is needed. Pages that called the undocumented `window.mermaid` global must use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. Sampled `classDef` colours and stroke widths are supported. Sampled init directives are accepted, but Pele ignores `themeVariables`; the palette comes from CSS. This does not promise full Mermaid.js syntax parity.
+- No Markdown, HTML, or board-data migration is needed. Pages that called the undocumented `window.mermaid` global must use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. Sampled `classDef` colours and stroke widths are supported. This does not promise full Mermaid.js syntax parity.
 
+- Pin macOS CI and release builds to Xcode 27.0 with Swift 6.4. Fail before building if the runner no longer provides the selected Xcode build or Swift minor version.
 - Before a remote terminal receives its host ID, Escape, paste, and drawing shortcuts now show the same visible refusal as typing. Close, undo, navigation, and window commands keep their existing routing, including configured Control app shortcuts. Option-only input is refused. Refused input is never queued or replayed.
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
 - Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
 - New remote terminals keep keyboard focus when the host assigns their final ID, without taking it back from the composer, another tile, or another window. Typing before that confirmation is visibly refused rather than queued.
+
+### Known limits
+
+- Pele accepts `%%{init}%%` directives but ignores `themeVariables`; the comparison's init-directive colour is lost. The app palette comes from CSS.
+- `zenuml` renders in neither the replaced Mermaid.js 11.17.2 bundle nor Pele 1.9.1.
 
 ## 0.3.3
 

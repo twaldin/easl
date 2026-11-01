@@ -7,18 +7,14 @@ on:
 
 jobs:
   test:
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
-      # The package builds with the Command Line Tools, like local development (see Package.swift
-      # for how the test executable finds swift-testing there).
-      - name: Select Command Line Tools
-        run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
+      - name: Select Swift 6.4
+        run: scripts/select-ci-swift.sh
       - name: Build
         run: swift build -j 2
       - name: Test
@@ -75,7 +71,7 @@ jobs:
         run: python3 -m unittest discover -s scripts
 
   release-compatibility:
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
         with:
@@ -89,10 +85,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Select Swift 6.4 Command Line Tools
-        run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
-          swift --version
+      - name: Select Swift 6.4
+        run: scripts/select-ci-swift.sh
       - name: Released host and client compatibility
         run: python3 scripts/release-compatibility.py --output-dir "$RUNNER_TEMP/release-compatibility"
       - name: Preserve compatibility evidence
