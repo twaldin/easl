@@ -509,13 +509,17 @@ private enum HtmlKeyboard {
         ```</pre>
         <pre id="language"><code class="language-mermaid">\(source)</code></pre>
         <pre class="mermaid" id="broken">\(broken)</pre>
+        <pre class="mermaid" id="multiline">flowchart LR
+        A[First line<br>Second line] --> B[Done]</pre>
         """
         let frame = Frame(x: -210, y: -250, w: 420, h: 500)
         canvas.show(Viewport(rect: Frame(x: -260, y: -300, w: 520, h: 600), zoom: 1))
         let object = board.create(type: .html, props: .object(["html": .string(html)]), frame: frame)
         let tile = try htmlTile(canvas, object)
         let web = try await page(in: tile)
-        try await loaded(web)
+        var ready = false
+        tile.whenLiveReady { ready = true }
+        try await wait(until: { ready }, "the kit page must settle before rendering diagrams")
         let rendered = try await web.callAsyncJavaScript("""
         await canvasKit.renderMermaid();
         const manual = document.createElement('div');
@@ -523,6 +527,11 @@ private enum HtmlKeyboard {
         manual.className = 'mermaid';
         manual.textContent = source;
         document.body.append(manual);
+        const multiline = document.createElement('div');
+        multiline.id = 'manual-multiline';
+        multiline.className = 'mermaid';
+        multiline.innerHTML = 'flowchart LR\\nA[First line<br>Second line] --> B[Done]';
+        document.body.append(multiline);
         await Promise.all([canvasKit.renderMermaid(), canvasKit.renderMermaid()]);
         return ['declared', 'fenced', 'language', 'manual'].every(id => {
           const svg = document.querySelector('#' + id + ' svg');
@@ -530,6 +539,15 @@ private enum HtmlKeyboard {
         });
         """, arguments: ["source": source], contentWorld: .page) as? Bool
         try require(rendered == true, "all documented markup forms and awaited renderMermaid() must produce visible diagrams")
+        let multiline = await js(web, """
+        ['multiline', 'manual-multiline'].every(id => {
+          const labels = [...document.querySelectorAll('#' + id + ' svg text, #' + id + ' svg tspan')];
+          const first = labels.find(node => node.textContent === 'First line')?.getBoundingClientRect();
+          const second = labels.find(node => node.textContent === 'Second line')?.getBoundingClientRect();
+          return first && second && second.top >= first.bottom;
+        })
+        """) as? Bool
+        try require(multiline == true, "HTML line breaks in labels must survive markup and manual rendering")
         let direction = await js(web, """
         (() => {
           const svg = document.querySelector('#declared svg');

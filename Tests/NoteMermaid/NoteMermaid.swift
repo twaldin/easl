@@ -199,10 +199,17 @@ private enum NoteMermaidRegression {
         let wideImage = try raster(wide, width: 1400, name: "small at 1400pt")
         try require(wideImage.size.width < 480 && abs(wideImage.size.width - narrowImage.size.width) <= 1 && abs(wideImage.size.height - narrowImage.size.height) <= 1, "small diagram must retain its natural dimensions at wide note widths: \(narrowImage.size) versus \(wideImage.size)")
         let constrainedWidth: CGFloat = 160
-        let constrained = await NoteMermaid.resolve(document, width: constrainedWidth, appearance: .light)
+        let linear = NoteMarkdown.parse("```mermaid\nflowchart LR\nA[Alpha] --> B[Beta] --> C[Gamma] --> D[Delta] --> E[Epsilon]\n```")
+        let constrained = await NoteMermaid.resolve(linear, width: constrainedWidth, appearance: .light)
         let constrainedImage = try raster(constrained, width: constrainedWidth, name: "LR at narrow note width")
         try require(constrainedImage.size.width > constrainedImage.size.height,
                     "declared LR flowchart must stay horizontal when shrunk to a narrow note: \(constrainedImage.size)")
+        let sequence = NoteMarkdown.parse("```mermaid\nsequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: A long request message that must retain its natural layout\nServer-->>Client: Response\n```")
+        let sequenceWide = try raster(await NoteMermaid.resolve(sequence, width: 1400, appearance: .light), width: 1400, name: "natural sequence")
+        let sequenceNarrow = try raster(await NoteMermaid.resolve(sequence, width: constrainedWidth, appearance: .light), width: constrainedWidth, name: "shrunk sequence")
+        let aspectError = abs(sequenceNarrow.size.width * sequenceWide.size.height - sequenceWide.size.width * sequenceNarrow.size.height)
+        try require(aspectError <= max(sequenceWide.size.width, sequenceWide.size.height),
+                    "a narrow note must uniformly shrink its natural sequence image, not reflow labels")
         let ordinary = [
             (name: "sequence at 1400pt", source: "sequenceDiagram\nparticipant Client\nparticipant Server\nClient->>Server: Request\nalt Cached\nServer-->>Client: Hit\nelse Uncached\nServer-->>Client: Result\nend"),
             (name: "TD at 1400pt", source: "flowchart TD\nsubgraph Work\nA[Start] --> B[Build]\nend\nB --> C[Ship]"),
@@ -249,6 +256,13 @@ private enum NoteMermaidRegression {
         guard case .fallback? = rejected[1] else { throw Failure(message: "malformed diagram must fall back") }
         let fallback = NoteRenderer(excerpts: [:], width: width, diagrams: rejected).render(malformed, placeholder: "")
         try require(fallback.string.contains("A[unfinished") && attachments(fallback).isEmpty, "malformed source was lost")
+        let overEdges = "flowchart TD\n" + (0...500).map { "N\($0) --> N\($0 + 1)" }.joined(separator: "\n")
+        let budgetDocument = NoteMarkdown.parse("```mermaid\n\(overEdges)\n```")
+        let budgetResult = await NoteMermaid.resolve(budgetDocument, width: width, appearance: .light)
+        guard case .fallback? = budgetResult[1] else { throw Failure(message: "a 501-edge diagram must retain source at the renderer's 500-edge budget") }
+        let budgetFallback = NoteRenderer(excerpts: [:], width: width, diagrams: budgetResult).render(budgetDocument, placeholder: "")
+        try require(budgetFallback.string.contains("N500 --> N501") && attachments(budgetFallback).isEmpty,
+                    "an engine-budget failure must keep the complete source, not a partial diagram")
         print("PASS native note Mermaid: light/dark 2x rasters, natural-size small diagrams, wide sequence/TD/gantt40, physical pixel/byte caps, source fallback, live tile, 1x/2x exports and intrinsic dimensions")
     }
 }

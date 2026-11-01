@@ -329,12 +329,17 @@
   let peleReady = null;
   let diagramSerial = 0;
   const diagramWork = new WeakMap();
+  function mermaidSource(node) {
+    const text = document.createElement('textarea');
+    text.innerHTML = (node.querySelector(':scope > code.language-mermaid') || node).innerHTML;
+    return text.value;
+  }
   function mermaidBlocks() {
     for (const code of document.querySelectorAll('pre > code.language-mermaid')) {
       code.parentElement.classList.add('mermaid');
     }
     for (const pre of document.querySelectorAll('pre')) {
-      let source = pre.textContent;
+      let source = mermaidSource(pre);
       if (!pre.classList.contains('mermaid')) {
         if (!source.trim().startsWith('```mermaid')) continue;
         source = source.trim().replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
@@ -354,7 +359,7 @@
     const jobs = nodes.map((node) => {
       if (diagramWork.has(node)) return diagramWork.get(node);
       if (node.dataset.mermaidState) return Promise.resolve();
-      const source = node.textContent;
+      const source = mermaidSource(node);
       node.dataset.mermaidState = 'loading';
       peleReady ||= new Promise((resolve, reject) => {
         const script = document.createElement('script');

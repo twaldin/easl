@@ -78,7 +78,7 @@ Use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > cod
 Pele accepts the sampled `%%{init}%%` directives but ignores their `themeVariables`. Use the app's CSS palette rather than directive theme overrides. Sampled `classDef` colours and stroke widths work. Family coverage is not a promise of full syntax parity. Quote radar labels.
 
 - Give diagrams the full width. HTML diagrams start at their natural viewBox size with overflow scrolling, not automatic downscaling. Fit can shrink labels in a narrow column; 100% restores natural size and lets the reader scroll. Keep diagrams in their own full-width section, with details underneath.
-- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram ("Syntax error in text").
+- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram and shows its source with a diagnostic.
   Use a comma, or `#59;` for a literal semicolon (`A->>B: read#59; retry`).
 - **Building HTML in omp's `eval`:** a Python cell line that starts with `%%` (e.g. a Mermaid `%%{init: …}%%` directive) is taken as a cell magic.
   Keep the directive inside a string that doesn't start a line of the cell, or leave it out.
