@@ -386,6 +386,7 @@ extension HtmlTile {
       const text = foreign ? serialized.replace(/&(?=#(?:\d|x[0-9a-f])|[a-z])/gi, '\\26 ') : serialized;
       element.textContent = text.replace(/<(?=[a-z/!?])/gi, '\\3c ');
     };
+    const childNodes = Object.getOwnPropertyDescriptor(Node.prototype, 'childNodes').get;
     const sanitize = async (element, foreign = false) => {
       const tag = element.localName.toLowerCase();
       foreign = foreign || tag === 'svg' || tag === 'math' || element.namespaceURI !== htmlNS;
@@ -425,11 +426,11 @@ extension HtmlTile {
         return;
       }
       const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
-      for (const child of [...children.childNodes]) {
-        if (child.nodeType === Node.ELEMENT_NODE) await sanitize(child, foreign);
+      for (const child of [...childNodes.call(children)]) {
+        if (child instanceof Element) await sanitize(child, foreign);
         else if (child.nodeType !== Node.TEXT_NODE) child.remove();
       }
-      if (tag === 'form') element.replaceWith(...element.childNodes);
+      if (tag === 'form') element.replaceWith(...childNodes.call(element));
     };
     await sanitize(clone);
     let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.tagName.toLowerCase() === 'head');

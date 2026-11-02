@@ -414,6 +414,9 @@ private enum HtmlKeyboard {
           <form action="javascript:document.title='form-executed'"><span id="form-text">form text survives</span>
             <button formaction="data:text/html,submit">Submit</button>
           </form>
+          <form><object name="childNodes"></object><object name="childNodes"></object>
+            <img src="data:image/png,invalid" onerror="if(location.protocol==='file:')document.title='clobber-executed'">
+          </form>
           <object data="data:text/html,object"></object><embed src="data:text/html,embed">
           <applet code="none"></applet><portal src="data:text/html,portal"></portal>
           <meta http-equiv="refresh" content="3600;url=data:text/html,refresh">
