@@ -1374,7 +1374,7 @@ public final class Board {
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message {
             lifecycle["message"] = .string(message)
-        } else if reportedFailure == nil, retained != nil, state == .idle || state == .unknown, let previousMessage = previous?["message"] {
+        } else if reportedFailure == nil, retained != nil, previous?["state"]?.string == "idle", state == .idle || state == .unknown, let previousMessage = previous?["message"] {
             lifecycle["message"] = previousMessage
         } else if let failure, state == .idle || state == .unknown {
             lifecycle["message"] = .string(failure)

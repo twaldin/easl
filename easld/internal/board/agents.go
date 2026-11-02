@@ -216,7 +216,7 @@ func (b *Board) ReportLifecycle(r Report) error {
 	lifecycle := map[string]any{"state": effective, "seen": b.seenSinceWorking[r.Tile]}
 	if message != nil {
 		lifecycle["message"] = *message
-	} else if (effective == "done" && wasDone || failed != "" && (state == "idle" || state == "unknown")) && was["message"] != nil {
+	} else if (effective == "done" && wasDone || failed != "" && was["state"] == "idle" && (state == "idle" || state == "unknown")) && was["message"] != nil {
 		lifecycle["message"] = was["message"]
 	} else if failed != "" && (state == "idle" || state == "unknown") {
 		lifecycle["message"] = failed
