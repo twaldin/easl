@@ -274,6 +274,45 @@ private enum TerminalSubmission {
         try require(notices.count == 1, "a key refused by an exited attachment needs a visible notice")
     }
 
+    static func earlyTypingCannotDeliverOnlyTheTail() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        try await until { f.surface != nil }
+        f.view.controller = nil
+        try require(f.view.surface == nil, "the first keys must arrive before attachment")
+        var notices: [String] = []
+        f.view.onImageProblem = { notices.append($0) }
+        func type(_ text: String) {
+            for character in text {
+                let text = String(character)
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: f.window.windowNumber, context: nil,
+                                            characters: text, charactersIgnoringModifiers: text,
+                                            isARepeat: false, keyCode: character == "\r" ? 36 : 0)!
+                f.view.keyDown(with: event)
+            }
+        }
+        type("echo ")
+        try require(!notices.isEmpty, "refusing the prefix must show a notice")
+        f.view.controller = f.controller
+        try await until { f.surface != nil }
+        type("burst\r")
+        let accepted = await f.submit("explicit-control")
+        try require(accepted, "the new attachment must accept an explicit submission")
+        try await until { f.text().contains("explicit-control\n") }
+        print("EARLY_TYPING_RECEIPT \(String(reflecting: f.text()))")
+        try require(f.text() == "explicit-control\n", "the shell must receive none of a refused typing run, never its tail")
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20),
+                                      modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: f.window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        f.view.mouseDown(with: click)
+        type("after-click\r")
+        try await until { f.text().contains("after-click\n") }
+        try require(f.text() == "explicit-control\nafter-click\n", "a click must allow a new complete typing run exactly once")
+    }
+
     static func main() {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -293,6 +332,7 @@ private enum TerminalSubmission {
             ("queued key is refused without reaching replacement", queuedKeyCannotDisappearOrReachReplacement),
             ("exited terminal still copies selection", exitedTerminalStillCopiesSelection),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
+            ("early typing never delivers only the tail", earlyTypingCannotDeliverOnlyTheTail),
             ("exited attachment keeps composer draft", exitedAttachmentKeepsComposerDraft),
         ]
         var failures = 0
