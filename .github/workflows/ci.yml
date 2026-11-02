@@ -42,7 +42,15 @@ jobs:
       - name: Native browser initial admission regression
         run: python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML tile keyboard regression
-        run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+        id: html-keyboard
+        run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)" --artifacts "${{ runner.temp }}/html-export-artifacts"
+      - name: Preserve HTML export evidence
+        if: always() && steps.html-keyboard.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-export-diagnostics
+          path: ${{ runner.temp }}/html-export-artifacts
+          if-no-files-found: error
       - name: Native terminal rekey focus regression
         run: python3 Tests/TerminalRekey/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML page send trust regression

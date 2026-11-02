@@ -231,18 +231,31 @@ struct ExportFailure: Error {
 extension HtmlTile {
     /// The page as one self-contained file, as it renders now: loaded offscreen like a render
     /// (excerpts, Mermaid, and Tailwind settled), then its DOM with images inlined as `data:` URLs,
-    /// the kit stylesheet inlined, and scripts dropped (the generated styles, `<canvas-code>` rows
-    /// and diagrams are already in the DOM). It opens anywhere: a browser, an email attachment.
-    func exportDocument() async throws -> String {
-        let (html, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
-            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .page) as? String
+    /// the kit stylesheet and math fonts inlined, and active content removed (the generated styles,
+    /// `<canvas-code>` rows and diagrams are already in the DOM). The file needs no scripts or network.
+    func exportDocument(diagnosticsDirectory: URL? = nil) async throws -> String {
+        let (result, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
+            try await web.callAsyncJavaScript(Self.exportScript, arguments: ["collectDiagnostics": diagnosticsDirectory != nil],
+                                             in: nil, contentWorld: .world(name: "canvas-html-export")) as? [String: Any]
         }
-        guard let html = html ?? nil else { throw ExportFailure(reason ?? "the page produced no document") }
+        guard let report = result ?? nil, let html = report["html"] as? String else {
+            throw ExportFailure(reason ?? "the page produced no document")
+        }
+        if let diagnosticsDirectory {
+            guard let stylesheets = report["stylesheets"] as? [[String: Any]] else {
+                throw ExportFailure("the page produced no stylesheet diagnostics")
+            }
+            try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
+            try Data(html.utf8).write(to: diagnosticsDirectory.appendingPathComponent("export.html"), options: .atomic)
+            try JSONSerialization.data(withJSONObject: stylesheets, options: [.prettyPrinted, .sortedKeys])
+                .write(to: diagnosticsDirectory.appendingPathComponent("stylesheets.json"), options: .atomic)
+        }
         return html
     }
 
     /// Runs as the body of an async function in the page.
-    static let exportScript = """
+    static let exportScript = #"""
+    const stylesheets = collectDiagnostics ? [] : null;
     const dataURL = async (url) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`${response.status}`);
@@ -254,27 +267,216 @@ extension HtmlTile {
         reader.readAsDataURL(blob);
       });
     };
+    if (document.documentElement?.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+        document.documentElement.tagName.toLowerCase() !== 'html') throw new Error('The page has no HTML document root.');
     const images = [...document.querySelectorAll('img')];
-    const clone = document.documentElement.cloneNode(true);
+    const clone = document.implementation.createHTMLDocument('').importNode(document.documentElement, true);
+    for (const control of clone.querySelectorAll('.ck-mermaid-size')) control.remove();
     const copies = [...clone.querySelectorAll('img')];
     for (let i = 0; i < copies.length; i++) {
       const source = images[i] && (images[i].currentSrc || images[i].src);
       copies[i].removeAttribute('srcset');
-      if (source && !source.startsWith('data:')) {
-        try { copies[i].setAttribute('src', await dataURL(source)); } catch (error) {}
+      if (source) {
+        try { copies[i].setAttribute('src', /^data:/i.test(source) ? source : await dataURL(source)); } catch (error) {}
       }
     }
+    const styleBases = new WeakMap();
     for (const link of [...clone.querySelectorAll('link[rel="stylesheet"]')]) {
       try {
+        const href = new URL(link.getAttribute('href'), document.baseURI).href;
         const style = document.createElement('style');
-        style.textContent = await (await fetch(link.href)).text();
+        style.media = link.media;
+        style.textContent = await (await fetch(href)).text();
+        styleBases.set(style, href);
         link.replaceWith(style);
       } catch (error) { link.remove(); }
     }
-    for (const script of [...clone.querySelectorAll('script')]) script.remove();
-    for (const control of clone.querySelectorAll('.ck-mermaid-size')) control.remove();
-    return '<!doctype html>\\n' + clone.outerHTML;
-    """
+    const htmlNS = 'http://www.w3.org/1999/xhtml';
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const mathNS = 'http://www.w3.org/1998/Math/MathML';
+    const removedElements = new Set([
+      'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal', 'base', 'link',
+      'animate', 'animatecolor', 'animatemotion', 'animatetransform', 'set', 'discard',
+      'noscript', 'noembed', 'noframes', 'xmp', 'plaintext'
+    ]);
+    const resourceAttributes = new Set([
+      'src', 'srcset', 'imagesrcset', 'imagesizes', 'action', 'formaction', 'data', 'poster',
+      'background', 'ping', 'srcdoc', 'codebase', 'code', 'archive', 'classid', 'manifest',
+      'profile', 'longdesc', 'lowsrc', 'dynsrc', 'datasrc', 'definitionurl', 'base', 'attributionsrc'
+    ]);
+    const svgCSSAttributes = new Set([
+      'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor', 'marker', 'marker-start',
+      'marker-mid', 'marker-end'
+    ]);
+    const imageData = (value) => /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(value);
+    const fragment = (value) => value.startsWith('#');
+    const navigationURL = (value) => {
+      if (fragment(value)) return value;
+      try {
+        const url = new URL(value, document.baseURI);
+        return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+      } catch (error) { return null; }
+    };
+    const decodeCSS = (value) => value.replace(
+      /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/gi,
+      (_, hex, newline, character) => {
+        if (hex) {
+          const point = parseInt(hex, 16);
+          return String.fromCodePoint(point && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? point : 0xfffd);
+        }
+        return newline ? '' : character;
+      }
+    );
+    const cssURLs = (value) => {
+      const decoded = decodeCSS(value);
+      const starts = [...decoded.matchAll(/url[ \t\n\r\f]*\(/gi)];
+      const urls = [...decoded.matchAll(/url[ \t\n\r\f]*\([ \t\n\r\f]*(?:"([^"]*)"|'([^']*)'|([^'")]*))[ \t\n\r\f]*\)/gi)];
+      if (starts.length !== urls.length || (starts.length && value.includes('\\'))) return null;
+      return urls.map((match) => (match[1] ?? match[2] ?? match[3]).replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, ''));
+    };
+    const safeCSS = (value) => {
+      if (/(?:expression|(?:-webkit-)?image-set|image|src|paint)\s*\(/i.test(decodeCSS(value))) return false;
+      const urls = cssURLs(value);
+      return urls !== null && urls.every((url) => fragment(url) || imageData(url));
+    };
+    let usesDataFonts = false;
+    const sanitizeDeclarations = async (style, base, fontFace = false) => {
+      // Shorthands can serialize longhands the same browser cannot parse.
+      if (!fontFace) style.cssText = style.cssText;
+      for (const property of [...style]) {
+        const value = style.getPropertyValue(property);
+        if (fontFace && property === 'src') {
+          let source = null;
+          for (const url of cssURLs(value) ?? []) {
+            try {
+              source = await dataURL(new URL(url, base).href);
+              break;
+            } catch (error) {}
+          }
+          if (source) {
+            style.setProperty('src', `url(${JSON.stringify(source)})`);
+            usesDataFonts = true;
+          } else {
+            style.removeProperty(property);
+          }
+        } else if (['behavior', '-moz-binding'].includes(property.toLowerCase()) || !safeCSS(value)) {
+          style.removeProperty(property);
+        }
+      }
+      if (!fontFace && !safeCSS(style.cssText)) {
+        for (const property of [...style]) {
+          if (style.getPropertyValue(property) === '') style.removeProperty(property);
+        }
+      }
+    };
+    const sanitizeRules = async (container, base) => {
+      for (let i = container.cssRules.length - 1; i >= 0; i--) {
+        const rule = container.cssRules[i];
+        if (rule.type === 10) continue;
+        if (rule.type === 3) {
+          container.deleteRule(i);
+          continue;
+        }
+        if (rule.style) await sanitizeDeclarations(rule.style, base, rule.type === 5);
+        if (rule.cssRules) {
+          await sanitizeRules(rule, base);
+        } else if (!rule.style && !/^@layer\s+[^{}]+;$/i.test(rule.cssText) &&
+                   !(rule.cssText.startsWith('@property ') && safeCSS(rule.cssText))) {
+          container.deleteRule(i);
+        }
+      }
+    };
+    const sanitizeStyle = async (element, foreign) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(element.textContent);
+      const base = styleBases.get(element) || document.baseURI;
+      await sanitizeRules(sheet, base);
+      const before = [...sheet.cssRules].map((rule) => rule.cssText);
+      const serialized = before.join('\n');
+      const reparsed = new CSSStyleSheet();
+      reparsed.replaceSync(serialized);
+      await sanitizeRules(reparsed, base);
+      const after = [...reparsed.cssRules].map((rule) => rule.cssText);
+      const stable = after.join('\n') === serialized;
+      if (stylesheets) {
+        let firstDifference = null;
+        if (!stable) {
+          let index = before.findIndex((text, i) => text !== after[i]);
+          if (index < 0) index = before.length;
+          firstDifference = { index, type: sheet.cssRules[index]?.type ?? null,
+                              before: before[index] ?? null, after: after[index] ?? null };
+        }
+        stylesheets.push({ index: stylesheets.length, base, foreign, kept: stable,
+                           rulesBefore: before.length, rulesAfter: after.length, firstDifference });
+      }
+      if (!stable) {
+        element.remove();
+        return;
+      }
+      const text = foreign ? serialized.replace(/&(?=#(?:\d|x[0-9a-f])|[a-z])/gi, '\\26 ') : serialized;
+      element.textContent = text.replace(/<(?=[a-z/!?])/gi, '\\3c ');
+    };
+    const childNodes = Object.getOwnPropertyDescriptor(Node.prototype, 'childNodes').get;
+    const sanitize = async (element, foreign = false) => {
+      const tag = element.localName.toLowerCase();
+      foreign = foreign || tag === 'svg' || tag === 'math' || element.namespaceURI !== htmlNS;
+      if (![htmlNS, svgNS, mathNS].includes(element.namespaceURI) || removedElements.has(tag) ||
+          (tag === 'meta' && [...element.attributes].some((attribute) => ['http-equiv', 'charset'].includes(attribute.localName.toLowerCase())))) {
+        element.remove();
+        return;
+      }
+      for (const attribute of [...element.attributes]) {
+        const name = attribute.name.toLowerCase().split(':').pop();
+        const value = attribute.value.trim();
+        let replacement = null;
+        if (name.startsWith('on') || resourceAttributes.has(name)) {
+          if (name === 'src' && tag === 'img' && element.namespaceURI === htmlNS && /^data:/i.test(value)) replacement = value;
+        } else if (name === 'href') {
+          if (tag === 'a' || tag === 'area') replacement = navigationURL(value);
+          else if (fragment(value) || (['image', 'feimage'].includes(tag) && element.namespaceURI === svgNS && imageData(value))) replacement = value;
+        } else if (name === 'style') {
+          const style = document.createElement('span').style;
+          style.cssText = attribute.value;
+          await sanitizeDeclarations(style, document.baseURI);
+          replacement = style.cssText;
+        } else if (svgCSSAttributes.has(name)) {
+          if (safeCSS(attribute.value)) replacement = attribute.value;
+        } else {
+          continue;
+        }
+        if (replacement === null) element.removeAttributeNode(attribute);
+        else attribute.value = replacement;
+      }
+      if (tag === 'style') {
+        await sanitizeStyle(element, foreign);
+        return;
+      }
+      if (tag === 'textarea' || tag === 'title') {
+        element.textContent = tag === 'textarea' && element.namespaceURI === htmlNS ? element.value : element.textContent;
+        return;
+      }
+      const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
+      for (const child of [...childNodes.call(children)]) {
+        if (child instanceof Element) await sanitize(child, foreign);
+        else if (child.nodeType !== Node.TEXT_NODE) child.remove();
+      }
+      if (tag === 'form') element.replaceWith(...childNodes.call(element));
+    };
+    await sanitize(clone);
+    let head = [...clone.children].find((element) => element.namespaceURI === htmlNS && element.tagName.toLowerCase() === 'head');
+    if (!head) {
+      head = document.createElement('head');
+    }
+    clone.prepend(head);
+    const policy = document.createElement('meta');
+    policy.setAttribute('http-equiv', 'Content-Security-Policy');
+    policy.setAttribute('content', "default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; img-src data:; style-src 'unsafe-inline'" + (usesDataFonts ? "; font-src data:" : ""));
+    const charset = document.createElement('meta');
+    charset.setAttribute('charset', 'utf-8');
+    head.prepend(charset);
+    head.prepend(policy);
+    return { html: '\uFEFF<!doctype html>\n' + clone.outerHTML, stylesheets };
+    """#
 }
 
 extension NSPasteboard {

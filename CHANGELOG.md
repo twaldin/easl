@@ -17,6 +17,9 @@ Each version's section is its GitHub release's notes.
 
 - Pele accepts `%%{init}%%` directives but ignores `themeVariables`; the comparison's init-directive colour is lost. The app palette comes from CSS.
 - `zenuml` renders in neither the replaced Mermaid.js 11.17.2 bundle nor Pele 1.9.1.
+### Security
+
+- HTML exports now block scripts and network resources with an export-only content security policy and remove active page content, including attribution-reporting URLs. Save as HTML and Open in Browser keep rendered diagrams, math, code, links, and inlined images without retaining page behaviour.
 
 ## 0.3.3
 
