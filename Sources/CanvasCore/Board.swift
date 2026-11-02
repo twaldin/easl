@@ -1429,7 +1429,7 @@ public final class Board {
         if let previous = lifecycle["error"]?.string, let error = boundedTurnError(previous) {
             lifecycle["error"] = .string(error)
             if lifecycle["message"]?.string == previous { lifecycle["message"] = .string(error) }
-            if lifecycle["errorCount"] == nil { lifecycle["errorCount"] = 1 }
+            if lifecycle["errorCount"] == nil { lifecycle["errorCount"] = .number(1) }
             if lifecycle["errorSince"] == nil {
                 lifecycle["errorSince"] = .string(terminal.updatedAt.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
             }
