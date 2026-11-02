@@ -369,7 +369,11 @@ private enum TerminalSubmission {
         f.view.configuration = options
         if !queued { f.view.controller = f.controller }
         try await until(failure: "waiting for Kitty mode READY marker; \(observation())") {
-            f.surface?.viewportRow(0, columns: 80)?.contains("READY") == true
+            guard let surface = f.surface, let handle = surface.handle else { return false }
+            let size = ghostty_surface_size(handle)
+            return (0..<Int(size.rows)).contains {
+                surface.viewportRow($0, columns: Int(size.columns))?.trimmingCharacters(in: .whitespacesAndNewlines) == "READY"
+            }
         }
         if queued { f.view.keyDown(with: key(.keyDown, "e", 14)) }
         f.view.keyUp(with: key(.keyUp, "e", 14))

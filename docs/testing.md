@@ -406,6 +406,8 @@ The native key-window cases also refuse an enabled Zoom In command bound to Opti
 
 Two Kitty keyboard protocol cases use a real raw-mode PTY consumer. A refused press's release must not arrive after attachment readiness or after a queued stale-attachment refusal. After a click, an accepted press and its release must arrive in order.
 
+The Kitty consumer emits a startup banner before its `READY` line. The fixture finds that exact line anywhere in the visible viewport because macOS login may print its own banner first. Timeout messages name the awaited observation and include attachment/process state, terminal text, and received bytes. The five-second deadline and exact press/release assertions stay unchanged.
+
 ### Move tool input isolation
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.
