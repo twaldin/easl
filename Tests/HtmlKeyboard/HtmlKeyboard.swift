@@ -823,6 +823,7 @@ private enum HtmlKeyboard {
             source.replacingOccurrences(of: "\n", with: "\n  ")
         let html = """
         <style>svg { max-width: 100% }</style>
+        <p class="ck-mermaid-size" id="authored-content">Authored content must survive export.</p>
         <div style="display:flex;gap:12px">
         <div style="flex:1"><pre class="mermaid" id="declared">\(source)</pre></div>
         <aside id="sidebar" style="width:80px;flex-shrink:0">Sidebar</aside>
@@ -980,13 +981,14 @@ private enum HtmlKeyboard {
           const svg = document.querySelector('#declared svg');
           const viewport = svg.parentElement;
           return document.scripts.length === 0 && !document.querySelector('.mermaid button') &&
+            document.querySelector('#authored-content')?.textContent === 'Authored content must survive export.' &&
             svg.getBoundingClientRect().height > 0 &&
             svg.getBoundingClientRect().width > viewport.clientWidth &&
             viewport.scrollHeight <= viewport.clientHeight &&
             getComputedStyle(viewport).overflowX === 'auto';
         })()
         """) as? Bool
-        try require(standalone == true, "script-free HTML export must retain visible scrollable diagrams without inert controls")
+        try require(standalone == true, "script-free HTML export must retain authored content and visible scrollable diagrams without inert controls")
         check("Mermaid markup, LR direction, source diagnostics, Fit/100%, and script-free export")
     }
 

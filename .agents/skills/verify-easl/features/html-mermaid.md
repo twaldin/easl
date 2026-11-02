@@ -28,7 +28,8 @@ Check every diagram detector in the pinned baseline, not only its published synt
 Generate one page per case so every result has a named tile and can be inspected separately. This command writes API request bodies, not passing evidence. Set `CASES` to each copied JSON array and `OUT` to a fresh directory:
 
 ```sh
-CASES="$G/corpus.json" OUT="$G/corpus-requests" bun -e '
+export CASES="$G/corpus.json" OUT="$G/corpus-requests"
+bun -e '
 const fs = require("node:fs");
 const path = require("node:path");
 const cases = JSON.parse(fs.readFileSync(process.env.CASES, "utf8"));
@@ -39,9 +40,12 @@ for (const [index, item] of cases.entries()) {
 	const request = { type: "html", props: { title: item.id, html }, frame: { x: index * 460, y: 0, w: 420, h: 600 } };
 	fs.writeFileSync(path.join(process.env.OUT, `${item.id}.json`), JSON.stringify(request));
 }'
+for request in "$OUT"/*.json; do
+  scripts/dev.sh cli object.create --json "$(cat "$request")"
+done
 ```
 
-Create each request with `scripts/dev.sh cli object.create --json "$(cat REQUEST.json)"`. Retain the returned IDs and the exact input files. Repeat generation for `family-cases.json` using a separate directory.
+Retain the returned IDs and exact input files. Repeat generation for `family-cases.json` using a separate directory.
 
 ## Drive the coverage journey
 
