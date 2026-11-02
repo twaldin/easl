@@ -288,7 +288,7 @@ extension HtmlTile {
     const resourceAttributes = new Set([
       'src', 'srcset', 'imagesrcset', 'imagesizes', 'action', 'formaction', 'data', 'poster',
       'background', 'ping', 'srcdoc', 'codebase', 'code', 'archive', 'classid', 'manifest',
-      'profile', 'longdesc', 'lowsrc', 'dynsrc', 'datasrc', 'definitionurl', 'base'
+      'profile', 'longdesc', 'lowsrc', 'dynsrc', 'datasrc', 'definitionurl', 'base', 'attributionsrc'
     ]);
     const svgCSSAttributes = new Set([
       'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor', 'marker', 'marker-start',

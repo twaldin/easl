@@ -219,20 +219,22 @@ private enum HtmlKeyboard {
         }
         try require(reopened, "the exported file must finish loading in an ordinary WKWebView")
         try await pageTurn(web)
-        guard let failures = await js(web, #"""
-        (() => {
+        let inspectExport = #"""
+        (withPolicy) => {
           const failures = [];
           const expect = (ok, name) => { if (!ok) failures.push(name); };
           expect(document.characterSet === 'UTF-8', 'export encoding stays UTF-8');
           expect(document.title === 'export-clean' && !document.body.hasAttribute('data-executed'),
                  'event execution: title=' + document.title + ', marker=' + document.body.getAttribute('data-executed'));
           const first = document.head.firstElementChild;
-          expect(first?.localName === 'meta' && first.httpEquiv.toLowerCase() === 'content-security-policy', 'CSP first head element');
+          expect(withPolicy
+                 ? first?.localName === 'meta' && first.httpEquiv.toLowerCase() === 'content-security-policy'
+                 : !document.querySelector('meta[http-equiv]'), 'CSP expected presence and position');
           const policy = first?.content || '';
           for (const directive of ["default-src 'none'", "script-src 'none'", "object-src 'none'",
                                    "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
                                    "img-src data:", "style-src 'unsafe-inline'", "font-src data:"]) {
-            expect(policy.split(';').some(part => part.trim() === directive), 'CSP ' + directive);
+            if (withPolicy) expect(policy.split(';').some(part => part.trim() === directive), 'CSP ' + directive);
           }
           expect(document.scripts.length === 0, 'no scripts');
           expect(!document.querySelector('iframe,frame,object,embed,applet,portal,base,form'), 'no active elements or forms');
@@ -245,10 +247,12 @@ private enum HtmlKeyboard {
               const name = attribute.name.toLowerCase();
               expect(!name.startsWith('on'), 'event attribute ' + element.localName + '.' + name);
               expect(name !== 'srcdoc', 'srcdoc attribute');
+              expect(name !== 'attributionsrc', 'no attribution registration requests');
               if (!urlAttrs.has(name)) continue;
               const value = attribute.value.replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
               const image = name === 'src' && element.localName === 'img' && value.startsWith('data:');
               expect(image || !/^(javascript|vbscript|data):/.test(value), 'unsafe URL ' + element.localName + '.' + name);
+              expect(name !== 'src' || image, 'no external image or media source');
             }
           }
           const decodeCSS = text => text.replace(/\\([0-9a-f]{1,6})\s?|\\([^\r\n])/gi,
@@ -260,6 +264,7 @@ private enum HtmlKeyboard {
           expect(!css.includes('beacon.invalid'), 'no resource URLs hidden by variable shorthand expansion');
           expect(!css.includes('probe.png'), 'no Unicode whitespace reinterpreted as a relative resource URL');
           expect(getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none', 'no CSS activated by foreign-style entity decoding');
+          expect(getComputedStyle(document.body).backgroundImage === 'none', 'no rule activated by stylesheet reparsing');
           expect(document.querySelector('#rcdata')?.value === '', 'textarea retains displayed text rather than serialized child markup');
           const image = document.querySelector('#picture');
           expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
@@ -285,8 +290,11 @@ private enum HtmlKeyboard {
           }
           expect(document.getElementById('form-text')?.textContent === 'form text survives', 'unwrapped form content');
           return failures;
-        })()
-        """#) as? [String] else { throw Failure(message: "could not inspect reopened export") }
+        }
+        """#
+        guard let failures = await js(web, "(\(inspectExport))(true)") as? [String] else {
+            throw Failure(message: "could not inspect reopened export")
+        }
         check("export reopened in ordinary WKWebView: \(failures.isEmpty ? "no violations" : failures.joined(separator: "; "))")
         try require(failures.isEmpty, "export must be self-contained and inert: \(failures.joined(separator: "; "))")
         let withoutPolicy = document.replacingOccurrences(of: #"<meta http-equiv="Content-Security-Policy"[^>]*>"#,
@@ -302,16 +310,10 @@ private enum HtmlKeyboard {
         }
         try require(fallbackLoaded, "the exported file without policy must finish loading")
         try await pageTurn(web)
-        let independentlyInert = await js(web, """
-        document.title === 'export-clean' && !document.body.hasAttribute('data-executed') &&
-        document.scripts.length === 0 && !document.querySelector('meta[http-equiv], [onerror], [onload]') &&
-        !!document.querySelector('#diagram svg') && !!document.querySelector('#formula .katex-html') &&
-        getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none' &&
-        getComputedStyle(document.body).backgroundImage === 'none' &&
-        document.querySelector('#picture').naturalWidth === 3 &&
-        document.querySelector('canvas-code .ck-text').textContent === 'let exportAnswer = 42'
-        """) as? Bool
-        try require(independentlyInert == true, "sanitized export must remain inert without CSP, including comment and SVG reparsing")
+        guard let fallbackFailures = await js(web, "(\(inspectExport))(false)") as? [String] else {
+            throw Failure(message: "could not inspect reopened export without CSP")
+        }
+        try require(fallbackFailures.isEmpty, "sanitized export must remain inert without CSP: \(fallbackFailures.joined(separator: "; "))")
         for tag in ["iframe", "x:html"] {
             let invalidRoot = board.create(type: .html, props: .object(["html": .string("""
             <p>Replaced document root</p><script>
@@ -377,7 +379,7 @@ private enum HtmlKeyboard {
     private static func exportHTML() -> String {
         #"""
         <!doctype html><html><head><title>export-clean</title></head><body>
-        <img id="picture" src="export.png" width="30" height="20">
+        <img id="picture" src="export.png" width="30" height="20" attributionsrc="https://beacon.invalid/register">
         <img id="octet-image" src="data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=">
         <picture><source srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="><img id="selected-image" src="export.png"></picture>
         <canvas-pane label="Before">Pane content</canvas-pane>
@@ -397,6 +399,7 @@ private enum HtmlKeyboard {
         <a id="fragment" href="#table">Fragment</a>
         <template id="attacks">
           <img src="data:image/png,invalid" onerror="if(location.protocol==='file:'){document.title='image-executed';document.body.dataset.executed='image'}">
+          <img src="https://beacon.invalid/external-image.png">
           <x-export-attack onload="void(0)"></x-export-attack>
           <svg xmlns="http://www.w3.org/2000/svg" onload="if(location.protocol==='file:'){document.title='svg-executed';document.body.dataset.executed='svg'}">
             <a href="javascript:document.title='svg-link-executed'" xlink:href="javascript:document.title='xlink-executed'" xmlns:xlink="http://www.w3.org/1999/xlink"><text>unsafe SVG link</text>

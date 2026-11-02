@@ -12,7 +12,7 @@ Each version's section is its GitHub release's notes.
 
 ### Security
 
-- HTML exports now block scripts and network resources with an export-only content security policy and remove active page content. Save as HTML and Open in Browser keep rendered diagrams, math, code, links, and inlined images without retaining page behaviour.
+- HTML exports now block scripts and network resources with an export-only content security policy and remove active page content, including attribution-reporting URLs. Save as HTML and Open in Browser keep rendered diagrams, math, code, links, and inlined images without retaining page behaviour.
 
 ## 0.3.3
 
