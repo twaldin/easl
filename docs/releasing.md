@@ -23,6 +23,10 @@ CI prints Swift 6.4 and retains the selected commits, build logs, and journey ou
 
 To check the original 0.3.1 regression, run `python3 scripts/release-compatibility.py --client-ref 1e857a2`. This archives that candidate and adds only the new integration suite. Its old-host image preview must fail. Use `--output-dir <new-directory>` to retain a named evidence directory. The default retains evidence under `.build/release-compat-*`.
 
+## Note Mermaid guest timing gate
+
+At every release check, require [five exact-head note Mermaid churn runs in the queued GUI guest](../.agents/skills/verify-easl/features/note-mermaid.md#run-the-native-regressions). Default mode enforces 50 ms gaps, hostile active time below 2.25 s, and recovery excess at most 750 ms. CI keeps the functional assertions but only reports these upper bounds. The churn runner does not check WebContent PID termination or retained web views.
+
 ## One-time setup
 
 Once, by the Account Holder, after enrolling in the Apple Developer Program:

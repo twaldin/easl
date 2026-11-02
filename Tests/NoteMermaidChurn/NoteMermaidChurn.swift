@@ -790,15 +790,17 @@ private enum NoteMermaidChurn {
                                                    width: 1400, appearance: .light)
             let active = ProcessInfo.processInfo.systemUptime - backend.readyUptime
             let timedOut: Bool
+            var fallbackReason = ""
             switch stopped[1] {
             case .image?: timedOut = false
-            case .fallback?:
+            case .fallback(let reason)?:
                 try require(active >= 1.9, "recovery workload fell back without exercising the warm deadline")
                 timedOut = true
+                fallbackReason = reason
             case nil: throw Failure(description: "recovery workload produced no outcome")
             }
             emit(["event": "hostile-active-time", "trial": trial, "activeMs": active * 1000,
-                  "limitMs": 2250, "withinLimit": active < 2.25, "timedOut": timedOut,
+                  "limitMs": 2250, "withinLimit": active < 2.25, "timedOut": timedOut, "fallback": fallbackReason,
                   "assertsTiming": !profile && !ciTimingReportOnly])
             try require(profile || ciTimingReportOnly || active < 2.25, "warm renderer exceeded its two-second deadline")
             let next = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRecovered\(trial) --> Ready\n```"),
@@ -809,7 +811,8 @@ private enum NoteMermaidChurn {
             emit(["event": "timeout-recovery", "trial": trial, "restartPreparationMs": cold,
                   "recoveryPreparationMs": preparation, "excessMs": preparation - cold,
                   "maximumExcessMs": 750, "withinLimit": preparation <= cold + 750,
-                  "timedOut": timedOut, "activeMs": active * 1000, "assertsTiming": !profile && !ciTimingReportOnly])
+                  "timedOut": timedOut, "fallback": fallbackReason,
+                  "activeMs": active * 1000, "assertsTiming": !profile && !ciTimingReportOnly])
             try require(profile || ciTimingReportOnly || preparation <= cold + 750,
                         "a timed-out diagram delayed the next ordinary diagram beyond cold preparation")
         }

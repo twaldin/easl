@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--recovery-only", action="store_true",
                         help="Run only the natural-timeout/ordinary-diagram recovery regression.")
     parser.add_argument("--profile", action="store_true",
-                        help="Keep image assertions, disable only the 50ms limit, and pause 3s after each churn-ready event for sampling.")
+                        help="Keep functional assertions, disable upper timing limits, and pause 3s after each churn-ready event for sampling.")
     parser.add_argument("--ci-timing-report-only", action="store_true",
                         help="CI only: report upper timing limits without enforcing them. Keep all functional assertions and add no sampling pauses.")
     args = parser.parse_args()
