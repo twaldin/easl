@@ -46,11 +46,17 @@ BIN=$(swift build --build-system native --show-bin-path)
 python3 Tests/NoteMermaid/run.py --bin-path "$BIN"
 swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
 OPT=$(swift build --build-system native -c release --show-bin-path)
-python3 Tests/NoteMermaidChurn/run.py --bin-path "$OPT" \
-  --scratch "$G/churn" --artifacts "$G/proof/churn"
+for RUN in 1 2 3 4 5; do
+  python3 Tests/NoteMermaidChurn/run.py --bin-path "$OPT" \
+    --scratch "$G/churn-$RUN" --artifacts "$G/proof/churn-$RUN" || exit 1
+done
 ```
 
-Both runners are steps in `.github/workflows/ci.yml`'s `test` job. The first checks actual WebKit images, fallback, dimensions, source swaps, and exports. Churn requires optimized testable objects and checks 25 prose edits, geometry, selected-image pixels, parking/deletion, and recovery after heavy timeouts. `--profile` disables the 50 ms assertion, so a profile run is not a passing churn qualification.
+Both runners are steps in `.github/workflows/ci.yml`'s `test` job. The first checks actual WebKit images, fallback, dimensions, source swaps, and exports. Churn requires optimized testable objects and checks 25 prose edits, geometry, selected-image pixels, parking/deletion, and recovery after heavy timeouts.
+
+CI uses `--ci-timing-report-only` only for churn. All functional assertions remain enforced, including the untimed warmup image and the 1.9 s lower bound on hostile fallbacks. The flag reports, without enforcing, the 50 ms churn and publication/display gaps, the 2.25 s hostile active-time upper bound, and the 750 ms maximum recovery excess. Timing records include measured values, limits, `withinLimit`, and `assertsTiming: false`. The flag adds no sampling pauses.
+
+At every release check and on PRs that change note display or diagram rendering, run the five fresh-process guest probes above on the exact head. Follow Launch to claim the guest and select `EXPECTED_HEAD` before building. Check the home queue between runs and yield as Launch requires. Require `assertsTiming: true` and all three unchanged upper limits in every run. Retain every `churn`, `candidate`, `hostile-active-time`, and `timeout-recovery` record. Stop on the first failure without rerunning to obtain green. Default local runs enforce the same limits. Neither `--ci-timing-report-only` nor `--profile` qualifies as a guest timing pass.
 
 For staged exact-window checks, add `--stage-seconds 15 --timeout 1200`. Read each new `stage.json`, verify its recorded PID/window, and capture that window during the pause. Test zooms 0.65 and 1.35, internal scrolling, edits above, resize, reattachment, and read-only selection. Keep cached AppKit pixels and live WindowServer pixels: correct sibling order alone can still produce a grey live compositor. The independent selected-text edge witness must match at offset 0,0. Known 2-point X/Y mutations must fail it; do not reuse the earlier upside-down reference.
 

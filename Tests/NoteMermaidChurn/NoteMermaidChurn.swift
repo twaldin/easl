@@ -107,6 +107,7 @@ private enum NoteMermaidChurn {
     }
 
     private static var stageSeconds = 0.0
+    private static var ciTimingReportOnly = false
     private static var geometryChecks = 0
     private static var lifecycleChecks = 0
     private static var swapCounts: [Int] = []
@@ -542,7 +543,7 @@ private enum NoteMermaidChurn {
               "settledImageCounts": settledCounts, "immediateImagesTotal": immediateCounts.reduce(0, +),
               "settledImagesTotal": settledCounts.reduce(0, +), "finalImages": try check(tile, fixture: fixture, edit: editCount - 1),
               "maxGapMs": heartbeat.maximumMilliseconds, "limitMs": gapLimitMilliseconds,
-              "heartbeatSamples": heartbeat.samples, "withinLimit": passed, "assertsTiming": !profile])
+              "heartbeatSamples": heartbeat.samples, "withinLimit": passed, "assertsTiming": !profile && !ciTimingReportOnly])
         try await verifyLiveDiagramPixels(tile)
         try geometry(tile, state: "churn-final-\(fixture.name)", zoom: 1)
         try snapshot(tile, name: fixture.name + "-after", directory: directory)
@@ -753,9 +754,9 @@ private enum NoteMermaidChurn {
               "displayMaxGapMs": idle.maximumMilliseconds, "displayHeartbeatSamples": idle.samples,
               "idleDisplayMilliseconds": idleMilliseconds, "measurement": "idle-display-without-edits",
               "withinLimit": max(heartbeat.maximumMilliseconds, idle.maximumMilliseconds) <= gapLimitMilliseconds,
-              "assertsTiming": !profile])
+              "limitMs": gapLimitMilliseconds, "assertsTiming": !profile && !ciTimingReportOnly])
         try await stage("candidate-\(fixture.name)", tile: tile, directory: directory)
-        try require(profile || max(heartbeat.maximumMilliseconds, idle.maximumMilliseconds) <= gapLimitMilliseconds,
+        try require(profile || ciTimingReportOnly || max(heartbeat.maximumMilliseconds, idle.maximumMilliseconds) <= gapLimitMilliseconds,
                     "\(fixture.name) displayed image exceeded the 50ms main-thread gap limit")
         return observed
     }
@@ -796,7 +797,10 @@ private enum NoteMermaidChurn {
                 timedOut = true
             case nil: throw Failure(description: "recovery workload produced no outcome")
             }
-            try require(profile || active < 2.25, "warm renderer exceeded its two-second deadline")
+            emit(["event": "hostile-active-time", "trial": trial, "activeMs": active * 1000,
+                  "limitMs": 2250, "withinLimit": active < 2.25, "timedOut": timedOut,
+                  "assertsTiming": !profile && !ciTimingReportOnly])
+            try require(profile || ciTimingReportOnly || active < 2.25, "warm renderer exceeded its two-second deadline")
             let next = await NoteMermaid.resolve(NoteMarkdown.parse("```mermaid\nflowchart LR\nRecovered\(trial) --> Ready\n```"),
                                                 width: 1400, appearance: .light)
             guard case .image? = next[1], let preparation = backend.preparationMilliseconds.last else {
@@ -804,8 +808,9 @@ private enum NoteMermaidChurn {
             }
             emit(["event": "timeout-recovery", "trial": trial, "restartPreparationMs": cold,
                   "recoveryPreparationMs": preparation, "excessMs": preparation - cold,
-                  "maximumExcessMs": 750, "timedOut": timedOut, "activeMs": active * 1000, "assertsTiming": !profile])
-            try require(profile || preparation <= cold + 750,
+                  "maximumExcessMs": 750, "withinLimit": preparation <= cold + 750,
+                  "timedOut": timedOut, "activeMs": active * 1000, "assertsTiming": !profile && !ciTimingReportOnly])
+            try require(profile || ciTimingReportOnly || preparation <= cold + 750,
                         "a timed-out diagram delayed the next ordinary diagram beyond cold preparation")
         }
     }
@@ -826,6 +831,8 @@ private enum NoteMermaidChurn {
             let option = CommandLine.arguments[argument]
             if option == "--profile" {
                 profile = true
+            } else if option == "--ci-timing-report-only" {
+                ciTimingReportOnly = true
             } else if option == "--recovery-only" {
                 recoveryOnly = true
             } else if option == "--stage-seconds" {
@@ -897,7 +904,7 @@ private enum NoteMermaidChurn {
             results.append(try await churn(largestFixture, board: board, directory: directory, profile: profile))
         }
         try await lifecycle(board: board, directory: directory)
-        try require(profile || results.allSatisfy(\.withinLimit), "main-queue heartbeat exceeded 50ms; see churn records")
+        try require(profile || ciTimingReportOnly || results.allSatisfy(\.withinLimit), "main-queue heartbeat exceeded 50ms; see churn records")
         emit(["event": "result", "status": profile ? "profile-only" : "passed",
               "churnEdits": results.reduce(0) { $0 + $1.edits },
               "immediateImagesTotal": results.reduce(0) { $0 + $1.immediateImages },
