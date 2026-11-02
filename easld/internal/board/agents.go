@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/model"
@@ -16,6 +18,8 @@ import (
 
 // NotifyingVia is props.lifecycle.via of a lifecycle that comes from terminal notifications.
 const NotifyingVia = "notifications"
+
+var turnEndedAtPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$`)
 
 func lifecycleOf(o model.Object) map[string]any {
 	lc, _ := o.Props["lifecycle"].(map[string]any)
@@ -60,6 +64,8 @@ type Report struct {
 	Final             *string
 	Serial            bool
 	Error             *string
+	TurnOutcome       string
+	TurnEndedAt       *string
 	// Protocol is the integration's protocol version (props.agent.protocol; 1 takes out-of-band
 	// messages, TakesMessages); nil or 0 says none.
 	Protocol *int
@@ -69,12 +75,8 @@ type Report struct {
 	Pid   *int
 }
 
-// ReportLifecycle applies an agent's lifecycle report (Board.reportLifecycle): the staleness rule
-// by seq per tile and source, pending approvals by call, final answers and turn errors. A turn
-// that ended on an error stays shown (lifecycle `error`) through reports that start no turn and
-// through agent.restart (RestartedAgent), until a turn starts (working). A report of another
-// agent kind, or of no protocol where it took messages, ends the agent session its messages
-// were queued for (endAgentSession).
+// ReportLifecycle applies lifecycle reports in sequence, including approvals, final answers,
+// and failed dispatched requests. Outcome-aware failures persist until an explicit success.
 func (b *Board) ReportLifecycle(r Report) error {
 	terminal, err := b.Object(r.Tile)
 	if err != nil {
@@ -86,8 +88,32 @@ func (b *Board) ReportLifecycle(r Report) error {
 	if r.Final != nil && r.State != "idle" {
 		return InvalidParams("final comes only with state idle: the answer of the turn that just ended")
 	}
-	if r.Error != nil && r.State != "idle" {
-		return InvalidParams("error comes only with state idle: what the turn that just ended stopped on")
+	switch r.TurnOutcome {
+	case "":
+		if r.Error != nil && r.State != "idle" {
+			return InvalidParams("error comes only with state idle unless turnOutcome is error")
+		}
+	case "error":
+		if r.Error == nil || strings.TrimSpace(*r.Error) == "" {
+			return InvalidParams("turnOutcome error requires a nonblank error")
+		}
+	case "success", "aborted":
+		if r.Error != nil {
+			return InvalidParams("error is forbidden with turnOutcome %s", r.TurnOutcome)
+		}
+	default:
+		return InvalidParams("unknown turnOutcome")
+	}
+	endedAt := ""
+	if r.TurnEndedAt != nil {
+		if r.TurnOutcome == "" {
+			return InvalidParams("turnEndedAt requires turnOutcome")
+		}
+		stamp, err := time.Parse(time.RFC3339Nano, *r.TurnEndedAt)
+		if err != nil || !turnEndedAtPattern.MatchString(*r.TurnEndedAt) {
+			return InvalidParams("turnEndedAt must be a UTC RFC3339 timestamp")
+		}
+		endedAt = stamp.UTC().Format(time.RFC3339Nano)
 	}
 	source := r.Source
 	if source == "" {
@@ -103,6 +129,8 @@ func (b *Board) ReportLifecycle(r Report) error {
 		}
 		b.lifecycleSeq[key] = *r.Seq
 	}
+	before, _ := terminal.Props["agent"].(map[string]any)
+	outcomes := r.TurnOutcome != "" || r.Protocol != nil && *r.Protocol >= 4
 	state, message := r.State, r.Message
 	switch {
 	case state == "blocked" && r.Call != nil:
@@ -125,52 +153,78 @@ func (b *Board) ReportLifecycle(r Report) error {
 		if previous != "working" && previous != "blocked" {
 			b.agentStartedTurn(r.Tile)
 			delete(b.finalAnswers, r.Tile)
-			delete(b.turnErrors, r.Tile)
+			if !outcomes {
+				delete(b.turnErrors, r.Tile)
+			}
 		}
 	}
 	if state == "idle" && r.Final != nil && strings.TrimSpace(*r.Final) != "" {
 		b.finalAnswers[r.Tile] = *r.Final
 	}
-	failed := ""
-	if r.Error != nil {
-		failed = strings.TrimSpace(*r.Error)
+	was := lifecycleOf(terminal)
+	failed, _ := was["error"].(string)
+	count, _ := TruncInt(was["errorCount"])
+	since, _ := was["errorSince"].(string)
+	if failed != "" && count < 1 {
+		count = 1
 	}
-	if state == "idle" && failed != "" {
-		b.turnErrors[r.Tile] = failed
-		if message == nil {
+	if failed != "" && since == "" {
+		since = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if !outcomes && state != "idle" && state != "unknown" || r.TurnOutcome == "success" {
+		failed, count, since = "", 0, ""
+	}
+	reportedError := ""
+	if r.Error != nil {
+		reportedError = boundedTurnError(*r.Error)
+	}
+	if r.TurnOutcome == "error" || !outcomes && state == "idle" && reportedError != "" {
+		if r.TurnOutcome == "" {
+			count, since = 0, ""
+		}
+		failed = reportedError
+		count++
+		if since == "" {
+			since = endedAt
+			if since == "" {
+				since = time.Now().UTC().Format(time.RFC3339Nano)
+			}
+		}
+		if message == nil && (state == "idle" || state == "unknown") {
 			message = &failed
 		}
 	}
-	// A turn that died on an error isn't done: the user reads why in its message. A done the user
-	// hasn't seen stays through a report that starts no turn: an idle, or the unknown of an agent
-	// without an integration as it starts (bin/aider, relaunched by agent.restart). So does a turn
-	// that died on an error (the lifecycle's error): the agent agent.restart relaunched has none to
-	// report, and its plain idle mustn't make the tile look healthy.
-	unread := failed == "" && !b.seenSinceWorking[r.Tile]
-	wasDone := LifecycleState(terminal) == "done"
-	was := lifecycleOf(terminal)
-	stillFailed := ""
-	if failed == "" && (state == "idle" || state == "unknown") {
-		stillFailed, _ = was["error"].(string)
+	switch r.TurnOutcome {
+	case "success":
+		delete(b.turnErrors, r.Tile)
+	case "aborted":
+		b.turnErrors[r.Tile] = "interrupted"
+	default:
+		if reportedError != "" {
+			b.turnErrors[r.Tile] = reportedError
+		}
 	}
+	wasDone := LifecycleState(terminal) == "done"
 	effective := state
-	if stillFailed != "" {
-		effective = "idle"
-	} else if unread && (state == "idle" && wasWorking(terminal) || state == "unknown" && wasDone) {
+	if failed != "" {
+		if state == "idle" || state == "unknown" {
+			effective = "idle"
+		}
+	} else if b.turnErrors[r.Tile] == "" && !b.seenSinceWorking[r.Tile] && (state == "idle" && wasWorking(terminal) || state == "unknown" && wasDone) {
 		effective = "done"
 	}
 	lifecycle := map[string]any{"state": effective, "seen": b.seenSinceWorking[r.Tile]}
 	if message != nil {
 		lifecycle["message"] = *message
-	} else if (effective == "done" && wasDone || stillFailed != "") && was["message"] != nil {
-		// A report that starts no turn (a relaunched agent reporting in) leaves the answer
-		// waiting, or the error the last turn ended on, as it was, its message too.
+	} else if (effective == "done" && wasDone || failed != "" && was["state"] == "idle" && (state == "idle" || state == "unknown")) && was["message"] != nil {
 		lifecycle["message"] = was["message"]
+	} else if failed != "" && (state == "idle" || state == "unknown") {
+		lifecycle["message"] = failed
 	}
-	if state == "idle" && failed != "" {
+	if failed != "" {
 		lifecycle["error"] = failed
-	} else if stillFailed != "" {
-		lifecycle["error"] = stillFailed
+		lifecycle["errorCount"] = float64(count)
+		lifecycle["errorSince"] = since
 	}
 	if state == "unknown" {
 		lifecycle["via"] = NotifyingVia
@@ -179,7 +233,6 @@ func (b *Board) ReportLifecycle(r Report) error {
 	if r.Protocol != nil && *r.Protocol > 0 {
 		version = float64(*r.Protocol)
 	}
-	before, _ := terminal.Props["agent"].(map[string]any)
 	patch := r.agentPatch()
 	patch["protocol"] = version
 	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), patch).(map[string]any)
@@ -235,6 +288,21 @@ func wasWorking(terminal model.Object) bool {
 	return s == "working" || s == "done"
 }
 
+func boundedTurnError(failure string) string {
+	failure = strings.TrimSpace(failure)
+	for n, offset := 0, 0; offset < len(failure); n++ {
+		_, size := utf8.DecodeRuneInString(failure[offset:])
+		if n == 499 {
+			if offset+size < len(failure) {
+				return failure[:offset] + "…"
+			}
+			break
+		}
+		offset += size
+	}
+	return failure
+}
+
 // ReportParams is agent.report given as its params (also a spooled report).
 func (b *Board) ReportParams(p map[string]any) error {
 	tile, ok1 := p["tile"].(string)
@@ -258,6 +326,25 @@ func (b *Board) ReportParams(p map[string]any) error {
 	r.Final = optString(p["final"])
 	r.Serial, _ = p["serial"].(bool)
 	r.Error = optString(p["error"])
+	if outcome, present := p["turnOutcome"]; present {
+		s, ok := outcome.(string)
+		if !ok || s == "" {
+			return InvalidParams("turnOutcome must be success, error, or aborted")
+		}
+		r.TurnOutcome = s
+		if value, present := p["error"]; present {
+			if _, ok := value.(string); !ok {
+				return InvalidParams("error must be a string")
+			}
+		}
+	}
+	if value, present := p["turnEndedAt"]; present {
+		stamp, ok := value.(string)
+		if !ok {
+			return InvalidParams("turnEndedAt must be a UTC RFC3339 timestamp")
+		}
+		r.TurnEndedAt = &stamp
+	}
 	if n, ok := TruncInt(p["protocol"]); ok {
 		r.Protocol = &n
 	}
@@ -416,8 +503,7 @@ func unseenDone(lifecycle any) bool {
 	return l["state"] == "done" && l["seen"] != true
 }
 
-// failedTurn: a terminal lifecycle that is a turn that ended on an error (agent.report error),
-// with no turn started since: idle with that error (Board.isFailedTurn).
+// failedTurn reports whether the lifecycle has an uncleared failure run.
 func failedTurn(lifecycle any) bool {
 	l, _ := lifecycle.(map[string]any)
 	_, failed := l["error"].(string)

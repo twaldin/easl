@@ -1513,6 +1513,8 @@
               "cwd": "<root>",
               "lifecycle": {
                 "error": "overloaded_error",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "overloaded_error",
                 "seen": false,
                 "state": "idle"
@@ -1534,6 +1536,8 @@
           "data": {
             "lifecycle": {
               "error": "overloaded_error",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "overloaded_error",
               "seen": false,
               "state": "idle"
@@ -1695,6 +1699,8 @@
               "cwd": "<root>",
               "lifecycle": {
                 "error": "aborted",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"
@@ -1716,6 +1722,8 @@
           "data": {
             "lifecycle": {
               "error": "aborted",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "aborted",
               "seen": false,
               "state": "idle"
@@ -1754,6 +1762,8 @@
             "kind": "codex",
             "lifecycle": {
               "error": "aborted",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "aborted",
               "seen": false,
               "state": "idle"
@@ -1809,6 +1819,8 @@
               "kind": "codex",
               "lifecycle": {
                 "error": "aborted",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"
@@ -2031,6 +2043,8 @@
               "kind": "codex",
               "lifecycle": {
                 "error": "aborted",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "aborted",
                 "seen": false,
                 "state": "idle"

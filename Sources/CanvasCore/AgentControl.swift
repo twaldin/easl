@@ -196,10 +196,7 @@ extension ApiRouter {
     /// what it was (`restored`, as opening the board marks it), and nothing is focused there.
     static func closedAgentEntry(_ terminal: CanvasObject, board: BoardID, root: String) -> JSONValue {
         let agent = terminal.props["agent"]
-        var lifecycle = terminal.props["lifecycle"]?.object ?? ["state": .string(LifecycleState.unknown.rawValue)]
-        if let state = lifecycle["state"]?.string, state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-            lifecycle["restored"] = .bool(true)
-        }
+        let lifecycle = Board.restoredLifecycle(terminal) ?? .object(["state": .string(LifecycleState.unknown.rawValue)])
         let name = terminal.props["name"]?.string.flatMap { $0.isEmpty ? nil : $0 }
         var entry = reportedFields(agent)
         entry["tile"] = .string(terminal.id)
@@ -207,7 +204,7 @@ extension ApiRouter {
         entry["root"] = .string(root)
         entry["address"] = .string(name.map { "\($0)@\(URL(fileURLWithPath: root).lastPathComponent)" } ?? terminal.id)
         entry["kind"] = agent?["kind"] ?? .string(LifecycleState.unknown.rawValue)
-        entry["lifecycle"] = .object(lifecycle)
+        entry["lifecycle"] = lifecycle
         entry["open"] = .bool(false)
         entry["focused"] = .bool(false)
         if let name { entry["name"] = .string(name) }

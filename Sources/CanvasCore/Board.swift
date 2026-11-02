@@ -150,9 +150,9 @@ public final class Board {
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
     /// it; saved with the board.
     public internal(set) var finalAnswers: [ObjectID: String] = [:]
-    /// The error each terminal's last turn ended on (an API error, an abort, the output limit),
-    /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
-    /// A new turn clears it; saved with the board.
+    /// An unsettled assistant response (an API error, an abort, the output limit): a reported
+    /// final answer may be cut off. Explicit success clears it for outcome-aware integrations;
+    /// a new turn clears it for legacy integrations. Saved with the board.
     public internal(set) var turnErrors: [ObjectID: String] = [:]
     /// Names terminals had before a rename, each still addressing its terminal (AgentAddress)
     /// until another terminal on this board takes it; saved with the board.
@@ -373,11 +373,8 @@ public final class Board {
             }
             // A terminal saved `working` or `blocked` said so before easl last closed: until its
             // agent reports again (live, or a spooled report replayed), that is only what it was.
-            if object.type == .terminal, var props = object.props.object, var lifecycle = props["lifecycle"]?.object,
-               let state = lifecycle["state"]?.string, state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-                lifecycle["restored"] = .bool(true)
-                props["lifecycle"] = .object(lifecycle)
-                object.props = .object(props)
+            if let lifecycle = Self.restoredLifecycle(object) {
+                object.props = object.props.merging(.object(["lifecycle": lifecycle]))
             }
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
@@ -1282,25 +1279,51 @@ public final class Board {
     /// request is the one on screen and every earlier wait is over (an approval answered whose
     /// completion never matched or hasn't arrived): the message is always the current request's.
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
-    /// until the next turn starts. `error`: with `idle`, the turn ended on this error (omp: an
-    /// API error such as `overloaded_error`, an abort): the tile goes `idle`, never `done`, with
-    /// the error as its message and as the lifecycle's `error`, and the answer is known to be cut
-    /// off (`turnErrors`). That lifecycle stays through reports that start no turn (an `idle`
-    /// without an error, an `unknown`) and through agent.restart (`restartedAgent`), until a turn
-    /// starts (`working`); the user seeing the tile leaves it. `unknown`: an agent without a
-    /// lifecycle integration runs here (`bin/aider` says so as aider starts); its terminal
-    /// notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
+    /// until the next turn starts. `turnOutcome` reports a dispatched assistant response, separate
+    /// from whether background work keeps the agent working. Errors accumulate until success;
+    /// aborted responses neither count nor clear them. `turnEndedAt` records when that response
+    /// ended, so spooled failures keep their original time. Protocol 4 or an explicit outcome makes
+    /// the current report outcome-aware. Legacy idle errors last until the next working report.
+    /// `unknown` agents use terminal notifications
+    /// (`NotifyingAgent`, `via: "notifications"`).
     /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
     /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0. A report
     /// of another agent kind, or of no protocol where it took messages, ends the agent session its
     /// messages were queued for (`endAgentSession`).
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
-                                serial: Bool = false, error: String? = nil, protocol version: Int? = nil,
+                                serial: Bool = false, error: String? = nil, turnOutcome: TurnOutcome? = nil, turnEndedAt: String? = nil, protocol version: Int? = nil,
                                 draft: Bool? = nil, pid: Int? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
-        guard error == nil || state == .idle else { throw BoardError.invalidParams("error comes only with state idle: what the turn that just ended stopped on") }
+        let failed = error.flatMap(Self.boundedTurnError)
+        guard turnOutcome != .error || failed != nil else { throw BoardError.invalidParams("turnOutcome error needs a nonblank error") }
+        guard turnOutcome == nil || turnOutcome == .error || error == nil else { throw BoardError.invalidParams("error comes only with turnOutcome error") }
+        guard error == nil || turnOutcome == .error || state == .idle else { throw BoardError.invalidParams("error comes only with state idle unless turnOutcome is error") }
+        var endedAt = turnEndedAt
+        if let stamp = turnEndedAt {
+            guard turnOutcome != nil,
+                  stamp.wholeMatch(of: /[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z/) != nil,
+                  ObjectExpiry.parse(stamp) != nil else {
+                throw BoardError.invalidParams("turnEndedAt needs a turnOutcome and a UTC RFC3339 timestamp ending in Z")
+            }
+            if let point = stamp.firstIndex(of: ".") {
+                let start = stamp.index(after: point)
+                var end = stamp.index(before: stamp.endIndex)
+                while end > start, stamp[stamp.index(before: end)] == "0" {
+                    end = stamp.index(before: end)
+                }
+                var normalized = String(stamp[..<point])
+                if start != end {
+                    normalized.append(".")
+                    normalized.append(contentsOf: stamp[start..<end])
+                }
+                normalized.append("Z")
+                endedAt = normalized
+            }
+        }
+        let before = terminal.props["agent"]
+        let outcomeAware = (version ?? 0) >= 4 || turnOutcome != nil
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
             if let last = lifecycleSeq[key], seq <= last {
@@ -1334,35 +1357,41 @@ public final class Board {
             if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue {
                 agentStartedTurn(tile)
                 finalAnswers[tile] = nil
-                turnErrors[tile] = nil
+                if !outcomeAware { turnErrors[tile] = nil }
             }
         }
         if state == .idle, let final, !final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finalAnswers[tile] = final }
-        let failed = error.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
-        if state == .idle, let failed {
-            turnErrors[tile] = failed
-            if message == nil { message = failed }
-        }
-        // A turn that died on an error isn't done: the user reads why in its message. A `done` the
-        // user hasn't seen stays through a report that starts no turn: an `idle`, or the `unknown`
-        // of an agent without an integration as it starts (`bin/aider`, relaunched by agent.restart).
-        // So does a turn that died on an error (the lifecycle's `error`): the agent agent.restart
-        // relaunched has none to report, and its plain `idle` mustn't make the tile look healthy.
-        let unread = failed == nil && !seenSinceWorking.contains(tile)
-        let wasDone = terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue
-        let stillFailed = failed == nil && (state == .idle || state == .unknown) ? terminal.props["lifecycle"]?["error"]?.string : nil
-        let effective: LifecycleState = stillFailed != nil ? .idle : unread && (state == .idle && wasWorking(terminal) || state == .unknown && wasDone) ? .done : state
+        if let failed { turnErrors[tile] = failed }
+        if turnOutcome == .aborted { turnErrors[tile] = "interrupted" }
+        if turnOutcome == .success { turnErrors[tile] = nil }
+        let previous = terminal.props["lifecycle"]
+        let reportedFailure = turnOutcome == .error || !outcomeAware ? failed : nil
+        let retained = turnOutcome != .success && (outcomeAware || reportedFailure == nil && (state == .idle || state == .unknown)) ? previous?["error"]?.string : nil
+        let failure = reportedFailure ?? retained
+        let unread = failure == nil && turnErrors[tile] == nil && !seenSinceWorking.contains(tile)
+        let wasDone = previous?["state"]?.string == LifecycleState.done.rawValue
+        let effective: LifecycleState = failure != nil && (state == .idle || state == .unknown) ? .idle : unread && (state == .idle && wasWorking(terminal) || state == .unknown && wasDone) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message {
             lifecycle["message"] = .string(message)
-        } else if effective == .done && wasDone || stillFailed != nil {
-            // A report that starts no turn (a relaunched agent reporting in) leaves the answer
-            // waiting, or the error the last turn ended on, as it was, its message too.
-            lifecycle["message"] = terminal.props["lifecycle"]?["message"]
+        } else if reportedFailure == nil, retained != nil, previous?["state"]?.string == "idle", state == .idle || state == .unknown, let previousMessage = previous?["message"] {
+            lifecycle["message"] = previousMessage
+        } else if let failure, state == .idle || state == .unknown {
+            lifecycle["message"] = .string(failure)
+        } else if effective == .done && wasDone {
+            lifecycle["message"] = previous?["message"]
         }
-        if let failure = (state == .idle ? failed : nil) ?? stillFailed { lifecycle["error"] = .string(failure) }
+        if let failure {
+            lifecycle["error"] = .string(failure)
+            let oldCount = max(1, previous?["errorCount"]?.int ?? 1)
+            let incremented = oldCount == Int.max ? oldCount : oldCount + 1
+            lifecycle["errorCount"] = .number(Double(turnOutcome == .error && previous?["error"]?.string != nil ? incremented : retained != nil ? oldCount : 1))
+            lifecycle["errorSince"] = retained != nil ? previous?["errorSince"] : nil
+            if lifecycle["errorSince"] == nil {
+                lifecycle["errorSince"] = .string((turnOutcome == .error ? endedAt : nil) ?? Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            }
+        }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
-        let before = terminal.props["agent"]
         let reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
         let agent = (before ?? .object([:])).merging(.object(reported.merging(Self.reportedAgentState(draft: draft, pid: pid)) { _, new in new }))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
@@ -1383,6 +1412,28 @@ public final class Board {
     private func wasWorking(_ terminal: CanvasObject) -> Bool {
         let state = terminal.props["lifecycle"]?["state"]?.string
         return state == LifecycleState.working.rawValue || state == LifecycleState.done.rawValue
+    }
+
+    private static func boundedTurnError(_ error: String) -> String? {
+        let text = error.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return text.unicodeScalars.count > 500 ? String(text.unicodeScalars.prefix(499)) + "…" : text
+    }
+
+    static func restoredLifecycle(_ terminal: CanvasObject) -> JSONValue? {
+        guard terminal.type == .terminal, var lifecycle = terminal.props["lifecycle"]?.object else { return nil }
+        if let state = lifecycle["state"]?.string, state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            lifecycle["restored"] = .bool(true)
+        }
+        if let previous = lifecycle["error"]?.string, let error = boundedTurnError(previous) {
+            lifecycle["error"] = .string(error)
+            if lifecycle["message"]?.string == previous { lifecycle["message"] = .string(error) }
+            if lifecycle["errorCount"] == nil { lifecycle["errorCount"] = .number(1) }
+            if lifecycle["errorSince"] == nil {
+                lifecycle["errorSince"] = .string(terminal.updatedAt.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true)))
+            }
+        }
+        return .object(lifecycle)
     }
 
     /// Gemini CLI's window title while it waits for a prompt (its dynamic window title, on unless
@@ -1453,8 +1504,15 @@ public final class Board {
             throw BoardError.invalidParams("agent.report needs tile, kind, and state")
         }
         guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
+        var outcome: TurnOutcome?
+        if let value = p["turnOutcome"] {
+            guard let name = value.string, let parsed = TurnOutcome(rawValue: name) else { throw BoardError.invalidParams("unknown turnOutcome") }
+            outcome = parsed
+        }
+        if outcome != nil, let value = p["error"], value.string == nil { throw BoardError.invalidParams("error must be a string") }
+        if let value = p["turnEndedAt"], value.string == nil { throw BoardError.invalidParams("turnEndedAt must be a string") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
-                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string,
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, turnOutcome: outcome, turnEndedAt: p["turnEndedAt"]?.string,
                             protocol: p["protocol"]?.int, draft: p["draft"]?.bool, pid: p["pid"]?.int)
     }
 
@@ -1533,8 +1591,7 @@ public final class Board {
         lifecycle["state"]?.string == LifecycleState.done.rawValue && lifecycle["seen"]?.bool != true
     }
 
-    /// A terminal `lifecycle` that is a turn that ended on an error (agent.report `error`), with
-    /// no turn started since: `idle` with that `error`.
+    /// A terminal lifecycle with an unresolved failure run, in any agent state.
     static func isFailedTurn(_ lifecycle: JSONValue) -> Bool {
         lifecycle["error"]?.string != nil
     }

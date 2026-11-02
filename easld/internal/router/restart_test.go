@@ -220,6 +220,8 @@ func TestATurnThatEndedOnAnErrorStaysThroughAnOwnedRestartUntilANewTurn(t *testi
 	for _, mode := range []string{"resume", "fresh"} {
 		report("working", nil)
 		report("idle", failure)
+		failed["errorCount"] = 1.0
+		failed["errorSince"] = f.listed(term)["lifecycle"].(map[string]any)["errorSince"]
 		got := f.result("agent.restart", map[string]any{"target": "worker", "mode": mode})
 		if lc := got["agent"].(map[string]any)["lifecycle"]; !reflect.DeepEqual(lc, failed) {
 			t.Errorf("%s: restarted to %v, want %v", mode, lc, failed)

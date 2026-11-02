@@ -94,8 +94,8 @@ var revisionKeys = map[string]string{
 
 // Keys whose value is a moment (schema date-time fields, and the app's API dates).
 var timeKeys = map[string]bool{
-	"at": true, "computedAt": true, "createdAt": true, "expires": true, "finishedAt": true, "queuedAt": true, "raisedAt": true,
-	"releasedAt": true, "stagedAt": true, "submittedAt": true, "time": true, "updatedAt": true,
+	"at": true, "computedAt": true, "createdAt": true, "errorSince": true, "expires": true, "finishedAt": true, "queuedAt": true, "raisedAt": true,
+	"releasedAt": true, "stagedAt": true, "submittedAt": true, "time": true, "turnEndedAt": true, "updatedAt": true,
 }
 
 // The API's dates count seconds from here (Foundation's reference date).

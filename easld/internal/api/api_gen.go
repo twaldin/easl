@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "6d33a2d579c5e710"
+const SchemaHash = "4e049ddf5464b785"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -205,7 +205,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"ids"},
 	},
 	"agent.report": {
-		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol", "draft", "pid"},
+		Accepted: []string{"tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "turnOutcome", "turnEndedAt", "protocol", "draft", "pid"},
 		Required: []string{"tile", "kind", "state"},
 	},
 	"agent.report_session": {
@@ -516,8 +516,12 @@ type Lifecycle struct {
 	State   string  `json:"state"`
 	Message *string `json:"message,omitempty"`
 	Seen    *bool   `json:"seen,omitempty"`
-	// with `idle`: the agent's last turn ended on this error instead of finishing (agent.report `error`), and no turn has started since; `message` says it too unless that report gave its own. It stays through reports that start no turn (`idle` without an error, `unknown`) and through agent.restart, so a relaunched agent's first `idle` doesn't hide it; the next turn (`working`) clears it, and the user seeing the tile doesn't. Absent for a turn that finished
+	// The last failed dispatched model request in the current failure run, in working, blocked, or idle. At most 500 Unicode characters total, truncated at 499 plus an ellipsis (…). Never the session transcript. Reports with an explicit turnOutcome or protocol 4 or later use outcome-aware behavior: only turnOutcome success clears error, errorCount, and errorSince. Starts, heartbeats, aborts, seeing the tile, agent.restart, and daemon restarts retain them while reports remain outcome-aware. Reports without turnOutcome and with protocol below 4 or omitted use legacy idle-only errors that clear on the next working, even after replacing an outcome-aware integration. Pre-dispatch throws without an assistant response event are excluded; provider-layer errors emitted as assistant responses are covered.
 	Error *string `json:"error,omitempty"`
+	// Consecutive failed dispatched model requests in the current run. Each nonstale turnOutcome error increments it and preserves errorSince. Present with error and errorSince. Legacy idle errors set it to 1. Pre-dispatch throws without an assistant response event are excluded.
+	ErrorCount *int `json:"errorCount,omitempty"`
+	// UTC RFC 3339 timestamp when the first failed dispatched model request in the current run ended, from agent.report turnEndedAt, preserved even when a spooled report arrives later. The host uses report receipt time when turnEndedAt is omitted, including legacy idle errors. Nanosecond precision is retained when supplied. Outcome-aware reports preserve it until turnOutcome success clears the run. Present with error and errorCount. Pre-dispatch throws without an assistant response event are excluded. Loading an older saved error without failure-run fields initializes count 1 and uses the terminal's saved updatedAt as the best available timestamp.
+	ErrorSince *string `json:"errorSince,omitempty"`
 	// a `working` or `blocked` the app restored from before it last closed, which the agent hasn't confirmed since (no report, live or spooled, yet): what it was, maybe not what it is now. `agent.prompt` refuses a restored `working` (read the screen first) unless `force`
 	Restored *bool `json:"restored,omitempty"`
 	// an agent without a lifecycle integration: its terminal notifications (OSC 9/777, a bell) set `done` (`idle` while the user looks), Return typed into it or `agent.prompt` sets `unknown` until the next one; never `working` or `blocked`
@@ -1184,7 +1188,7 @@ type Agent struct {
 	Address string `json:"address"`
 	// names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none
 	Aliases []string `json:"aliases,omitempty"`
-	// the integration protocol version its agent last reported. 1 and later take ordinary out-of-band messages. 3 and later accept canvasKit.send with independent wake notices and explicit page-data reads. Protocol 2 remains the explicit page-data read capability, but does not authorize new sends. Absent when none reported or the integration died without releasing the terminal.
+	// The integration protocol version its agent last reported. 1 and later take ordinary out-of-band messages. 3 and later accept canvasKit.send with independent wake notices and explicit page-data reads. Protocol 2 remains the explicit page-data read capability, but does not authorize new sends. 4 and later report dispatched-model-request outcomes. Absent when none reported or the integration died without releasing the terminal.
 	Protocol *int `json:"protocol,omitempty"`
 	// the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown
 	Kind string `json:"kind"`

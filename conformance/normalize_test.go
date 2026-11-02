@@ -65,8 +65,8 @@ func TestKnownIDsReplaceWholeWordsOnly(t *testing.T) {
 // a fixture recorded.
 func TestTimesKeepTheirWireTypeAndMustBeValid(t *testing.T) {
 	n := newNormalizer(nil)
-	got := normalized(t, n, `[{"createdAt":812918940.5},{"at":"2026-10-05T18:50:46.123Z"},{"at":{"x":1,"y":2}}]`)
-	want := `[{"createdAt":"<time:number>"},{"at":"<time:iso>"},{"at":{"x":1,"y":2}}]`
+	got := normalized(t, n, `[{"createdAt":812918940.5},{"at":"2026-10-05T18:50:46.123Z"},{"at":{"x":1,"y":2}},{"errorSince":"2026-10-05T18:50:46.123456789Z"},{"turnEndedAt":"2026-10-05T18:50:46.123456789Z"}]`)
+	want := `[{"createdAt":"<time:number>"},{"at":"<time:iso>"},{"at":{"x":1,"y":2}},{"errorSince":"<time:iso>"},{"turnEndedAt":"<time:iso>"}]`
 	if got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}
@@ -80,6 +80,14 @@ func TestTimesKeepTheirWireTypeAndMustBeValid(t *testing.T) {
 		got := normalized(t, newNormalizer(nil), `{"updatedAt":`+bad+`}`)
 		if strings.Contains(got, "<time") {
 			t.Errorf("%s normalised to %s; want it kept", bad, got)
+		}
+		got = normalized(t, newNormalizer(nil), `{"errorSince":`+bad+`}`)
+		if strings.Contains(got, "<time") {
+			t.Errorf("%s errorSince normalised to %s; want it kept", bad, got)
+		}
+		got = normalized(t, newNormalizer(nil), `{"turnEndedAt":`+bad+`}`)
+		if strings.Contains(got, "<time") {
+			t.Errorf("%s turnEndedAt normalised to %s; want it kept", bad, got)
 		}
 	}
 }
