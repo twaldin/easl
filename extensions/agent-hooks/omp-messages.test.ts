@@ -6,7 +6,7 @@
 // something (`until`), so the extension's coalescing, retry, record and reconcile checks run
 // without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -81,6 +81,7 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     unsupportedNoticeAck: false,
     refusesInbox: undefined as { code: string; message: string } | undefined,
     legacyReports: false,
+    reportRejection: undefined as Promise<void> | undefined,
     reports: [] as Params[],
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
@@ -140,6 +141,7 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     if (method === "agent.report") {
       const unknown = ["turnEndedAt", "turnOutcome"].filter((key) => key in params);
       if (easl.legacyReports && unknown.length > 0) {
+        await easl.reportRejection;
         return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "invalid_params", message: `unknown param${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}; agent.report takes tile (required), kind (required), state (required), message, seq, source, call, final, serial, error, protocol, draft, pid` } })}\n`);
       }
       easl.reports.push(params);
@@ -1654,12 +1656,18 @@ for (const held of ["ordinary", "notice"] as const) {
 test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful final answers", async () => {
   const easl = fakeEasl();
   easl.legacyReports = true;
+  const rejection = Promise.withResolvers<void>();
+  easl.reportRejection = rejection.promise;
   const omp = fakeOmp(easl);
   await omp.emit("session_start");
   await omp.emit("agent_start");
   const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
   await omp.emit("message_end", { message: failed });
   await omp.emit("agent_end", { messages: [failed] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && "turnOutcome" in call.params));
+  vi.advanceTimersByTime(250);
+  await turn();
+  rejection.resolve();
   await until(() => easl.reports.at(-1)?.state === "idle");
   expect(easl.reports.at(-1)).toMatchObject({ state: "idle", error: "provider refused" });
   expect(easl.calls.filter((call) => call.method === "agent.report" && "turnOutcome" in call.params)).toHaveLength(1);
@@ -1672,6 +1680,16 @@ test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful f
   expect(easl.reports.at(-1)).toMatchObject({ state: "idle", final: "Recovered." });
   expect(easl.reports.at(-1)?.error).toBeUndefined();
   expect(easl.calls.filter((call) => call.method === "agent.report" && "turnOutcome" in call.params)).toHaveLength(1);
+
+  easl.stop();
+  const upgraded = fakeEasl();
+  renameSync(upgraded.socketPath, easl.socketPath);
+  await until(() => upgraded.reports.some((params) => params.state === "idle"));
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: failed });
+  await omp.emit("agent_end", { messages: [failed] });
+  await until(() => upgraded.reports.some((params) => params.turnOutcome === "error"));
+  expect(upgraded.reports.find((params) => params.turnOutcome === "error")).toMatchObject({ protocol: 4, error: "provider refused" });
 });
 
 test("a failed response remains reportable while background work keeps the run working, until a successful response", async () => {

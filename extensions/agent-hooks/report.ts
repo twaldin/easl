@@ -21,8 +21,8 @@ export function spoolDirectory(socketPath: string, tile: string): string {
 }
 
 /** `agent.report`; spooled when easl can't be reached. `params.seq` orders the replay. */
-export function report(client: CanvasClient, params: AgentReportParams & { seq: number }): Promise<void> {
-  return deliver(client, "agent.report", params, params.seq, () => client.api.agent.report(params));
+export function report(client: CanvasClient, params: AgentReportParams & { seq: number }, send = () => client.api.agent.report(params)): Promise<void> {
+  return deliver(client, "agent.report", params, params.seq, send);
 }
 
 /** `agent.release` (the agent exited); spooled when easl can't be reached, in `seq` order with the reports. */

@@ -92,17 +92,21 @@ export default function canvas(pi: ExtensionAPI): void {
   let final: string | undefined;
   // omp can attach an empty-reply error after message_end, before agent_end.
   let pendingStopAt: string | undefined;
+  let failure: string | undefined;
+  let reportCapability = { legacy: false };
+  let outcomeReport: Promise<void> | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
   function publish(turnOutcome?: "success" | "error" | "aborted", error?: string, endedAt?: string): void {
-    if (!reporting) return;
+    if (!reporting || (turnOutcome && reportCapability.legacy)) return;
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
-    const send = () =>
-      report(client, {
+    const send = () => {
+      const legacyError = settled ? failure : undefined;
+      const params: Parameters<typeof report>[1] = {
         tile: tile!,
         kind: "omp",
         state,
@@ -116,7 +120,37 @@ export default function canvas(pi: ExtensionAPI): void {
         protocol: REPORT_PROTOCOL,
         draft,
         pid: process.pid,
-      });
+      };
+      const deliver = async () => {
+        const capability = reportCapability;
+        if (capability.legacy) {
+          if (turnOutcome) return;
+          delete params.turnOutcome;
+          delete params.turnEndedAt;
+          params.error = legacyError;
+          params.protocol = PROTOCOL;
+        }
+        return report(client, params, async () => {
+          try {
+            return await client.api.agent.report(params);
+          } catch (error) {
+            if (!params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
+            capability.legacy = true;
+            delete params.turnOutcome;
+            delete params.turnEndedAt;
+            return client.api.agent.report(params);
+          }
+        });
+      };
+      const sent = outcomeReport ? outcomeReport.then(deliver) : deliver();
+      if (turnOutcome) {
+        outcomeReport = sent;
+        void sent.then(() => {
+          if (outcomeReport === sent) outcomeReport = undefined;
+        });
+      }
+      return sent;
+    };
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle" && !turnOutcome) idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
@@ -126,6 +160,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // `working`) until we report again: say where we are as soon as it is back, and what the agent
   // runs, which it may never have taken.
   watchCanvasReturn(client.socketPath, () => {
+    reportCapability = { legacy: false };
     publish();
     if (sessionCtx) void reportSession(sessionCtx);
   });
@@ -332,6 +367,7 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
     final = undefined;
+    failure = undefined;
     pendingStopAt = undefined;
     blockers.clear();
     staged = [];
@@ -383,6 +419,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("agent_start", () => {
     active = true;
     final = undefined;
+    failure = undefined;
     pendingStopAt = undefined;
     staged = staged.filter((entry) => !entry.committed);
     publish();
@@ -405,6 +442,20 @@ export default function canvas(pi: ExtensionAPI): void {
     active = event.willContinue === true;
     if (!active) {
       final = lastAnswer(event.messages);
+      const last = event.messages.findLast((message) => message.role === "assistant");
+      switch (last?.stopReason) {
+        case "error":
+          failure = typeof last.errorMessage === "string" && last.errorMessage.trim() ? last.errorMessage.trim() : "the model request failed";
+          break;
+        case "aborted":
+          failure = "interrupted";
+          break;
+        case "length":
+          failure = "stopped at the output token limit";
+          break;
+        default:
+          failure = undefined;
+      }
       // The next turn is prepared only if omp prepares it; it reads the standing orders afresh.
       prepared = false;
       policy = undefined;
