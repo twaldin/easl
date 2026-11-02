@@ -165,6 +165,10 @@ private enum HtmlKeyboard {
             try await exerciseWithoutSuppression(root: root)
             return
         }
+        if CommandLine.arguments.contains("--exports") {
+            try await exerciseExports(root: root)
+            return
+        }
         try await exercise(root: root, remote: nil, kind: "local")
         let host = RemoteHost(name: "html-keyboard-regression", sshTarget: "html-keyboard-regression.invalid",
                               socketPath: root.appendingPathComponent("absent.sock").path,
@@ -178,7 +182,319 @@ private enum HtmlKeyboard {
         try await exerciseStaleClicks()
         try await exerciseDOMClicks()
         try await exerciseDocumentGrant(root: root.appendingPathComponent("replacement", isDirectory: true))
+        try await exerciseExports(root: root.appendingPathComponent("exports", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
+    }
+
+    private static func exerciseExports(root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("let exportAnswer = 42\n".utf8).write(to: root.appendingPathComponent("export.swift"))
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3, pixelsHigh: 2,
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                      isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        for y in 0..<2 {
+            for x in 0..<3 { bitmap.setColor(NSColor(deviceRed: 0.1, green: 0.3, blue: 0.9, alpha: 1), atX: x, y: y) }
+        }
+        try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("export.png"))
+        let board = Board(id: "html-export-regression", root: root)
+        let object = board.create(type: .html, props: .object(["html": .string(exportHTML())]),
+                                  frame: Frame(x: 0, y: 0, w: 900, h: 900))
+        let tile = HtmlTile(object: object, board: board)
+        guard let artifacts = ProcessInfo.processInfo.environment["EASL_HTML_EXPORT_ARTIFACTS"] else {
+            throw Failure(message: "run.py must provide EASL_HTML_EXPORT_ARTIFACTS")
+        }
+        let document = try await tile.exportDocument(diagnosticsDirectory: URL(fileURLWithPath: artifacts))
+        check("real HtmlTile.exportDocument returned \(document.utf8.count) bytes")
+        let file = root.appendingPathComponent("export.html")
+        try Data(document.utf8).write(to: file)
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 900),
+                            configuration: WKWebViewConfiguration())
+        let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView!.addSubview(web)
+        defer { web.stopLoading(); window.close() }
+        web.loadFileURL(file, allowingReadAccessTo: root)
+        var reopened = false
+        for _ in 0..<240 {
+            reopened = await js(web, "location.protocol === 'file:' && document.readyState === 'complete' && !!document.getElementById('picture')") as? Bool == true
+            if reopened { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try require(reopened, "the exported file must finish loading in an ordinary WKWebView")
+        try await pageTurn(web)
+        let inspectExport = #"""
+        (withPolicy) => {
+          const failures = [];
+          const expect = (ok, name) => { if (!ok) failures.push(name); };
+          expect(document.characterSet === 'UTF-8', 'export encoding stays UTF-8');
+          expect(document.title === 'export-clean' && !document.body.hasAttribute('data-executed'),
+                 'event execution: title=' + document.title + ', marker=' + document.body.getAttribute('data-executed'));
+          const first = document.head.firstElementChild;
+          expect(withPolicy
+                 ? first?.localName === 'meta' && first.httpEquiv.toLowerCase() === 'content-security-policy'
+                 : !document.querySelector('meta[http-equiv]'), 'CSP expected presence and position');
+          const policy = first?.content || '';
+          for (const directive of ["default-src 'none'", "script-src 'none'", "object-src 'none'",
+                                   "frame-src 'none'", "form-action 'none'", "base-uri 'none'",
+                                   "img-src data:", "style-src 'unsafe-inline'", "font-src data:"]) {
+            if (withPolicy) expect(policy.split(';').some(part => part.trim() === directive), 'CSP ' + directive);
+          }
+          expect(document.scripts.length === 0, 'no scripts');
+          expect(!document.querySelector('iframe,frame,object,embed,applet,portal,base,form'), 'no active elements or forms');
+          expect(![...document.querySelectorAll('meta[http-equiv]')].some(meta => meta.httpEquiv.toLowerCase() !== 'content-security-policy'), 'no author http-equiv meta');
+          expect(!document.querySelector('svg set,svg animate,svg animateMotion,svg animateTransform'), 'no SVG animation');
+          expect(!document.getElementById('namespace-cursor')?.hasAttribute('cursor'), 'no resource URL activated by namespace reparse');
+          const urlAttrs = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background', 'ping']);
+          for (const element of document.querySelectorAll('*')) {
+            for (const attribute of element.attributes) {
+              const name = attribute.name.toLowerCase();
+              expect(!name.startsWith('on'), 'event attribute ' + element.localName + '.' + name);
+              expect(name !== 'srcdoc', 'srcdoc attribute');
+              expect(name !== 'attributionsrc', 'no attribution registration requests');
+              if (!urlAttrs.has(name)) continue;
+              const value = attribute.value.replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
+              const image = name === 'src' && element.localName === 'img' && value.startsWith('data:');
+              expect(image || !/^(javascript|vbscript|data):/.test(value), 'unsafe URL ' + element.localName + '.' + name);
+              expect(name !== 'src' || image, 'no external image or media source');
+            }
+          }
+          const decodeCSS = text => text.replace(/\\([0-9a-f]{1,6})\s?|\\([^\r\n])/gi,
+            (_, hex, char) => hex ? String.fromCodePoint(parseInt(hex, 16) || 0xfffd) : char);
+          const css = [...document.querySelectorAll('style')].map(node => node.textContent)
+            .concat([...document.querySelectorAll('[style]')].map(node => node.getAttribute('style'))).join('\n');
+          const decoded = decodeCSS(css).replace(/[\u0000-\u0020\u007f]/g, '').toLowerCase();
+          expect(!decoded.includes('expression(') && !/url\(["']?(javascript|vbscript):/.test(decoded), 'no dangerous CSS, including escapes');
+          expect(!css.includes('beacon.invalid'), 'no resource URLs hidden by variable shorthand expansion');
+          expect(!css.includes('probe.png'), 'no Unicode whitespace reinterpreted as a relative resource URL');
+          expect(getComputedStyle(document.querySelector('#entity-target')).backgroundImage === 'none', 'no CSS activated by foreign-style entity decoding');
+          expect(getComputedStyle(document.body).backgroundImage === 'none', 'no rule activated by stylesheet reparsing');
+          expect(document.querySelector('#rcdata')?.value === '', 'textarea retains displayed text rather than serialized child markup');
+          const image = document.querySelector('#picture');
+          expect(image?.src.startsWith('data:image/') && image.complete && image.naturalWidth === 3 && image.naturalHeight === 2,
+                 'inlined image decoded at 3x2');
+          expect(image?.getBoundingClientRect().width === 30 && image?.getBoundingClientRect().height === 20, 'image rendered at 30x20');
+          expect(document.querySelector('#octet-image')?.naturalWidth === 1, 'image bytes with generic MIME type');
+          expect(document.querySelector('#selected-image')?.naturalWidth === 1, 'selected picture data source');
+          const diagram = document.querySelector('#diagram svg');
+          expect(diagram && diagram.getBoundingClientRect().width > 0 && diagram.getBoundingClientRect().height > 0
+                 && diagram.textContent.includes('Start') && diagram.textContent.includes('Finish'), 'settled real Mermaid SVG');
+          expect(document.querySelector('#formula .katex .katex-html')?.getBoundingClientRect().height > 0, 'rendered KaTeX');
+          expect([...document.fonts].some(font => font.family.includes('KaTeX') && font.status === 'loaded'), 'embedded KaTeX fonts loaded');
+          expect(document.querySelector('canvas-code .ck-line .ck-text')?.textContent === 'let exportAnswer = 42', 'rendered canvas-code row');
+          expect(document.querySelector('#table td')?.textContent === 'table survives' &&
+                 document.querySelector('#table').getBoundingClientRect().height > 0, 'table content and print-only styles');
+          expect(getComputedStyle(document.querySelector('#responsive')).color === 'rgb(1, 2, 3)', 'responsive CSS range query');
+          expect(getComputedStyle(document.querySelector('#tailwind')).color === 'rgb(7, 8, 9)', 'generated Tailwind utility');
+          expect(getComputedStyle(document.querySelector('#namespace-rect')).fill === 'rgb(255, 0, 0)', 'namespaced static SVG styling');
+          expect(getComputedStyle(document.querySelector('#xabc')).color === 'rgb(4, 5, 6)', 'nested ampersand selector');
+          expect(getComputedStyle(document.querySelector('canvas-pane'), '::before').content.includes('Before'), 'kit pane label');
+          for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
+                                    ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
+            expect(document.getElementById(id)?.getAttribute('href') === href, 'ordinary link ' + id);
+          }
+          expect(document.getElementById('form-text')?.textContent === 'form text survives', 'unwrapped form content');
+          return failures;
+        }
+        """#
+        guard let failures = await js(web, "(\(inspectExport))(true)") as? [String] else {
+            throw Failure(message: "could not inspect reopened export")
+        }
+        check("export reopened in ordinary WKWebView: \(failures.isEmpty ? "no violations" : failures.joined(separator: "; "))")
+        try require(failures.isEmpty, "export must be self-contained and inert: \(failures.joined(separator: "; "))")
+        let withoutPolicy = document.replacingOccurrences(of: #"<meta http-equiv="Content-Security-Policy"[^>]*>"#,
+                                                          with: "", options: .regularExpression)
+        let fallback = root.appendingPathComponent("export-without-policy.html")
+        try Data(withoutPolicy.utf8).write(to: fallback)
+        web.loadFileURL(fallback, allowingReadAccessTo: root)
+        var fallbackLoaded = false
+        for _ in 0..<240 {
+            fallbackLoaded = await js(web, "location.pathname.endsWith('export-without-policy.html') && document.readyState === 'complete' && !!document.getElementById('picture')") as? Bool == true
+            if fallbackLoaded { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try require(fallbackLoaded, "the exported file without policy must finish loading")
+        try await pageTurn(web)
+        guard let fallbackFailures = await js(web, "(\(inspectExport))(false)") as? [String] else {
+            throw Failure(message: "could not inspect reopened export without CSP")
+        }
+        try require(fallbackFailures.isEmpty, "sanitized export must remain inert without CSP: \(fallbackFailures.joined(separator: "; "))")
+        for tag in ["iframe", "x:html"] {
+            let invalidRoot = board.create(type: .html, props: .object(["html": .string("""
+            <p>Replaced document root</p><script>
+            document.addEventListener('DOMContentLoaded', () => {
+              const frame = document.createElementNS('http://www.w3.org/1999/xhtml', '\(tag)');
+              frame.setAttribute('srcdoc', '<p>Active document root</p>');
+              document.replaceChild(frame, document.documentElement);
+            });
+            </script>
+            """)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+            let invalidTile = HtmlTile(object: invalidRoot, board: board)
+            var rejectedRoot = false
+            do { _ = try await invalidTile.exportDocument() }
+            catch is ExportFailure { rejectedRoot = true }
+            try require(rejectedRoot, "a \(tag) document root must fail export instead of bypassing sanitization")
+        }
+        let encodingObject = board.create(type: .html, props: .object(["html": .string(#"""
+        <title>encoding-clean</title><p>Encoding proof</p><script>
+        document.addEventListener('DOMContentLoaded', () => {
+          for (const meta of document.querySelectorAll('meta[charset]')) meta.remove();
+          const charset = document.createElement('meta');
+          charset.setAttribute('charset', 'iso-2022-jp');
+          document.head.append(charset);
+          const escape = String.fromCharCode(27);
+          document.documentElement.setAttribute('data-shift', escape + '$B');
+          const reset = document.createElement('p');
+          reset.textContent = escape + '(B" ';
+          const image = document.createElement('img');
+          image.src = 'data:image/png,invalid';
+          image.alt = escape + '$B';
+          const tail = document.createElement('span');
+          tail.textContent = escape + '(B" onerror="document.title=\'encoding-executed\'" ';
+          document.body.replaceChildren(reset, image, tail);
+        });
+        </script>
+        """#)]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+        let encodingTile = HtmlTile(object: encodingObject, board: board)
+        let encodedDocument = try await encodingTile.exportDocument()
+        for policy in [true, false] {
+            let contents = policy ? encodedDocument : encodedDocument.replacingOccurrences(
+                of: #"<meta http-equiv="Content-Security-Policy"[^>]*>"#, with: "", options: .regularExpression)
+            let encodedFile = root.appendingPathComponent("encoding-\(policy).html")
+            try Data(contents.utf8).write(to: encodedFile)
+            web.loadFileURL(encodedFile, allowingReadAccessTo: root)
+            var encodingLoaded = false
+            for _ in 0..<240 {
+                encodingLoaded = await js(web, "location.pathname.endsWith('encoding-\(policy).html') && document.readyState === 'complete'") as? Bool == true
+                if encodingLoaded { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try require(encodingLoaded, "the encoding regression file must load")
+            try await pageTurn(web)
+            let encodingSafe = await js(web, """
+            document.characterSet === 'UTF-8' && document.title === 'encoding-clean' &&
+            !document.querySelector('[onerror]') &&
+            (\(policy ? "true" : "false") === (document.head.firstElementChild?.getAttribute('http-equiv') === 'Content-Security-Policy'))
+            """) as? Bool
+            try require(encodingSafe == true, "author encoding must not reconstruct active markup or hide the policy")
+        }
+        print("PASS HTML export: inert events/URLs/CSS, first-head CSP, image, Mermaid, KaTeX, code, table and ordinary links")
+    }
+
+    private static func exportHTML() -> String {
+        #"""
+        <!doctype html><html><head><title>export-clean</title></head><body>
+        <img id="picture" src="export.png" width="30" height="20" attributionsrc="https://beacon.invalid/register">
+        <img id="octet-image" src="data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=">
+        <picture><source srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII="><img id="selected-image" src="export.png"></picture>
+        <canvas-pane label="Before">Pane content</canvas-pane>
+        <style media="print">#table { display:none }</style>
+        <style>@media (width < 2000px) { #responsive { color:rgb(1,2,3) } }</style>
+        <p id="responsive">Responsive content</p>
+        <p id="tailwind" class="text-[rgb(7,8,9)]">Tailwind content</p>
+        <style>.amp-box { &#xabc { color:rgb(4,5,6) } }</style>
+        <p class="amp-box" id="xabc">Nested selector content</p>
+        <pre id="diagram" class="mermaid">flowchart LR
+        A[Start] --> B[Finish]</pre>
+        <p id="formula">$x^2 + y^2$</p>
+        <canvas-code path="export.swift" lines="1"></canvas-code>
+        <table id="table"><tr><td>table survives</td></tr></table>
+        <a id="https" href="https://example.invalid/export">HTTPS</a>
+        <a id="http" href="http://example.invalid/export">HTTP</a>
+        <a id="mail" href="mailto:export@example.invalid">Mail</a>
+        <a id="fragment" href="#table">Fragment</a>
+        <template id="attacks">
+          <img src="data:image/png,invalid" onerror="if(location.protocol==='file:'){document.title='image-executed';document.body.dataset.executed='image'}">
+          <img src="https://beacon.invalid/external-image.png">
+          <x-export-attack onload="void(0)"></x-export-attack>
+          <svg xmlns="http://www.w3.org/2000/svg" onload="if(location.protocol==='file:'){document.title='svg-executed';document.body.dataset.executed='svg'}">
+            <a href="javascript:document.title='svg-link-executed'" xlink:href="javascript:document.title='xlink-executed'" xmlns:xlink="http://www.w3.org/1999/xlink"><text>unsafe SVG link</text>
+              <set attributeName="href" to="javascript:document.title='set-executed'" begin="0s"/>
+              <animate attributeName="href" values="javascript:document.title='animate-executed'" dur="1s"/>
+            </a>
+          </svg>
+          <svg><a id="dynamic-xlink"><text>script-created XLink</text></a></svg>
+          <svg><style>.roundtrip { content: "&lt;img src=data:image/png,invalid onerror=document.title='style-executed'&gt;"; }</style></svg>
+          <math onmouseover="document.title='math-executed'"><mi>x</mi></math>
+          <a href="JaVa&#x09;ScRi&#x0a;Pt:document.title='link-executed'" ping="data:text/plain,ping">unsafe mixed/control link</a>
+          <a href="vbscript:msgbox(1)">VBScript</a><a href="data:text/html,active">data navigation</a>
+          <iframe srcdoc="&lt;script&gt;if(parent.location.protocol==='file:')parent.document.title='frame-executed'&lt;/script&gt;"></iframe>
+          <iframe src="data:text/html,frame"></iframe>
+          <form action="javascript:document.title='form-executed'"><span id="form-text">form text survives</span>
+            <button formaction="data:text/html,submit">Submit</button>
+          </form>
+          <form><object name="childNodes"></object><object name="childNodes"></object>
+            <img src="data:image/png,invalid" onerror="if(location.protocol==='file:')document.title='clobber-executed'">
+          </form>
+          <object data="data:text/html,object"></object><embed src="data:text/html,embed">
+          <applet code="none"></applet><portal src="data:text/html,portal"></portal>
+          <meta http-equiv="refresh" content="3600;url=data:text/html,refresh">
+          <meta http-equiv="default-style" content="author-style">
+          <base href="#author-base">
+          <video poster="javascript:document.title='poster-executed'"></video>
+          <div background="javascript:document.title='background-executed'" onpointerenter="document.title='pointer-executed'"
+               style="width:expression(1);background-image:url('javascript:document.title=1')">unsafe CSS</div>
+          <div style="background-image:u\72l('java\73 cript:document.title=2');height:expre\73sion(1)">escaped inline CSS</div>
+          <div style="--c:red;background:var(--c) url(https://beacon.invalid/inline)">variable shorthand</div>
+          <div style="background-image:url('&#160;data:image/png,/../../probe.png')">Unicode URL whitespace</div>
+          <style>
+          .attack { width:expression(1); background:url("javascript:document.title=3") }
+          .escaped { background:u\72l("java\73 cript:document.title=4");height:expre\73sion(1) }
+          .variable-shorthand { --c:red; background:var(--c) url(https://beacon.invalid/sheet) }
+          .variable-fallback { background:var(--missing, url('javascript:document.title=5')) }
+          .comment-strings::before { content:"/*" url(https://beacon.invalid/comment) "*/" }
+          :dir(ltr\)\{\}body\{background\:url\(https\:\/\/beacon\.invalid\/dir\)\}\:dir\(ltr) { color:red }
+          </style>
+          <style>@namespace svg "http://www.w3.org/2000/svg"; svg|rect#namespace-rect { fill:rgb(255,0,0) }</style>
+          <svg width="20" height="20"><rect id="namespace-rect" width="20" height="20"/></svg>
+        </template>
+        <script>
+        const attacks = document.getElementById('attacks');
+        document.body.append(attacks.content);
+        attacks.remove();
+        document.documentElement.insertBefore(document.createComment("--><script>document.title='comment-executed'<" + "/script><!--"), document.head);
+        document.querySelector('#dynamic-xlink').setAttribute('xlink:href', "javascript:document.title='dynamic-xlink-executed'");
+        document.documentElement.insertBefore(document.createElement('div'), document.head);
+        document.documentElement.insertBefore(document.createTextNode('text before head'), document.head);
+        const mismatchedSVG = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        const mismatchedRect = document.createElement('rect');
+        mismatchedRect.id = 'namespace-cursor';
+        mismatchedRect.setAttribute('cursor', 'url(https://example.invalid/cursor.png), auto');
+        mismatchedSVG.append(mismatchedRect);
+        document.body.append(mismatchedSVG);
+        const nestedSelector = String.raw`:dir(ltr\)\{\}body\{background\:url\(https\:\/\/beacon\.invalid\/nested\)\}\:dir\(ltr) { color:red }`;
+        const nestedStyle = document.createElement('style');
+        nestedStyle.textContent = ':dir(' + CSS.escape('ltr) {} ' + nestedSelector + ' :dir(ltr') + ') { color:red }';
+        document.head.append(nestedStyle);
+        const mismatchedStyle = document.createElement('style');
+        mismatchedStyle.textContent = '.unused { --x: &#x7d .entity-target{background:&#x75rl(https://entity.invalid/leak)} }';
+        mismatchedSVG.append(mismatchedStyle);
+        const foreignTemplate = document.createElement('template');
+        const templateStyle = document.createElement('style');
+        templateStyle.textContent = mismatchedStyle.textContent;
+        foreignTemplate.content.append(templateStyle);
+        mismatchedSVG.append(foreignTemplate);
+        const entityTarget = document.createElement('div');
+        entityTarget.id = 'entity-target';
+        entityTarget.className = 'entity-target';
+        document.body.append(entityTarget);
+        const rcdata = document.createElement('textarea');
+        rcdata.id = 'rcdata';
+        const rcdataChild = document.createElement('b');
+        rcdataChild.title = '</textarea><img src=data:image/png,invalid onerror="document.title=\'rcdata-executed\'">';
+        rcdata.append(rcdataChild);
+        document.body.append(rcdata);
+        customElements.define('x-export-attack', class extends HTMLElement {
+          static observedAttributes = ['onload'];
+          attributeChangedCallback(name, oldValue, value) {
+            if (value === null) this.getRootNode().querySelector('#picture')?.setAttribute('onerror', "document.title='reaction-executed'");
+          }
+        });
+        Object.defineProperty(HTMLHtmlElement.prototype, 'outerHTML', {
+          get() { return '<html><head><title>forged-export</title></head><body><img id="picture" src="data:image/png,invalid" onerror="document.title=\'prototype-executed\'"></body></html>'; }
+        });
+        </script>
+        </body></html>
+        """#
     }
 
     private final class NativeClickTarget: NSView {
