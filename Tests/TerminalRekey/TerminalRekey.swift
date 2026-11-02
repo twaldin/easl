@@ -172,6 +172,11 @@ private enum TerminalRekey {
             var options = replacement.terminal.configuration
             options.command = ShellWords.quote(["/bin/sh", "-c", "exec /bin/cat > " + ShellWords.quote([receipt.path])])
             replacement.terminal.configuration = options
+            let deadline = ContinuousClock.now + .seconds(5)
+            while replacement.terminal.surface?.isProcessRunning != true {
+                try require(ContinuousClock.now < deadline, "the canonical attachment must become ready")
+                try await Task.sleep(for: .milliseconds(1))
+            }
             for character in "cho burst\r" {
                 let text = String(character)
                 let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
@@ -185,7 +190,6 @@ private enum TerminalRekey {
                 replacement.terminal.paste(text: "explicit-control")
             }, delay: .zero)
             try require(accepted, "the canonical attachment must accept an explicit submission")
-            let deadline = ContinuousClock.now + .seconds(5)
             while (try? String(contentsOf: receipt, encoding: .utf8))?.contains("explicit-control\n") != true {
                 try require(ContinuousClock.now < deadline, "the canonical receipt must arrive")
                 try await Task.sleep(for: .milliseconds(1))
