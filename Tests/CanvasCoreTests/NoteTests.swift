@@ -886,12 +886,37 @@ struct NoteSourceTests {
         try await git("init", "-q")
         let runner = GitRunner(limit: 1)
         let root = root
-        // A git that runs for a while, holding the only slot.
-        let slow = ["-c", "alias.slow=!sleep 1", "slow"]
-        let holder = Task { try await runner.run(slow, in: root) }
-        try await Task.sleep(for: .milliseconds(100))
+        let gate = root.appendingPathComponent("git-gate").path
+        try #require(mkfifo(gate, 0o600) == 0)
+        defer { unlink(gate) }
+        let blocked = ["hash-object", gate]
+        let holder = Task { try await runner.run(blocked, in: root) }
+        defer { holder.cancel() }
+        let setupDeadline = ContinuousClock.now + .seconds(5)
+        var writer: Int32 = -1
+        while writer < 0 && ContinuousClock.now < setupDeadline {
+            writer = open(gate, O_WRONLY | O_NONBLOCK | O_CLOEXEC)
+            if writer < 0 { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        try #require(writer >= 0, "git must open the FIFO before cancellation is tested")
+        defer { close(writer) }
+
+        let preCancelled = await MainActor.run {
+            let task = Task { try await runner.run(["rev-parse", "--git-dir"], in: root) }
+            task.cancel()
+            return task
+        }
+        let preCancelledStart = ContinuousClock.now
+        await #expect(throws: CancellationError.self) { try await preCancelled.value }
+        #expect(ContinuousClock.now - preCancelledStart < .milliseconds(500), "a pre-cancelled request never waits for the slot")
+
         let queued = Task { try await runner.run(["rev-parse", "--git-dir"], in: root) }
-        try await Task.sleep(for: .milliseconds(50))
+        defer { queued.cancel() }
+        let queueDeadline = ContinuousClock.now + .seconds(5)
+        while await runner.queuedCount == 0 && ContinuousClock.now < queueDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(await runner.queuedCount == 1, "the request must be queued before cancellation is timed")
         let clock = ContinuousClock()
         let started = clock.now
         queued.cancel()
@@ -900,10 +925,11 @@ struct NoteSourceTests {
 
         holder.cancel()
         await #expect(throws: CancellationError.self) { try await holder.value }
-        // Both slots were given back exactly once: the runner still works, one at a time.
         let data = try await runner.run(["rev-parse", "--git-dir"], in: root)
         #expect(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == ".git")
-        await #expect(throws: GitError.timedOut) { try await runner.run(slow, in: root, timeout: 0.2) }
+        await #expect(throws: GitError.timedOut) { try await runner.run(blocked, in: root, timeout: 0.2) }
+        let afterTimeout = try await runner.run(["rev-parse", "--git-dir"], in: root)
+        #expect(String(decoding: afterTimeout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == ".git")
     }
 
     @Test func cancelledRequestsGiveBackTheirGitPermits() async throws {

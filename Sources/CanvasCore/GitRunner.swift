@@ -25,6 +25,8 @@ public actor GitRunner {
     private var waiting: [Waiter] = []
     private var nextWaiter: UInt64 = 0
 
+    var queuedCount: Int { waiting.count }
+
     public init(limit: Int) {
         self.limit = limit
     }
