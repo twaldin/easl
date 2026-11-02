@@ -96,7 +96,7 @@ func TestDispatchedRequestOutcomesPersistUntilSuccess(t *testing.T) {
 	}
 }
 
-func TestOutcomeCapabilityAndFailureSurviveAgentAndDaemonRestarts(t *testing.T) {
+func TestFailureRunSurvivesAgentAndDaemonRestarts(t *testing.T) {
 	for _, state := range []string{"working", "blocked", "idle"} {
 		t.Run(state, func(t *testing.T) {
 			f, _ := restorable(t)
@@ -115,9 +115,6 @@ func TestOutcomeCapabilityAndFailureSurviveAgentAndDaemonRestarts(t *testing.T) 
 			if got := f.listed(tile)["lifecycle"]; !reflect.DeepEqual(got, failed) {
 				t.Fatalf("agent.restart changed failure run: %v, want %v", got, failed)
 			}
-			if props := f.agentProps(tile).(map[string]any); props["turnOutcomes"] != true {
-				t.Fatalf("agent.restart lost outcome capability: %v", props)
-			}
 			again, errs := restart(t, f)
 			if len(errs) != 0 {
 				t.Fatal(errs)
@@ -130,12 +127,12 @@ func TestOutcomeCapabilityAndFailureSurviveAgentAndDaemonRestarts(t *testing.T) 
 			}
 			again.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "idle", "protocol": 4.0, "seq": 11.0, "turnOutcome": "error", "turnEndedAt": "2026-10-29T12:34:56Z", "error": "replayed"})
 			for _, p := range []map[string]any{
-				{"state": "working"},
-				{"state": "idle", "protocol": 1.0, "error": "legacy health must not replace explicit health"},
+				{"state": "working", "protocol": 4.0},
+				{"state": "idle", "protocol": 4.0},
 				{"state": "blocked", "protocol": 4.0},
-				{"state": "idle", "turnOutcome": "aborted"},
+				{"state": "idle", "protocol": 4.0, "turnOutcome": "aborted"},
 			} {
-				p["tile"], p["kind"] = tile, "codex"
+				p["tile"], p["kind"] = tile, "omp"
 				again.result("agent.report", p)
 				lc = again.listed(tile)["lifecycle"].(map[string]any)
 				for _, key := range []string{"error", "errorCount", "errorSince"} {
@@ -143,11 +140,8 @@ func TestOutcomeCapabilityAndFailureSurviveAgentAndDaemonRestarts(t *testing.T) 
 						t.Fatalf("report %v changed persisted %s: %v", p, key, lc)
 					}
 				}
-				if props := again.agentProps(tile).(map[string]any); props["turnOutcomes"] != true {
-					t.Fatalf("report forgot outcome capability: %v", props)
-				}
 			}
-			again.result("agent.report", map[string]any{"tile": tile, "kind": "codex", "state": "working", "turnOutcome": "success"})
+			again.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "working", "protocol": 4.0, "turnOutcome": "success"})
 			for _, key := range []string{"error", "errorCount", "errorSince"} {
 				if _, present := again.listed(tile)["lifecycle"].(map[string]any)[key]; present {
 					t.Fatalf("success retained %s after restore", key)
@@ -157,16 +151,36 @@ func TestOutcomeCapabilityAndFailureSurviveAgentAndDaemonRestarts(t *testing.T) 
 	}
 }
 
-func TestOutcomeCapabilityIgnoresLegacyHealthWithoutAFailureRun(t *testing.T) {
-	for _, capability := range []map[string]any{{"protocol": 4.0}, {"turnOutcome": "success"}} {
-		f := newFixture(t)
-		tile := f.agentTerminal("", map[string]any{})
-		capability["tile"], capability["kind"], capability["state"] = tile, "omp", "working"
-		f.result("agent.report", capability)
-		f.result("agent.report", map[string]any{"tile": tile, "kind": "omp", "state": "idle", "protocol": 1.0, "error": "legacy cutoff"})
-		for _, key := range []string{"error", "errorCount", "errorSince"} {
-			if value, present := f.listed(tile)["lifecycle"].(map[string]any)[key]; present {
-				t.Fatalf("non-outcome report created %s: %v", key, value)
+func TestLegacyIntegrationReplacingModernUsesLegacyFailureHealth(t *testing.T) {
+	for _, modern := range []map[string]any{
+		{"protocol": 4.0},
+		{"turnOutcome": "success"},
+		{"protocol": 4.0, "turnOutcome": "error", "error": "modern failure", "turnEndedAt": "2026-10-27T12:34:56Z"},
+	} {
+		for _, legacy := range []map[string]any{
+			{"kind": "omp", "protocol": 3.0},
+			{"kind": "omp"},
+			{"kind": "codex", "protocol": 1.0},
+			{"kind": "codex"},
+		} {
+			f := newFixture(t)
+			tile := f.agentTerminal("", map[string]any{})
+			modern["tile"], modern["kind"], modern["state"] = tile, "omp", "working"
+			f.result("agent.report", modern)
+			before := time.Now().UTC()
+			legacy["tile"], legacy["state"], legacy["error"] = tile, "idle", "legacy failure"
+			f.result("agent.report", legacy)
+			lc := f.listed(tile)["lifecycle"].(map[string]any)
+			since, ok := lc["errorSince"].(string)
+			stamp, err := time.Parse(time.RFC3339Nano, since)
+			if lc["state"] != "idle" || lc["error"] != "legacy failure" || lc["errorCount"] != 1.0 || !ok || err != nil || !strings.HasSuffix(since, "Z") || stamp.Before(before) || stamp.After(time.Now().UTC()) {
+				t.Fatalf("legacy report %v after modern report %v did not replace failure health: %v", legacy, modern, lc)
+			}
+			delete(legacy, "error")
+			legacy["state"] = "working"
+			f.result("agent.report", legacy)
+			if got := f.listed(tile)["lifecycle"]; !reflect.DeepEqual(got, map[string]any{"state": "working", "seen": false}) {
+				t.Fatalf("legacy working report %v after modern report %v did not clear failure health: %v", legacy, modern, got)
 			}
 		}
 	}

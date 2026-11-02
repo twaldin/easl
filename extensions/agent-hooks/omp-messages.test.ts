@@ -1003,6 +1003,7 @@ test("every extension inbox request opts into protocol 3 and wakeOnly, including
   await until(() => omp.delivered.length === 1);
   await omp.record(omp.delivered[0].message);
   await until(() => easl.queue.length === 0 && easl.acks.length > 0);
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.protocol === 4));
   const inbox = easl.calls.filter((call) => call.method === "agent.inbox");
   expect(inbox.every((call) => call.params.protocol === 3 && call.params.wakeOnly === true)).toBe(true);
   expect(inbox.some((call) => call.params.waitMs > 0)).toBe(true);

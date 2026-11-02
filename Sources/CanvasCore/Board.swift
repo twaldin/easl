@@ -1282,9 +1282,9 @@ public final class Board {
     /// until the next turn starts. `turnOutcome` reports a dispatched assistant response, separate
     /// from whether background work keeps the agent working. Errors accumulate until success;
     /// aborted responses neither count nor clear them. `turnEndedAt` records when that response
-    /// ended, so spooled failures keep their original time. Protocol 4 or an explicit outcome remembers
-    /// this capability in `props.agent.turnOutcomes`, including across restarts. Legacy idle errors
-    /// last until the next working report. `unknown` agents use terminal notifications
+    /// ended, so spooled failures keep their original time. Protocol 4 or an explicit outcome makes
+    /// the current report outcome-aware. Legacy idle errors last until the next working report.
+    /// `unknown` agents use terminal notifications
     /// (`NotifyingAgent`, `via: "notifications"`).
     /// `protocol`: the integration's protocol version (`props.agent.protocol`; 1 takes
     /// out-of-band messages, `PromptTarget.takesMessages`); a report without it says 0. A report
@@ -1323,7 +1323,7 @@ public final class Board {
             }
         }
         let before = terminal.props["agent"]
-        let outcomeAware = before?["turnOutcomes"]?.bool == true || (version ?? 0) >= 4 || turnOutcome != nil
+        let outcomeAware = (version ?? 0) >= 4 || turnOutcome != nil
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
             if let last = lifecycleSeq[key], seq <= last {
@@ -1392,8 +1392,7 @@ public final class Board {
             }
         }
         if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
-        var reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
-        if outcomeAware { reported["turnOutcomes"] = .bool(true) }
+        let reported: [String: JSONValue] = ["kind": .string(kind), "protocol": (version ?? 0) > 0 ? .number(Double(version!)) : .null]
         let agent = (before ?? .object([:])).merging(.object(reported.merging(Self.reportedAgentState(draft: draft, pid: pid)) { _, new in new }))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         exitedAgents.remove(tile)
@@ -1510,7 +1509,7 @@ public final class Board {
             guard let name = value.string, let parsed = TurnOutcome(rawValue: name) else { throw BoardError.invalidParams("unknown turnOutcome") }
             outcome = parsed
         }
-        if let value = p["error"], value.string == nil { throw BoardError.invalidParams("error must be a string") }
+        if outcome != nil, let value = p["error"], value.string == nil { throw BoardError.invalidParams("error must be a string") }
         if let value = p["turnEndedAt"], value.string == nil { throw BoardError.invalidParams("turnEndedAt must be a string") }
         try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
                             call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string, turnOutcome: outcome, turnEndedAt: p["turnEndedAt"]?.string,
@@ -1581,7 +1580,6 @@ public final class Board {
         restartingAgents[tile] = nil
         let shown = terminal.props["lifecycle"]
         let lifecycle = shown.flatMap { Self.isUnseenDone($0) && !seenSinceWorking.contains(tile) || Self.isFailedTurn($0) ? $0 : nil } ?? .null
-        let agent = terminal.props["agent"]?["turnOutcomes"]?.bool == true ? agent.merging(.object(["turnOutcomes": .bool(true)])) : agent
         try update(tile, props: .object(["command": .array(command.map(JSONValue.string)), "lifecycle": lifecycle, "agent": agent]), caller: tile)
         dropComposerPrompts(of: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))

@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "e294c290be8b838a"
+const SchemaHash = "c490b1becb03609a"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -516,11 +516,11 @@ type Lifecycle struct {
 	State   string  `json:"state"`
 	Message *string `json:"message,omitempty"`
 	Seen    *bool   `json:"seen,omitempty"`
-	// The last failed dispatched model request in the current failure run, in working, blocked, or idle. At most 500 Unicode characters total, truncated at 499 plus an ellipsis (…). Never the session transcript. With outcome-aware integrations, error, errorCount, and errorSince disappear only on turnOutcome success: a normal assistant response or tool request. Starts, heartbeats, aborts, seeing the tile, agent.restart, and daemon restarts retain them. Pre-dispatch failures such as a missing API key are not reported. Legacy integrations without remembered outcome capability report errors only with idle and clear them on the next working.
+	// The last failed dispatched model request in the current failure run, in working, blocked, or idle. At most 500 Unicode characters total, truncated at 499 plus an ellipsis (…). Never the session transcript. Reports with an explicit turnOutcome or protocol 4 or later use outcome-aware behavior: only turnOutcome success clears error, errorCount, and errorSince. Starts, heartbeats, aborts, seeing the tile, agent.restart, and daemon restarts retain them while reports remain outcome-aware. Reports without turnOutcome and with protocol below 4 or omitted use legacy idle-only errors that clear on the next working, even after replacing an outcome-aware integration. Pre-dispatch throws without an assistant response event are excluded; provider-layer errors emitted as assistant responses are covered.
 	Error *string `json:"error,omitempty"`
-	// Consecutive failed dispatched model requests in the current run. Each nonstale turnOutcome error increments it and preserves errorSince. Present with error and errorSince. Legacy idle errors set it to 1. Pre-dispatch failures such as a missing API key are excluded.
+	// Consecutive failed dispatched model requests in the current run. Each nonstale turnOutcome error increments it and preserves errorSince. Present with error and errorSince. Legacy idle errors set it to 1. Pre-dispatch throws without an assistant response event are excluded.
 	ErrorCount *int `json:"errorCount,omitempty"`
-	// UTC RFC 3339 timestamp when the first failed dispatched model request in the current run ended, from agent.report turnEndedAt, preserved even when a spooled report arrives later. The host uses report receipt time when turnEndedAt is omitted, including legacy idle errors. Nanosecond precision is retained when supplied. Unchanged until turnOutcome success clears the run. Present with error and errorCount. Pre-dispatch failures such as a missing API key are excluded. Loading an older saved error without failure-run fields initializes count 1 and uses the terminal's saved updatedAt as the best available timestamp.
+	// UTC RFC 3339 timestamp when the first failed dispatched model request in the current run ended, from agent.report turnEndedAt, preserved even when a spooled report arrives later. The host uses report receipt time when turnEndedAt is omitted, including legacy idle errors. Nanosecond precision is retained when supplied. Outcome-aware reports preserve it until turnOutcome success clears the run. Present with error and errorCount. Pre-dispatch throws without an assistant response event are excluded. Loading an older saved error without failure-run fields initializes count 1 and uses the terminal's saved updatedAt as the best available timestamp.
 	ErrorSince *string `json:"errorSince,omitempty"`
 	// a `working` or `blocked` the app restored from before it last closed, which the agent hasn't confirmed since (no report, live or spooled, yet): what it was, maybe not what it is now. `agent.prompt` refuses a restored `working` (read the screen first) unless `force`
 	Restored *bool `json:"restored,omitempty"`
@@ -538,8 +538,6 @@ type TerminalPropsAgent struct {
 	SessionPath *string `json:"sessionPath,omitempty"`
 	// the integration protocol version it reports (agent.report `protocol`)
 	Protocol *int `json:"protocol,omitempty"`
-	// Remembered dispatched-model-request outcome capability, set by protocol 4 or later or an explicit agent.report turnOutcome. Persists through absent or legacy reports, integration kind changes, and agent.restart. Once remembered, only explicit outcomes change lifecycle failure health: success clears the run, error increments it, and aborted retains it.
-	TurnOutcomes *bool `json:"turnOutcomes,omitempty"`
 	// the model it runs, as its integration last reported it (agent.report_session `model`, omp: `provider/id`)
 	Model *string `json:"model,omitempty"`
 	// its thinking level, as its integration last reported it (agent.report_session `thinking`, omp: `off` … `max`)

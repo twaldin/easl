@@ -120,18 +120,18 @@ final class AgentControlTests {
 
     @Test func closedLegacyFailuresExposeNormalizedHealthBeforeTheBoardOpens() async throws {
         let error = String(repeating: "🦊", count: 501)
-        let tile = board.create(type: .terminal, props: .object(["lifecycle": .object(["state": "idle", "seen": false, "error": .string(error), "message": .string(error)])]))
+        let tile = board.create(type: .terminal, props: .object(["lifecycle": .object(["state": "idle", "seen": .bool(false), "error": .string(error), "message": .string(error)])]))
         let savedAt = Date(timeIntervalSince1970: tile.updatedAt.timeIntervalSince1970.rounded(.down))
         let since = savedAt.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
         let bounded = String(repeating: "🦊", count: 499) + "…"
-        let expected: JSONValue = .object(["state": "idle", "seen": false, "error": .string(bounded), "message": .string(bounded), "errorCount": 1, "errorSince": .string(since)])
+        let expected: JSONValue = .object(["state": "idle", "seen": .bool(false), "error": .string(bounded), "message": .string(bounded), "errorCount": 1, "errorSince": .string(since)])
         try registry.close(board.id)
         let closed = try #require(try await listed()[tile.id])
-        #expect(closed["open"] == false)
+        #expect(closed["open"] == .bool(false))
         #expect(closed["lifecycle"] == expected)
         _ = try await registry.open(root: board.root)
         let opened = try #require(try await listed()[tile.id])
-        #expect(opened["open"] == true)
+        #expect(opened["open"] == .bool(true))
         #expect(opened["lifecycle"] == expected)
     }
 

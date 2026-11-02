@@ -130,7 +130,7 @@ func (b *Board) ReportLifecycle(r Report) error {
 		b.lifecycleSeq[key] = *r.Seq
 	}
 	before, _ := terminal.Props["agent"].(map[string]any)
-	outcomes := before["turnOutcomes"] == true || r.TurnOutcome != "" || r.Protocol != nil && *r.Protocol >= 4
+	outcomes := r.TurnOutcome != "" || r.Protocol != nil && *r.Protocol >= 4
 	state, message := r.State, r.Message
 	switch {
 	case state == "blocked" && r.Call != nil:
@@ -235,9 +235,6 @@ func (b *Board) ReportLifecycle(r Report) error {
 	}
 	patch := r.agentPatch()
 	patch["protocol"] = version
-	if outcomes {
-		patch["turnOutcomes"] = true
-	}
 	agent, _ := model.Merge(orEmpty(terminal.Props["agent"]), patch).(map[string]any)
 	if _, err := b.Update(r.Tile, nil, nil, nil, map[string]any{"lifecycle": lifecycle, "agent": agent}, r.Tile, ""); err != nil {
 		return err
@@ -490,9 +487,6 @@ func (b *Board) RestartedAgent(tile string, command []string, agent any) error {
 	var kept any
 	if shown := terminal.Props["lifecycle"]; unseenDone(shown) && !b.seenSinceWorking[tile] || failedTurn(shown) {
 		kept = model.Clone(shown)
-	}
-	if previous, _ := terminal.Props["agent"].(map[string]any); previous["turnOutcomes"] == true {
-		agent = model.Merge(orEmpty(agent), map[string]any{"turnOutcomes": true})
 	}
 	if _, err := b.Update(tile, nil, nil, nil, map[string]any{"command": words, "lifecycle": kept, "agent": agent}, tile, ""); err != nil {
 		return err

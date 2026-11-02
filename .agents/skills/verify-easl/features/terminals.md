@@ -10,6 +10,7 @@ Users start shells and agents in terminal tiles, type into them, and return to t
 - `terminal-remote` observes a scratch host's real shell rather than a local replacement.
 - `terminal-native-activity` distinguishes native-key echo and idle-clock activity from text insertion.
 - `terminal-rekey-focus` preserves keyboard ownership when a remote host replaces a new terminal's provisional ID.
+- `terminal-model-error` keeps the existing red header error indicator visible for a failed dispatched model request in working, blocked, or idle.
 
 ## How to get to it (user POV)
 
@@ -40,3 +41,13 @@ Preconditions: a claimed guest and a selected scratch board. Use a fresh board w
 - A terminal may be parked as a card. Zoom or pan it into view, then prove fresh output in native pixels.
 - App restart preserves shells; `dev.sh stop` ends this home's shells. Use the correct operation.
 - Never type into an unknown agent's approval dialog. The fixture is an owned shell unless a journey explicitly starts an isolated agent.
+
+## Dispatched model error indicator
+
+Keep an owned foreground process running in the scratch terminal before seeding lifecycle reports. At a shell prompt, the program watcher removes exited agent identity and its lifecycle, so that is not a valid running-agent fixture.
+
+1. Send `agent.report` for that tile with `kind: "omp"`, `state: "working"`, `protocol: 4`, `turnOutcome: "error"`, and a scratch diagnostic. Check `agent.list` for `error`, `errorCount: 1`, and UTC `errorSince`.
+2. Capture the blue working dot and red `error` header text together. Send ordinary protocol-4 blocked and idle reports, and capture the red error in both states.
+3. Send a protocol-4 success outcome while working. Check that all three failure fields disappear and the header restores its latest command status or hides it.
+
+These seeded reports prove the native indicator, not omp event delivery. Prove dispatched provider failures and pending background work separately with an isolated omp session. Pre-dispatch failures without assistant response events are outside this contract.

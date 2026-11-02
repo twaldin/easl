@@ -264,21 +264,19 @@ struct BoardTests {
             #expect(restored.objects[tile]?.props["lifecycle"]?["error"] == "provider unavailable")
             #expect(restored.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
             #expect(restored.objects[tile]?.props["lifecycle"]?["errorSince"] == since)
-            #expect(restored.objects[tile]?.props["agent"]?["turnOutcomes"] == true)
             try restored.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 10, source: "canvas-omp", error: "replay", turnOutcome: .error)
             #expect(restored.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
             #expect(restored.objects[tile]?.props["lifecycle"]?["error"] == "provider unavailable")
-            try restored.restartedAgent(tile: tile, command: ["omp"], agent: .object(["kind": "omp", "protocol": 1]))
-            #expect(restored.objects[tile]?.props["agent"]?["turnOutcomes"] == true)
+            try restored.restartedAgent(tile: tile, command: ["omp"], agent: .object(["kind": "omp", "protocol": 4]))
             for (seq, state) in [(11, LifecycleState.idle), (12, .working), (13, .blocked), (14, .unknown)] {
-                try restored.reportLifecycle(tile: tile, kind: "omp", state: state, message: nil, seq: seq, source: "canvas-omp")
+                try restored.reportLifecycle(tile: tile, kind: "omp", state: state, message: nil, seq: seq, source: "canvas-omp", protocol: 4)
                 restored.markSeen(tile)
                 #expect(restored.objects[tile]?.props["lifecycle"]?["error"] == "provider unavailable")
                 #expect(restored.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
                 #expect(restored.objects[tile]?.props["lifecycle"]?["errorSince"] == since)
             }
             try restored.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 15, source: "canvas-omp", turnOutcome: .success)
-            #expect(restored.objects[tile]?.props["lifecycle"] == .object(["state": "working", "seen": false]))
+            #expect(restored.objects[tile]?.props["lifecycle"] == .object(["state": "working", "seen": .bool(false)]))
         }
     }
 
@@ -287,25 +285,24 @@ struct BoardTests {
         let tile = board.create(type: .terminal, props: .object([:])).id
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: nil, protocol: 4)
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 2, source: nil, turnOutcome: .aborted)
-        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 3, source: nil, final: "partial answer")
-        #expect(board.objects[tile]?.props["lifecycle"] == .object(["state": "idle", "seen": false]))
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 3, source: nil, final: "partial answer", protocol: 4)
+        #expect(board.objects[tile]?.props["lifecycle"] == .object(["state": "idle", "seen": .bool(false)]))
         #expect(NeedsYou.of(board.objects.values) == nil)
     }
 
     @Test func savedLegacyFailuresGainStableHealthMetadataWithoutBecomingOutcomeAware() throws {
         let board = makeBoard()
         let long = String(repeating: "🦊", count: 501)
-        let tile = board.create(type: .terminal, props: .object(["lifecycle": .object(["state": "idle", "seen": false, "error": .string(long)])])).id
+        let tile = board.create(type: .terminal, props: .object(["lifecycle": .object(["state": "idle", "seen": .bool(false), "error": .string(long)])])).id
         var snapshot = board.snapshot
         let index = try #require(snapshot.objects.firstIndex { $0.id == tile })
         snapshot.objects[index].updatedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let restored = Board(snapshot: snapshot)
-        let expected: JSONValue = .object(["state": "idle", "seen": false, "error": .string(String(repeating: "🦊", count: 499) + "…"), "errorCount": 1, "errorSince": "2023-11-14T22:13:20.000Z"])
+        let expected: JSONValue = .object(["state": "idle", "seen": .bool(false), "error": .string(String(repeating: "🦊", count: 499) + "…"), "errorCount": 1, "errorSince": "2023-11-14T22:13:20.000Z"])
         #expect(restored.objects[tile]?.props["lifecycle"] == expected)
-        #expect(restored.objects[tile]?.props["agent"]?["turnOutcomes"] == nil)
         #expect(Board(snapshot: restored.snapshot).objects[tile]?.props["lifecycle"] == expected)
         try restored.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: nil)
-        #expect(restored.objects[tile]?.props["lifecycle"] == .object(["state": "working", "seen": false]))
+        #expect(restored.objects[tile]?.props["lifecycle"] == .object(["state": "working", "seen": .bool(false)]))
     }
 
     @Test func followReusesOneTilePerTerminalAndIgnoresFilesOutsideTheProject() throws {
