@@ -1744,6 +1744,27 @@ for (const legacy of [false, true]) {
   });
 }
 
+test("a hangup preserves a settled final waiting for its outcome reply", async () => {
+  const easl = fakeEasl();
+  const response = Promise.withResolvers<void>();
+  easl.outcomeReported = response.promise;
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Keep this answer." }] };
+  await omp.emit("message_end", { message: stopped });
+  await omp.emit("agent_end", { messages: [stopped] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+  vi.advanceTimersByTime(250);
+  await turn();
+  process.emit("SIGHUP");
+  await omp.emit("session_shutdown");
+  response.resolve();
+  await settle(500);
+  expect(easl.reports.at(-1)).toMatchObject({ state: "idle", final: "Keep this answer." });
+  expect(easl.calls.filter((call) => call.method === "agent.release")).toEqual([]);
+});
+
 test("a failed response remains reportable while background work keeps the run working, until a successful response", async () => {
   const easl = fakeEasl();
   const omp = fakeOmp(easl);
