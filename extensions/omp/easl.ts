@@ -95,6 +95,7 @@ export default function canvas(pi: ExtensionAPI): void {
   let failure: string | undefined;
   let reportCapability = { legacy: false };
   let outcomeReport: Promise<void> | undefined;
+  let reportGeneration = 0;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
@@ -105,7 +106,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
     const send = () => {
-      const session = watched;
+      const generation = reportGeneration;
       const legacyError = settled ? failure : undefined;
       const params: Parameters<typeof report>[1] = {
         tile: tile!,
@@ -123,7 +124,7 @@ export default function canvas(pi: ExtensionAPI): void {
         pid: process.pid,
       };
       const deliver = async () => {
-        if (session !== watched) return;
+        if (generation !== reportGeneration) return;
         const capability = reportCapability;
         if (capability.legacy) {
           if (turnOutcome) return;
@@ -136,7 +137,7 @@ export default function canvas(pi: ExtensionAPI): void {
           try {
             return await client.api.agent.report(params);
           } catch (error) {
-            if (session !== watched || !params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
+            if (generation !== reportGeneration || !params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
             capability.legacy = true;
             delete params.turnOutcome;
             delete params.turnEndedAt;
@@ -410,7 +411,10 @@ export default function canvas(pi: ExtensionAPI): void {
     stopWatchingSession();
     clearTimeout(idleTimer);
     // Hung up or terminated, the tile keeps its agent for the session that resumes it (`hungUp`).
-    if (reporting && !hungUp) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    if (reporting && !hungUp) {
+      reportGeneration++;
+      void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    }
     // Nothing reports for the tile again (an easl coming back) until a session starts.
     reporting = false;
     // Ends the long poll; what this session never recorded bounces with a release, else stays
