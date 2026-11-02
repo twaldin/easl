@@ -375,11 +375,16 @@ extension HtmlTile {
       sheet.replaceSync(element.textContent);
       const base = styleBases.get(element) || document.baseURI;
       await sanitizeRules(sheet, base);
+      const serialized = [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
       const reparsed = new CSSStyleSheet();
-      reparsed.replaceSync([...sheet.cssRules].map((rule) => rule.cssText).join('\n'));
+      reparsed.replaceSync(serialized);
       await sanitizeRules(reparsed, base);
-      element.textContent = [...reparsed.cssRules].map((rule) => rule.cssText).join('\n')
-        .replace(/&(?=[#a-z])/gi, '\\26 ').replace(/<(?=[a-z/!?])/gi, '\\3c ');
+      if ([...reparsed.cssRules].map((rule) => rule.cssText).join('\n') !== serialized) {
+        element.remove();
+        return;
+      }
+      element.textContent = serialized
+        .replace(/&(?=#(?:\d|x[0-9a-f])|[a-z])/gi, '\\26 ').replace(/<(?=[a-z/!?])/gi, '\\3c ');
     };
     const sanitize = async (element) => {
       const tag = element.localName.toLowerCase();

@@ -447,6 +447,10 @@ private enum HtmlKeyboard {
         mismatchedRect.setAttribute('cursor', 'url(https://example.invalid/cursor.png), auto');
         mismatchedSVG.append(mismatchedRect);
         document.body.append(mismatchedSVG);
+        const nestedSelector = String.raw`:dir(ltr\)\{\}body\{background\:url\(https\:\/\/beacon\.invalid\/nested\)\}\:dir\(ltr) { color:red }`;
+        const nestedStyle = document.createElement('style');
+        nestedStyle.textContent = ':dir(' + CSS.escape('ltr) {} ' + nestedSelector + ' :dir(ltr') + ') { color:red }';
+        document.head.append(nestedStyle);
         const mismatchedStyle = document.createElement('style');
         mismatchedStyle.textContent = '.unused { --x: &#x7d .entity-target{background:&#x75rl(https://entity.invalid/leak)} }';
         mismatchedSVG.append(mismatchedStyle);
