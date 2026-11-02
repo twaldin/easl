@@ -14,10 +14,10 @@ private enum TerminalSubmission {
         if !condition() { throw Failed(message: message) }
     }
 
-    static func until(_ predicate: () -> Bool) async throws {
+    static func until(failure: @autoclosure () -> String = "terminal observation deadline expired", _ predicate: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while !predicate() {
-            if ContinuousClock.now >= deadline { throw Failed(message: "terminal observation deadline expired") }
+            if ContinuousClock.now >= deadline { throw Failed(message: failure()) }
             await MainTurns.next()
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -325,7 +325,13 @@ private enum TerminalSubmission {
     static func refusedPressCannotLeakItsRelease(queued: Bool) async throws {
         let f = Fixture()
         defer { f.close() }
-        try await until { f.surface != nil }
+        let receipt = f.receipt.appendingPathExtension("releases")
+        func observation() -> String {
+            let screen = (0..<10).compactMap { f.surface?.viewportRow($0, columns: 80) }.joined(separator: "\n")
+            let received = (try? Data(contentsOf: receipt)).map { String(reflecting: String(decoding: $0, as: UTF8.self)) } ?? "<missing>"
+            return "queued=\(queued), attached=\(f.surface != nil), running=\(f.surface?.isProcessRunning ?? false), exited=\(f.exited), screen=\(String(reflecting: screen)), receipt=\(received)"
+        }
+        try await until(failure: "waiting for initial Kitty fixture attachment; \(observation())") { f.surface != nil }
         func key(_ type: NSEvent.EventType, _ text: String, _ code: UInt16) -> NSEvent {
             NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
                              timestamp: ProcessInfo.processInfo.systemUptime,
@@ -342,7 +348,7 @@ private enum TerminalSubmission {
                     return pasted
                 }, delay: .seconds(30))
             }
-            try await until { pasted }
+            try await until(failure: "waiting for original paste before queuing Kitty keys; \(observation())") { pasted }
             f.view.keyDown(with: key(.keyDown, "x", 7))
         } else {
             pending = nil
@@ -350,7 +356,6 @@ private enum TerminalSubmission {
             f.view.keyDown(with: key(.keyDown, "e", 14))
         }
         defer { pending?.cancel() }
-        let receipt = f.receipt.appendingPathExtension("releases")
         let script = """
         import os, tty
         tty.setraw(0)
@@ -363,7 +368,9 @@ private enum TerminalSubmission {
         options.command = ShellWords.quote(["/usr/bin/python3", "-c", script])
         f.view.configuration = options
         if !queued { f.view.controller = f.controller }
-        try await until { f.surface?.viewportRow(0, columns: 80)?.contains("READY") == true }
+        try await until(failure: "waiting for Kitty mode READY marker; \(observation())") {
+            f.surface?.viewportRow(0, columns: 80)?.contains("READY") == true
+        }
         if queued { f.view.keyDown(with: key(.keyDown, "e", 14)) }
         f.view.keyUp(with: key(.keyUp, "e", 14))
         if let pending {
@@ -378,7 +385,9 @@ private enum TerminalSubmission {
         f.view.mouseDown(with: click)
         f.view.keyDown(with: key(.keyDown, "a", 0))
         f.view.keyUp(with: key(.keyUp, "a", 0))
-        try await until { (try? String(contentsOf: receipt, encoding: .utf8))?.contains("\u{1b}[97;1:3u") == true }
+        try await until(failure: "waiting for accepted a-key release ESC[97;1:3u; \(observation())") {
+            (try? String(contentsOf: receipt, encoding: .utf8))?.contains("\u{1b}[97;1:3u") == true
+        }
         let received = try String(contentsOf: receipt, encoding: .utf8)
         print("KEY_RELEASE_RECEIPT \(String(reflecting: received))")
         try require(received == "\u{1b}[97u\u{1b}[97;1:3u",
