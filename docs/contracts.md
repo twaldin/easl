@@ -940,6 +940,8 @@ Outcome-aware behavior is selected per report by an explicit `turnOutcome` or `p
 
 If `agent.report` rejects `turnOutcome` or `turnEndedAt` with `invalid_params` naming only those fields as unknown, omp resends the same report without them. It remembers that the connection is legacy until `watchCanvasReturn` observes easl reconnecting. Later reports use protocol 3, omit outcomes, and carry the last failed run's error only with its idle settle, as the v0.3.3 extension did. The idle settle waits for any pending outcome report, so a delayed rejection cannot lose the error. Successful turns keep their final answer. Other report errors do not enable this fallback.
 
+The fallback requires a live unknown-parameter rejection. Before that rejection, reports spooled while an old host is unavailable, or after an outcome request times out, retain the outcome-aware format. A v0.3.3 host cannot replay those outcome reports and may still show the failed turn as done. The fallback does not migrate saved reports.
+
 Loading an older saved lifecycle with only `error` fills `errorCount: 1` and uses the terminal's saved `updatedAt` for `errorSince`, the best available timestamp. Existing run fields remain unchanged. The same normalization applies to closed boards in `agent.list`.
 
 `Board.turnErrors` separately preserves `agent.read final` cut-off information. Error outcomes record the error, and aborted outcomes record `interrupted` without changing lifecycle failure health. `agent.read final: true` adds `cutOff` when partial text exists, or fails `unavailable` naming the error when none exists. A success clears this cut-off reason. Legacy idle errors retain their existing cut-off behavior.

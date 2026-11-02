@@ -105,6 +105,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
     const send = () => {
+      const session = watched;
       const legacyError = settled ? failure : undefined;
       const params: Parameters<typeof report>[1] = {
         tile: tile!,
@@ -122,6 +123,7 @@ export default function canvas(pi: ExtensionAPI): void {
         pid: process.pid,
       };
       const deliver = async () => {
+        if (session !== watched) return;
         const capability = reportCapability;
         if (capability.legacy) {
           if (turnOutcome) return;
@@ -134,7 +136,7 @@ export default function canvas(pi: ExtensionAPI): void {
           try {
             return await client.api.agent.report(params);
           } catch (error) {
-            if (!params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
+            if (session !== watched || !params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
             capability.legacy = true;
             delete params.turnOutcome;
             delete params.turnEndedAt;
