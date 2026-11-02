@@ -402,6 +402,8 @@ The native key-window cases also refuse an enabled Zoom In command bound to Opti
 
 `TerminalSubmission` checks text and Enter delivery, stale exits, cancellation, replacement during submission, and queued keys bound to an old attachment. Its early-typing case refuses `echo ` without an attachment, attaches a live process, and types `burst` and Return. Only a later explicit control may appear in the PTY receipt, never `burst`. A terminal click must then allow a complete new typing run exactly once. Copy must still work on an exited terminal after a raw-key refusal.
 
+Two Kitty keyboard protocol cases use a real raw-mode PTY consumer. A refused press's release must not arrive after attachment readiness or after a queued stale-attachment refusal. After a click, an accepted press and its release must arrive in order.
+
 ### Move tool input isolation
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.

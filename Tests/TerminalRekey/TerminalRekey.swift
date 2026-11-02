@@ -270,7 +270,7 @@ private enum TerminalRekey {
         func refusalVisible() -> Bool {
             canvas.subviews.compactMap { $0 as? NoticePill }.contains { pill in
                 !pill.isHidden && pill.alphaValue == 1 && pill.subviews.compactMap { $0 as? NSTextField }.contains {
-                    $0.stringValue.contains("Nothing typed")
+                    $0.stringValue.contains("Nothing typed") && $0.stringValue.localizedCaseInsensitiveContains("click")
                 }
             }
         }
