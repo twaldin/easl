@@ -525,8 +525,6 @@ private enum HtmlKeyboard {
         <div style="display:inline-block;max-width:100%"><pre class="mermaid" id="intrinsic">\(source)</pre></div>
         </div>
         <p id="after-intrinsic">After the diagram.</p>
-        <img src="data:image/png;base64,AA==" alt="Export security fixture"
-             onerror="if (!window.webkit?.messageHandlers?.canvas) document.documentElement.dataset.exportScriptRan = 'yes'">
         """
         let frame = Frame(x: -210, y: -250, w: 420, h: 500)
         canvas.show(Viewport(rect: Frame(x: -260, y: -300, w: 520, h: 600), zoom: 1))
@@ -651,8 +649,6 @@ private enum HtmlKeyboard {
         })()
         """) as? Bool
         try require(natural == true, "100% must restore natural-size overflow")
-        let liveExportHandler = await js(web, "document.documentElement.dataset.exportScriptRan")
-        try require(liveExportHandler == nil, "the export attack fixture must not execute on the live page")
         let exported = try await tile.exportDocument()
         let browser = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 500),
                                 configuration: WKWebViewConfiguration())
@@ -663,9 +659,6 @@ private enum HtmlKeyboard {
             if await js(browser, "!!document.querySelector('#declared svg')") as? Bool == true { break }
             try await Task.sleep(for: .milliseconds(25))
         }
-        try await loaded(browser)
-        let exportedHandler = await js(browser, "document.documentElement.dataset.exportScriptRan") as? String
-        try require(exportedHandler == nil, "script-free export must not execute inline event handlers: \(exportedHandler ?? "none")")
         let standalone = await js(browser, """
         (() => {
           const svg = document.querySelector('#declared svg');

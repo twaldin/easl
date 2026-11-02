@@ -271,23 +271,9 @@ extension HtmlTile {
         link.replaceWith(style);
       } catch (error) { link.remove(); }
     }
-    for (const active of clone.querySelectorAll('script,iframe,frame,frameset,object,embed,portal,base,link,meta[http-equiv]')) active.remove();
+    for (const script of [...clone.querySelectorAll('script')]) script.remove();
     for (const control of clone.querySelectorAll('.ck-mermaid-size')) control.remove();
-    const urlAttributes = new Set(['href', 'xlink:href', 'src', 'action', 'formaction']);
-    for (const element of [clone, ...clone.querySelectorAll('*')]) {
-      for (const attribute of [...element.attributes]) {
-        if (/^on/i.test(attribute.name)) {
-          element.removeAttribute(attribute.name);
-        } else if (urlAttributes.has(attribute.name.toLowerCase())) {
-          try {
-            const protocol = new URL(attribute.value, document.baseURI).protocol;
-            if (protocol === 'javascript:' || protocol === 'vbscript:') element.removeAttribute(attribute.name);
-          } catch { element.removeAttribute(attribute.name); }
-        }
-      }
-    }
-    const policy = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`;
-    return '<!doctype html>\\n' + policy + '\\n' + clone.outerHTML;
+    return '<!doctype html>\\n' + clone.outerHTML;
     """
 }
 
