@@ -359,7 +359,7 @@ private enum TerminalSubmission {
         let script = """
         import os, tty
         tty.setraw(0)
-        os.write(1, b'\\x1b[>11uREADY')
+        os.write(1, b'fixture startup banner\\r\\n\\x1b[>11uREADY')
         with open(\(String(reflecting: receipt.path)), 'wb', buffering=0) as receipt:
             while True:
                 receipt.write(os.read(0, 4096))
