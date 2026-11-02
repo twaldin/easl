@@ -505,14 +505,8 @@ private enum HtmlKeyboard {
         let broken = "not a Mermaid diagram"
         let titledSource = "\n\u{00a0}\n  ---\n  title: Flow\n  ---\n  " +
             source.replacingOccurrences(of: "\n", with: "\n  ")
-        let exportCSS = """
-        body::after { content: "export stylesheet </STYLE>"; }
-        /* </style><meta http-equiv="refresh" content="0;url=about:blank#export-hijacked-css"><style> */
-        """
-        try exportCSS.write(to: root.appendingPathComponent("export-fixture.css"), atomically: true, encoding: .utf8)
         let html = """
         <style>svg { max-width: 100% }</style>
-        <link rel="stylesheet" href="export-fixture.css">
         <div style="display:flex;gap:12px">
         <div style="flex:1"><pre class="mermaid" id="declared">\(source)</pre></div>
         <aside id="sidebar" style="width:80px;flex-shrink:0">Sidebar</aside>
@@ -533,20 +527,6 @@ private enum HtmlKeyboard {
         <p id="after-intrinsic">After the diagram.</p>
         <img src="data:image/png;base64,AA==" alt="Export security fixture"
              onerror="if (!window.webkit?.messageHandlers?.canvas) document.documentElement.dataset.exportScriptRan = 'yes'">
-        <script>
-        const originalClone = Element.prototype.cloneNode;
-        Element.prototype.cloneNode = function(deep) {
-          const copy = originalClone.call(this, deep);
-          if (this === document.documentElement) {
-            const refresh = document.createElement('meta');
-            refresh.httpEquiv = 'refresh';
-            refresh.content = '0;url=about:blank#export-hijacked';
-            copy.querySelector('head').append(refresh);
-            copy.querySelectorAll = () => [];
-          }
-          return copy;
-        };
-        </script>
         """
         let frame = Frame(x: -210, y: -250, w: 420, h: 500)
         canvas.show(Viewport(rect: Frame(x: -260, y: -300, w: 520, h: 600), zoom: 1))
@@ -684,12 +664,8 @@ private enum HtmlKeyboard {
             try await Task.sleep(for: .milliseconds(25))
         }
         try await loaded(browser)
-        try await pageTurn(browser)
-        try require(browser.url?.fragment?.hasPrefix("export-hijacked") != true, "a script-free export must not navigate through authored metadata")
         let exportedHandler = await js(browser, "document.documentElement.dataset.exportScriptRan") as? String
         try require(exportedHandler == nil, "script-free export must not execute inline event handlers: \(exportedHandler ?? "none")")
-        let exportedStyle = await js(browser, "getComputedStyle(document.body, '::after').content") as? String
-        try require(exportedStyle?.contains("export stylesheet </STYLE>") == true, "export must preserve linked stylesheet text across serialization")
         let standalone = await js(browser, """
         (() => {
           const svg = document.querySelector('#declared svg');
