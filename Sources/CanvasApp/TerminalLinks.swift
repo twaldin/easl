@@ -195,6 +195,7 @@ final class CanvasTerminalView: TerminalView {
     private var inputIndex = 0
     private var activeInput: ActiveInput?
     private var pasteKeyUp: UInt16?
+    var requiresInputClick = false
     private static var imageUploads: [String: [UUID: Task<Void, Never>]] = [:]
 
     private static let imageDragTypes: [NSPasteboard.PasteboardType] = {
@@ -256,11 +257,12 @@ final class CanvasTerminalView: TerminalView {
 
     private func acceptsKey(_ event: NSEvent, on attachment: TerminalSurface?) -> Bool {
         guard let attachment, surface === attachment else { return false }
-        return attachment.isProcessRunning || keyIsBinding(event, on: attachment)
+        return (!requiresInputClick && attachment.isProcessRunning) || keyIsBinding(event, on: attachment)
     }
 
     private func refuseInput(on attachment: TerminalSurface?) {
-        onImageProblem?("Input not sent: the terminal attachment is unavailable. Inspect the terminal before typing again.")
+        requiresInputClick = true
+        onImageProblem?("Input not sent: click the terminal before typing again.")
         if let attachment, surface === attachment, !attachment.isProcessRunning {
             attachment.requestClose()
         }
@@ -508,6 +510,7 @@ final class CanvasTerminalView: TerminalView {
     private(set) var forcingDefaultBrowser = false
 
     override func mouseDown(with event: NSEvent) {
+        requiresInputClick = false
         onClick?()
         let flags = event.modifierFlags
         let point = convert(event.locationInWindow, from: nil)

@@ -208,6 +208,7 @@ private enum TerminalSubmission {
         let accepted = await submission.value
         try require(!accepted, "the replaced submission must not complete")
         try await until { notices.count == 1 }
+        f.view.keyDown(with: event)
         let control = await f.submit("explicit-key-control")
         try require(control, "refusing an old key must not close the replacement")
         try await until { (try? String(contentsOf: receipt, encoding: .utf8)) == "explicit-key-control\n" }
@@ -221,6 +222,14 @@ private enum TerminalSubmission {
         try require(f.view.performBindingAction("select_all"), "the exited screen must remain selectable")
         var notices: [String] = []
         f.view.onImageProblem = { notices.append($0) }
+        let refused = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                       timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: f.window.windowNumber, context: nil,
+                                       characters: "e", charactersIgnoringModifiers: "e",
+                                       isARepeat: false, keyCode: 14)!
+        f.view.keyDown(with: refused)
+        try require(notices.count == 1, "raw input must be refused before checking Copy")
+        notices.removeAll()
         let before = NSPasteboard.general.changeCount
         let copy = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
                                    timestamp: ProcessInfo.processInfo.systemUptime,

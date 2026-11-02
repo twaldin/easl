@@ -162,7 +162,7 @@ final class CanvasView: NSScrollView {
     let remote: RemoteSource?
     /// What the user had going on a remote board's provisional objects the host's ids replaced
     /// (`Board.onHostRekey`): carried to the host's object when it shows.
-    private var rekeyed: [ObjectID: (selected: Bool, draft: NoteTile.Draft?, browser: TileFrameView?, terminalFocus: Bool)] = [:]
+    private var rekeyed: [ObjectID: (selected: Bool, draft: NoteTile.Draft?, browser: TileFrameView?, terminalFocus: Bool, terminalNeedsClick: Bool)] = [:]
     /// Whether the opening view is in place: nothing is saved before it, or a board closed in its
     /// first turn would record the unplaced view over the real one.
     private var viewPlaced = false
@@ -273,7 +273,8 @@ final class CanvasView: NSScrollView {
             let browser = frame.flatMap { $0.content is BrowserTile ? $0 : nil }
             if browser != nil { self.tiles.removeValue(forKey: provisional) }
             let terminalFocus = NSApp.isActive && self.window?.isKeyWindow == true && self.focusedTerminal == provisional
-            self.rekeyed[host] = (self.selection.contains(provisional), (frame?.content as? NoteTile)?.takeDraft(), browser, terminalFocus)
+            self.rekeyed[host] = (self.selection.contains(provisional), (frame?.content as? NoteTile)?.takeDraft(), browser, terminalFocus,
+                                 (frame?.content as? TerminalTile)?.terminal.requiresInputClick ?? false)
         }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
@@ -384,6 +385,7 @@ final class CanvasView: NSScrollView {
                     setSelection(selected)
                 }
                 if let draft = carried.draft { (tiles[object.id]?.content as? NoteTile)?.resume(draft) }
+                (tiles[object.id]?.content as? TerminalTile)?.terminal.requiresInputClick = carried.terminalNeedsClick
                 if carried.terminalFocus { (tiles[object.id]?.content as? TerminalTile)?.focus() }
             }
         case .objectUpdated(let object):
@@ -831,7 +833,8 @@ final class CanvasView: NSScrollView {
               !HyperMonitor.isHyper(event.modifierFlags) else { return true }
         guard let remote, let id = focusedTerminal, remote.mirror.isProvisional(id),
               !CanvasWindowController.allowsProvisionalTerminalKey(event) else { return true }
-        showNotice("Terminal not ready. Nothing typed; try again after it starts.")
+        (tiles[id]?.content as? TerminalTile)?.terminal.requiresInputClick = true
+        showNotice("Terminal not ready. Nothing typed; click the terminal after it starts.")
         return false
     }
 
