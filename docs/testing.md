@@ -29,7 +29,7 @@ The native note Mermaid prose-churn CI step uses `Tests/NoteMermaidChurn/run.py 
 
 CI reports the 50 ms churn and publication/display gaps, the 2.25 s hostile active-time upper bound, and the 750 ms maximum recovery excess. Each timing record includes its limit, `withinLimit`, and `assertsTiming: false`.
 
-Enforce all three upper limits in the queued GUI guest at every release check and on PRs that change note display or diagram rendering. Require five passing runs on the exact head with neither `--ci-timing-report-only` nor `--profile`, using the [exact guest commands](../.agents/skills/verify-easl/features/note-mermaid.md#run-the-native-regressions). Retain all timings and stop on the first failure. Shared-runner timing is report-only; an unrelated PR's timing regression can therefore surface at the release check.
+Enforce all three upper limits in the queued GUI guest at every release check and on PRs that change note display or diagram rendering. Require five passing runs on the exact head with neither `--ci-timing-report-only` nor `--profile`, using the [exact guest commands](../.agents/skills/verify-easl/features/note-mermaid.md#run-the-native-regressions). Retain all timings and stop on the first failure. Shared-runner churn timing is report-only; an unrelated PR's timing regression can therefore surface at the release check.
 
 The following named tests use isolated child processes while the rest of Core stays parallel:
 
