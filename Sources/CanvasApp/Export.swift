@@ -370,7 +370,7 @@ extension HtmlTile {
         }
       }
     };
-    const sanitizeStyle = async (element) => {
+    const sanitizeStyle = async (element, foreign) => {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(element.textContent);
       const base = styleBases.get(element) || document.baseURI;
@@ -383,11 +383,12 @@ extension HtmlTile {
         element.remove();
         return;
       }
-      element.textContent = serialized
-        .replace(/&(?=#(?:\d|x[0-9a-f])|[a-z])/gi, '\\26 ').replace(/<(?=[a-z/!?])/gi, '\\3c ');
+      const text = foreign ? serialized.replace(/&(?=#(?:\d|x[0-9a-f])|[a-z])/gi, '\\26 ') : serialized;
+      element.textContent = text.replace(/<(?=[a-z/!?])/gi, '\\3c ');
     };
-    const sanitize = async (element) => {
+    const sanitize = async (element, foreign = false) => {
       const tag = element.localName.toLowerCase();
+      foreign = foreign || tag === 'svg' || tag === 'math' || element.namespaceURI !== htmlNS;
       if (![htmlNS, svgNS, mathNS].includes(element.namespaceURI) || removedElements.has(tag) ||
           (tag === 'meta' && [...element.attributes].some((attribute) => ['http-equiv', 'charset'].includes(attribute.localName.toLowerCase())))) {
         element.remove();
@@ -416,7 +417,7 @@ extension HtmlTile {
         else attribute.value = replacement;
       }
       if (tag === 'style') {
-        await sanitizeStyle(element);
+        await sanitizeStyle(element, foreign);
         return;
       }
       if (tag === 'textarea' || tag === 'title') {
@@ -425,7 +426,7 @@ extension HtmlTile {
       }
       const children = element.localName === 'template' && element.namespaceURI === htmlNS ? element.content : element;
       for (const child of [...children.childNodes]) {
-        if (child.nodeType === Node.ELEMENT_NODE) await sanitize(child);
+        if (child.nodeType === Node.ELEMENT_NODE) await sanitize(child, foreign);
         else if (child.nodeType !== Node.TEXT_NODE) child.remove();
       }
       if (tag === 'form') element.replaceWith(...element.childNodes);

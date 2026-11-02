@@ -277,6 +277,7 @@ private enum HtmlKeyboard {
                  document.querySelector('#table').getBoundingClientRect().height > 0, 'table content and print-only styles');
           expect(getComputedStyle(document.querySelector('#responsive')).color === 'rgb(1, 2, 3)', 'responsive CSS range query');
           expect(getComputedStyle(document.querySelector('#namespace-rect')).fill === 'rgb(255, 0, 0)', 'namespaced static SVG styling');
+          expect(getComputedStyle(document.querySelector('#xabc')).color === 'rgb(4, 5, 6)', 'nested ampersand selector');
           expect(getComputedStyle(document.querySelector('canvas-pane'), '::before').content.includes('Before'), 'kit pane label');
           for (const [id, href] of [['https', 'https://example.invalid/export'], ['http', 'http://example.invalid/export'],
                                     ['mail', 'mailto:export@example.invalid'], ['fragment', '#table']]) {
@@ -383,6 +384,8 @@ private enum HtmlKeyboard {
         <style media="print">#table { display:none }</style>
         <style>@media (width < 2000px) { #responsive { color:rgb(1,2,3) } }</style>
         <p id="responsive">Responsive content</p>
+        <style>.amp-box { &#xabc { color:rgb(4,5,6) } }</style>
+        <p class="amp-box" id="xabc">Nested selector content</p>
         <pre id="diagram" class="mermaid">flowchart LR
         A[Start] --> B[Finish]</pre>
         <p id="formula">$x^2 + y^2$</p>
@@ -454,6 +457,11 @@ private enum HtmlKeyboard {
         const mismatchedStyle = document.createElement('style');
         mismatchedStyle.textContent = '.unused { --x: &#x7d .entity-target{background:&#x75rl(https://entity.invalid/leak)} }';
         mismatchedSVG.append(mismatchedStyle);
+        const foreignTemplate = document.createElement('template');
+        const templateStyle = document.createElement('style');
+        templateStyle.textContent = mismatchedStyle.textContent;
+        foreignTemplate.content.append(templateStyle);
+        mismatchedSVG.append(foreignTemplate);
         const entityTarget = document.createElement('div');
         entityTarget.id = 'entity-target';
         entityTarget.className = 'entity-target';
