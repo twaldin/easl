@@ -81,7 +81,7 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     unsupportedNoticeAck: false,
     refusesInbox: undefined as { code: string; message: string } | undefined,
     legacyReports: false,
-    reportRejection: undefined as Promise<void> | undefined,
+    outcomeReported: undefined as Promise<void> | undefined,
     reports: [] as Params[],
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
@@ -139,10 +139,13 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     const { id, method, params } = JSON.parse(line) as { id: string; method: string; params: Params };
     easl.calls.push({ connection, method, params });
     if (method === "agent.report") {
+      if (params.turnOutcome) await easl.outcomeReported;
       const unknown = ["turnEndedAt", "turnOutcome"].filter((key) => key in params);
       if (easl.legacyReports && unknown.length > 0) {
-        await easl.reportRejection;
         return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "invalid_params", message: `unknown param${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}; agent.report takes tile (required), kind (required), state (required), message, seq, source, call, final, serial, error, protocol, draft, pid` } })}\n`);
+      }
+      if (easl.legacyReports && params.error !== undefined && params.state !== "idle") {
+        return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "invalid_params", message: "error comes only with state idle: what the turn that just ended stopped on" } })}\n`);
       }
       easl.reports.push(params);
     }
@@ -1657,7 +1660,7 @@ test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful f
   const easl = fakeEasl();
   easl.legacyReports = true;
   const rejection = Promise.withResolvers<void>();
-  easl.reportRejection = rejection.promise;
+  easl.outcomeReported = rejection.promise;
   const omp = fakeOmp(easl);
   await omp.emit("session_start");
   await omp.emit("agent_start");
@@ -1691,6 +1694,30 @@ test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful f
   await until(() => upgraded.reports.some((params) => params.turnOutcome === "error"));
   expect(upgraded.reports.find((params) => params.turnOutcome === "error")).toMatchObject({ protocol: 4, error: "provider refused" });
 });
+
+for (const legacy of [false, true]) {
+  test(`shutdown cancels lifecycle reports waiting on a ${legacy ? "legacy" : "modern"} outcome reply`, async () => {
+    const easl = fakeEasl();
+    easl.legacyReports = legacy;
+    const response = Promise.withResolvers<void>();
+    easl.outcomeReported = response.promise;
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
+    await omp.emit("message_end", { message: failed });
+    await omp.emit("agent_end", { messages: [failed] });
+    await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+    vi.advanceTimersByTime(250);
+    await turn();
+    await omp.emit("session_shutdown");
+    await until(() => easl.calls.some((call) => call.method === "agent.release"));
+    const released = easl.calls.findIndex((call) => call.method === "agent.release");
+    response.resolve();
+    await settle(500);
+    expect(easl.calls.slice(released + 1).filter((call) => call.method === "agent.report")).toEqual([]);
+  });
+}
 
 test("a failed response remains reportable while background work keeps the run working, until a successful response", async () => {
   const easl = fakeEasl();
