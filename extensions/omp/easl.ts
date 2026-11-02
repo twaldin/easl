@@ -395,6 +395,13 @@ export default function canvas(pi: ExtensionAPI): void {
   // willContinue: omp already scheduled the next run (retry, compaction, todo or session_stop
   // continuation, or background jobs whose results will resume it), so this is not a settle.
   pi.on("agent_end", (event) => {
+    const endedAt = pendingStopAt;
+    pendingStopAt = undefined;
+    if (endedAt) {
+      const last = event.messages.findLast((message) => message.role === "assistant");
+      const error = last?.role === "assistant" && typeof last.errorMessage === "string" && last.errorMessage.trim() ? turnError(last) : undefined;
+      publish(error ? "error" : "success", error, endedAt);
+    }
     active = event.willContinue === true;
     if (!active) {
       final = lastAnswer(event.messages);
@@ -402,13 +409,7 @@ export default function canvas(pi: ExtensionAPI): void {
       prepared = false;
       policy = undefined;
     }
-    const endedAt = pendingStopAt;
-    pendingStopAt = undefined;
-    if (endedAt) {
-      const last = event.messages.findLast((message) => message.role === "assistant");
-      const error = last?.role === "assistant" && typeof last.errorMessage === "string" && last.errorMessage.trim() ? turnError(last) : undefined;
-      publish(error ? "error" : "success", error, endedAt);
-    } else publish();
+    publish();
     if (!active) setTimeout(releaseAfterTurn, 0);
   });
 
@@ -690,6 +691,9 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("message_end", (event) => {
     recordReceipts(recordedKeys(event.message));
     if (event.message.role !== "assistant") return;
+    const endedAt = pendingStopAt;
+    pendingStopAt = undefined;
+    if (endedAt) publish("success", undefined, endedAt);
     switch (event.message.stopReason) {
       case "error":
       case "length":
