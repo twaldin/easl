@@ -39,7 +39,7 @@ func TestSavedLegacyFailureGainsRunFieldsWithoutChangingItsTimestamp(t *testing.
 	}
 }
 
-func TestSavedExplicitFailureKeepsItsRunAndCustomMessage(t *testing.T) {
+func TestSavedExplicitFailureKeepsItsRunButDropsAnObsoleteBlocker(t *testing.T) {
 	b := New("brd", "/r")
 	term := b.Create(model.Terminal, map[string]any{
 		"agent":     map[string]any{"kind": "omp", "protocol": 4.0},
@@ -53,11 +53,23 @@ func TestSavedExplicitFailureKeepsItsRunAndCustomMessage(t *testing.T) {
 	delete(want, "restored")
 	protocol := 4
 	want["state"] = "idle"
+	want["message"] = "provider refused"
 	if err := restored.ReportLifecycle(Report{Tile: term.ID, Kind: "omp", State: "idle", Protocol: &protocol}); err != nil {
 		t.Fatal(err)
 	}
 	if got := lifecycle(restored, term.ID); !reflect.DeepEqual(got, want) {
-		t.Fatalf("idle heartbeat replaced the retained custom message: %v", got)
+		t.Fatalf("idle heartbeat kept an obsolete approval question: %v", got)
+	}
+	custom := "The provider needs attention"
+	if err := restored.ReportLifecycle(Report{Tile: term.ID, Kind: "omp", State: "idle", Protocol: &protocol, Message: &custom}); err != nil {
+		t.Fatal(err)
+	}
+	want["message"] = custom
+	if err := restored.ReportLifecycle(Report{Tile: term.ID, Kind: "omp", State: "idle", Protocol: &protocol}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lifecycle(restored, term.ID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("idle heartbeat lost the current idle diagnostic: %v", got)
 	}
 	want["state"] = "working"
 	delete(want, "message")

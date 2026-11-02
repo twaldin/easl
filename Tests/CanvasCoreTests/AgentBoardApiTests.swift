@@ -423,6 +423,21 @@ final class AgentBoardApiTests {
         #expect(lifecycle()?["message"] == "latest idle failure" && lifecycle()?["errorCount"] == 2)
     }
 
+    @Test func idleAfterRestartDropsADeadApprovalQuestionButKeepsFailureHealth() async throws {
+        let tile = terminal(name: "restarted-worker")
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .blocked, message: "Approve Bash?", seq: 1, source: nil, error: "provider unavailable", turnOutcome: .error, protocol: 4)
+        let since = try #require(board.objects[tile]?.props["lifecycle"]?["errorSince"])
+        try board.restartedAgent(tile: tile, command: ["omp"], agent: .object(["kind": "omp", "protocol": 4]))
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 2, source: nil, protocol: 4)
+        #expect(board.objects[tile]?.props["lifecycle"]?["message"] == "provider unavailable")
+        #expect(board.objects[tile]?.props["lifecycle"]?["error"] == "provider unavailable")
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorSince"] == since)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: "Check the provider", seq: 3, source: nil, protocol: 4)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 4, source: nil, protocol: 4)
+        #expect(board.objects[tile]?.props["lifecycle"]?["message"] == "Check the provider")
+    }
+
     @Test func outcomeReportsValidateBeforeMutatingAndBoundUnicodeErrors() async throws {
         let tile = terminal()
         for extra in [
