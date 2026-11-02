@@ -1671,6 +1671,24 @@ test("a failed response remains reportable while background work keeps the run w
   expect(easl.calls.findLast((call) => call.method === "agent.report")?.params).toMatchObject({ state: "idle", final: "Recovered." });
 });
 
+test("a stop diagnosed as an error at agent_end never reports a premature success", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [] };
+  await omp.emit("message_end", { message: stopped });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [{ ...stopped, errorMessage: "Assistant returned an empty stop after retry cap" }] });
+  const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+  await until(() => outcomes().length >= 1);
+  expect(outcomes()).toEqual([expect.objectContaining({ state: "working", turnOutcome: "error", error: "Assistant returned an empty stop after retry cap" })]);
+  const recovered = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] };
+  await omp.emit("message_end", { message: recovered });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [recovered] });
+  await until(() => outcomes().length === 2);
+  expect(outcomes()[1]).toMatchObject({ state: "working", turnOutcome: "success" });
+});
+
 test("response errors omit request dumps and cap Unicode diagnostics without truncating surrogate pairs", async () => {
   const easl = fakeEasl();
   const omp = fakeOmp(easl);

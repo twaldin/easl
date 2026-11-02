@@ -90,10 +90,12 @@ export default function canvas(pi: ExtensionAPI): void {
   let staged: Staged[] = [];
   // The last answer is still published only when the run settles idle.
   let final: string | undefined;
+  // omp can attach an empty-reply error after message_end, before agent_end.
+  let pendingStopAt: string | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
-  function publish(turnOutcome?: "success" | "error" | "aborted", error?: string): void {
+  function publish(turnOutcome?: "success" | "error" | "aborted", error?: string, endedAt?: string): void {
     if (!reporting) return;
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
@@ -110,7 +112,7 @@ export default function canvas(pi: ExtensionAPI): void {
         final: settled ? final : undefined,
         error,
         turnOutcome,
-        turnEndedAt: turnOutcome ? new Date().toISOString() : undefined,
+        turnEndedAt: turnOutcome ? endedAt ?? new Date().toISOString() : undefined,
         protocol: REPORT_PROTOCOL,
         draft,
         pid: process.pid,
@@ -330,6 +332,7 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
     final = undefined;
+    pendingStopAt = undefined;
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
@@ -347,6 +350,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("session_switch", async (_event, ctx) => {
     // A new or switched-to session starts settled; the old one's pending continuation is gone.
     active = !ctx.isIdle();
+    pendingStopAt = undefined;
     if (reporting) launch.switched = true;
     watchSession(ctx);
     const reported = reportSession(ctx);
@@ -379,6 +383,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("agent_start", () => {
     active = true;
     final = undefined;
+    pendingStopAt = undefined;
     staged = staged.filter((entry) => !entry.committed);
     publish();
     // Messages over their senders' wake bound ride this turn, without interrupting it.
@@ -397,7 +402,13 @@ export default function canvas(pi: ExtensionAPI): void {
       prepared = false;
       policy = undefined;
     }
-    publish();
+    const endedAt = pendingStopAt;
+    pendingStopAt = undefined;
+    if (endedAt) {
+      const last = event.messages.findLast((message) => message.role === "assistant");
+      const error = last?.role === "assistant" && typeof last.errorMessage === "string" && last.errorMessage.trim() ? turnError(last) : undefined;
+      publish(error ? "error" : "success", error, endedAt);
+    } else publish();
     if (!active) setTimeout(releaseAfterTurn, 0);
   });
 
@@ -685,6 +696,8 @@ export default function canvas(pi: ExtensionAPI): void {
         publish("error", turnError(event.message));
         break;
       case "stop":
+        pendingStopAt = new Date().toISOString();
+        break;
       case "toolUse":
         publish("success");
         break;
