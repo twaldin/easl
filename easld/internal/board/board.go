@@ -300,13 +300,25 @@ func FromSnapshot(s *store.Snapshot) *Board {
 	return b
 }
 
-// MarkRestored marks a terminal's lifecycle saved `working` or `blocked` as `restored` (in place):
-// what it was when its board was saved, which its agent hasn't confirmed since.
+// MarkRestored marks saved working or blocked lifecycles as unconfirmed and fills legacy
+// failure health from the object's last update time (in place).
 func MarkRestored(o model.Object) {
 	if o.Type != model.Terminal {
 		return
 	}
 	if lc, ok := o.Props["lifecycle"].(map[string]any); ok {
+		if failure, _ := lc["error"].(string); strings.TrimSpace(failure) != "" {
+			lc["error"] = boundedTurnError(failure)
+			if lc["message"] == failure {
+				lc["message"] = lc["error"]
+			}
+			if count, _ := TruncInt(lc["errorCount"]); count < 1 {
+				lc["errorCount"] = 1.0
+			}
+			if since, _ := lc["errorSince"].(string); since == "" {
+				lc["errorSince"] = o.UpdatedAt.UTC().Format(time.RFC3339Nano)
+			}
+		}
 		if st, _ := lc["state"].(string); st == "working" || st == "blocked" {
 			lc["restored"] = true
 		}

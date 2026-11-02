@@ -274,8 +274,12 @@ export type Lifecycle = {
   state: "working" | "blocked" | "idle" | "done" | "unknown";
   message?: string;
   seen?: boolean;
-  /** with `idle`: the agent's last turn ended on this error instead of finishing (agent.report `error`), and no turn has started since; `message` says it too unless that report gave its own. It stays through reports that start no turn (`idle` without an error, `unknown`) and through agent.restart, so a relaunched agent's first `idle` doesn't hide it; the next turn (`working`) clears it, and the user seeing the tile doesn't. Absent for a turn that finished */
+  /** The last failed dispatched model request in the current failure run, in working, blocked, or idle. At most 500 Unicode characters total, truncated at 499 plus an ellipsis (…). Never the session transcript. With outcome-aware integrations, error, errorCount, and errorSince disappear only on turnOutcome success: a normal assistant response or tool request. Starts, heartbeats, aborts, seeing the tile, agent.restart, and daemon restarts retain them. Pre-dispatch failures such as a missing API key are not reported. Legacy integrations without remembered outcome capability report errors only with idle and clear them on the next working. */
   error?: string;
+  /** Consecutive failed dispatched model requests in the current run. Each nonstale turnOutcome error increments it and preserves errorSince. Present with error and errorSince. Legacy idle errors set it to 1. Pre-dispatch failures such as a missing API key are excluded. */
+  errorCount?: number;
+  /** UTC RFC 3339 timestamp when the first failed dispatched model request in the current run ended, from agent.report turnEndedAt, preserved even when a spooled report arrives later. The host uses report receipt time when turnEndedAt is omitted, including legacy idle errors. Nanosecond precision is retained when supplied. Unchanged until turnOutcome success clears the run. Present with error and errorCount. Pre-dispatch failures such as a missing API key are excluded. Loading an older saved error without failure-run fields initializes count 1 and uses the terminal's saved updatedAt as the best available timestamp. */
+  errorSince?: string;
   /** a `working` or `blocked` the app restored from before it last closed, which the agent hasn't confirmed since (no report, live or spooled, yet): what it was, maybe not what it is now. `agent.prompt` refuses a restored `working` (read the screen first) unless `force` */
   restored?: true;
   /** an agent without a lifecycle integration: its terminal notifications (OSC 9/777, a bell) set `done` (`idle` while the user looks), Return typed into it or `agent.prompt` sets `unknown` until the next one; never `working` or `blocked` */
@@ -302,6 +306,8 @@ export type TerminalProps = {
     sessionPath?: string;
     /** the integration protocol version it reports (agent.report `protocol`) */
     protocol?: number;
+    /** Remembered dispatched-model-request outcome capability, set by protocol 4 or later or an explicit agent.report turnOutcome. Persists through absent or legacy reports, integration kind changes, and agent.restart. Once remembered, only explicit outcomes change lifecycle failure health: success clears the run, error increments it, and aborted retains it. */
+    turnOutcomes?: true;
     /** the model it runs, as its integration last reported it (agent.report_session `model`, omp: `provider/id`) */
     model?: string;
     /** its thinking level, as its integration last reported it (agent.report_session `thinking`, omp: `off` … `max`) */
@@ -957,7 +963,7 @@ export type Agent = {
   address: string;
   /** names it had before a rename that still reach it on its board (until another terminal there takes them); absent when none */
   aliases?: string[];
-  /** the integration protocol version its agent last reported. 1 and later take ordinary out-of-band messages. 3 and later accept canvasKit.send with independent wake notices and explicit page-data reads. Protocol 2 remains the explicit page-data read capability, but does not authorize new sends. Absent when none reported or the integration died without releasing the terminal. */
+  /** The integration protocol version its agent last reported. 1 and later take ordinary out-of-band messages. 3 and later accept canvasKit.send with independent wake notices and explicit page-data reads. Protocol 2 remains the explicit page-data read capability, but does not authorize new sends. 4 and later report dispatched-model-request outcomes. Absent when none reported or the integration died without releasing the terminal. */
   protocol?: number;
   /** the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown */
   kind: string;
@@ -1923,9 +1929,13 @@ export type AgentReportParams = {
   final?: string;
   /** with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet) */
   serial?: boolean;
-  /** only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message and as its lifecycle's `error`, never `done`, until a turn starts (also through agent.restart), and `agent.read` `final` reports the answer as cut off (`cutOff`) */
+  /** Required and nonblank with turnOutcome error, in any state. The assistant response's error message, never a transcript. The host trims whitespace and bounds it to 500 Unicode characters total, cutting at 499 plus an ellipsis (…). Forbidden with turnOutcome success or aborted. Without turnOutcome, allowed only with idle: legacy integrations set error, errorCount 1, and errorSince at receipt and clear them on the next working. After outcome capability is remembered, reports without an outcome do not change lifecycle failure health, though legacy errors can still mark agent.read final as cutOff. */
   error?: string;
-  /** the integration protocol version, kept as props.agent.protocol. Every report says it; omission means 0. 1 takes ordinary agent.inbox messages. 2 supports explicit HTML data reads. 3 supports ID-only HTML wake notices and authorizes canvasKit.send from tiles this terminal created. */
+  /** The outcome of one dispatched model request, independent of lifecycle state. Report once per assistant response: success for a normal stop or tool request, error for a failed response, aborted for an interrupted response. Error requires a nonblank error. Success and aborted forbid error. Error increments the persisted failure run and keeps the first errorSince. Success alone clears error, errorCount, and errorSince. Aborted neither increments nor clears them. Starts, heartbeats, seeing the tile, agent.restart, and daemon restarts retain the run. Protocol 4 advertises this capability on every report; an explicit outcome also remembers it. Pre-dispatch failures such as missing API keys have no assistant response event and are outside this contract. */
+  turnOutcome?: "success" | "error" | "aborted";
+  /** Optional UTC RFC 3339 timestamp with Z suffix and up to nine fractional digits when this dispatched model request ended, allowed only with turnOutcome. omp captures it at assistant message_end, so a later spool replay keeps the original failure time. The first error outcome in a run uses it for lifecycle.errorSince; subsequent failures keep that first timestamp. The host uses receipt time when omitted. Pre-dispatch failures such as a missing API key are excluded. */
+  turnEndedAt?: string;
+  /** The integration protocol version, kept as props.agent.protocol. Every report says it; omission means 0. 1 takes ordinary agent.inbox messages. 2 supports explicit HTML data reads. 3 supports ID-only HTML wake notices and authorizes canvasKit.send from tiles this terminal created. 4 reports dispatched-model-request outcomes via turnOutcome and remembers props.agent.turnOutcomes across reports and restarts. */
   protocol?: number;
   /** the agent's input editor holds text the user hasn't sent (kept as `props.agent.draft`; every report of an integration that tracks it says it, a report without it means unknown). agent.restart refuses unless it is false. omp's extension reports it when the editor goes from empty to holding text and back, whether the user typed it or omp put it there (a restored draft) */
   draft?: boolean;

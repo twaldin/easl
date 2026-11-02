@@ -179,6 +179,8 @@ class Lifecycle(TypedDict):
     message: NotRequired[str]
     seen: NotRequired[bool]
     error: NotRequired[str]
+    errorCount: NotRequired[int]
+    errorSince: NotRequired[str]
     restored: NotRequired[Literal[True]]
     via: NotRequired[Literal["notifications"]]
 
@@ -611,9 +613,9 @@ class AgentApi:
         params = {}
         return self._call("agent.prompt_epoch", params, [])
 
-    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None, error: str | None = None, protocol: int | None = None, draft: bool | None = None, pid: int | None = None) -> dict[str, Any]:
+    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None, error: str | None = None, turn_outcome: Literal["success", "error", "aborted"] | None = None, turn_ended_at: str | None = None, protocol: int | None = None, draft: bool | None = None, pid: int | None = None) -> dict[str, Any]:
         """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait. `unknown`: an agent without a lifecycle integration runs in the tile (a wrapper such as `bin/aider` reports it as the agent starts): the tile counts as an agent for the tray and `agent.wait`, and its terminal notifications report when it waits (lifecycle `via: "notifications"`)."""
-        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial, "error": error, "protocol": protocol, "draft": draft, "pid": pid}
+        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial, "error": error, "turnOutcome": turn_outcome, "turnEndedAt": turn_ended_at, "protocol": protocol, "draft": draft, "pid": pid}
         return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None, model: str | None = None, thinking: str | None = None) -> dict[str, Any]:

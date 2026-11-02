@@ -1003,7 +1003,6 @@ test("every extension inbox request opts into protocol 3 and wakeOnly, including
   await until(() => omp.delivered.length === 1);
   await omp.record(omp.delivered[0].message);
   await until(() => easl.queue.length === 0 && easl.acks.length > 0);
-  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.protocol === 3));
   const inbox = easl.calls.filter((call) => call.method === "agent.inbox");
   expect(inbox.every((call) => call.params.protocol === 3 && call.params.wakeOnly === true)).toBe(true);
   expect(inbox.some((call) => call.params.waitMs > 0)).toBe(true);
@@ -1641,3 +1640,43 @@ for (const held of ["ordinary", "notice"] as const) {
     expect(easl.acks[1].started).toBe(true);
   });
 }
+
+test("a failed response remains reportable while background work keeps the run working, until a successful response", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const failed = { role: "assistant", stopReason: "error", errorMessage: "compaction_block_misplaced" };
+  const endedAt = new Date().toISOString();
+  await omp.emit("message_end", { message: failed });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [failed] });
+  const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+  await until(() => outcomes().length === 1);
+  expect(outcomes()[0]).toMatchObject({ state: "working", turnOutcome: "error", error: "compaction_block_misplaced", turnEndedAt: endedAt, protocol: 4 });
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "aborted" } });
+  await omp.emit("agent_end", { willContinue: true, messages: [] });
+  await until(() => outcomes().length === 2);
+  expect(outcomes()[1]).toMatchObject({ turnOutcome: "aborted" });
+  expect(outcomes()[1].error).toBeUndefined();
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", name: "bash" }] } });
+  await until(() => outcomes().length === 3);
+  expect(outcomes()[2]).toMatchObject({ state: "working", turnOutcome: "success" });
+  expect(outcomes()[2].error).toBeUndefined();
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] } });
+  await omp.emit("agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "Recovered." }] }] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.final === "Recovered."));
+  expect(outcomes().map((params) => params.turnOutcome)).toEqual(["error", "aborted", "success", "success"]);
+  expect(easl.calls.findLast((call) => call.method === "agent.report")?.params).toMatchObject({ state: "idle", final: "Recovered." });
+});
+
+test("response errors omit request dumps and cap Unicode diagnostics without truncating surrogate pairs", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "error", errorMessage: "😀".repeat(501) + "\nraw-http-request=/private/request.json" } });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome === "error"));
+  const report = easl.calls.find((call) => call.method === "agent.report" && call.params.turnOutcome === "error")!;
+  expect(report.params.error).toBe("😀".repeat(499) + "…");
+});

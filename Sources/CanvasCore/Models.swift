@@ -377,3 +377,7 @@ public struct Mention: Codable, Equatable, Sendable {
 public enum LifecycleState: String, Codable, Sendable {
     case working, blocked, idle, done, unknown
 }
+
+public enum TurnOutcome: String, Codable, Sendable {
+    case success, error, aborted
+}

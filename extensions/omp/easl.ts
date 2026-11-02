@@ -20,6 +20,7 @@ import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
+const REPORT_PROTOCOL = 4;
 const IDLE_DEBOUNCE_MS = 250;
 // The inbox's long poll (agent.inbox `waitMs`), and how long a failed poll waits to try again.
 const INBOX_WAIT_MS = 55_000;
@@ -87,14 +88,12 @@ export default function canvas(pi: ExtensionAPI): void {
   const calls = new Map<string, ToolCall>();
   // What each submitted prompt drained, in submission order, until its context is handed back.
   let staged: Staged[] = [];
-  // The last answer of the turn that just ended, sent with its idle report (agent.read final),
-  // and the error that turn stopped on, if it didn't finish (an API error, an abort).
+  // The last answer is still published only when the run settles idle.
   let final: string | undefined;
-  let failure: string | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
-  function publish(): void {
+  function publish(turnOutcome?: "success" | "error" | "aborted", error?: string): void {
     if (!reporting) return;
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
@@ -109,13 +108,15 @@ export default function canvas(pi: ExtensionAPI): void {
         seq: ++seq,
         source: SOURCE,
         final: settled ? final : undefined,
-        error: settled ? failure : undefined,
-        protocol: PROTOCOL,
+        error,
+        turnOutcome,
+        turnEndedAt: turnOutcome ? new Date().toISOString() : undefined,
+        protocol: REPORT_PROTOCOL,
         draft,
         pid: process.pid,
       });
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
-    if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
+    if (state === "idle" && !turnOutcome) idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
   }
 
@@ -329,7 +330,6 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
     final = undefined;
-    failure = undefined;
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
@@ -379,7 +379,6 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("agent_start", () => {
     active = true;
     final = undefined;
-    failure = undefined;
     staged = staged.filter((entry) => !entry.committed);
     publish();
     // Messages over their senders' wake bound ride this turn, without interrupting it.
@@ -394,7 +393,6 @@ export default function canvas(pi: ExtensionAPI): void {
     active = event.willContinue === true;
     if (!active) {
       final = lastAnswer(event.messages);
-      failure = turnError(event.messages);
       // The next turn is prepared only if omp prepares it; it reads the standing orders afresh.
       prepared = false;
       policy = undefined;
@@ -680,6 +678,20 @@ export default function canvas(pi: ExtensionAPI): void {
   // omp offered them again acks them), then easl gets the ack.
   pi.on("message_end", (event) => {
     recordReceipts(recordedKeys(event.message));
+    if (event.message.role !== "assistant") return;
+    switch (event.message.stopReason) {
+      case "error":
+      case "length":
+        publish("error", turnError(event.message));
+        break;
+      case "stop":
+      case "toolUse":
+        publish("success");
+        break;
+      case "aborted":
+        publish("aborted");
+        break;
+    }
   });
 
   function recordReceipts(candidates: readonly string[]): void {
@@ -957,17 +969,13 @@ function lastAnswer(messages: readonly { role?: unknown; content?: unknown }[]):
   return text.trim() ? text : undefined;
 }
 
-/** Why the run's last assistant message stopped short: omp's `stopReason` error (with its message), an abort, or the output limit; none for a finished answer. */
-function turnError(messages: readonly { role?: unknown; stopReason?: unknown; errorMessage?: unknown }[]): string | undefined {
-  const last = messages.findLast((message) => message.role === "assistant");
-  switch (last?.stopReason) {
-    case "error":
-      return typeof last.errorMessage === "string" && last.errorMessage.trim() ? last.errorMessage.trim() : "the model request failed";
-    case "aborted":
-      return "interrupted";
-    case "length":
-      return "stopped at the output token limit";
-    default:
-      return undefined;
-  }
+function turnError(message: { stopReason?: unknown; errorMessage?: unknown }): string {
+  if (message.stopReason === "length") return "stopped at the output token limit";
+  return boundedError(typeof message.errorMessage === "string" && message.errorMessage.trim() ? message.errorMessage.trim() : "the model request failed");
+}
+
+function boundedError(error: string): string {
+  const diagnostic = error.split("\nraw-http-request=", 1)[0];
+  const characters = Array.from(diagnostic);
+  return characters.length > 500 ? characters.slice(0, 499).join("") + "…" : diagnostic;
 }

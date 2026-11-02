@@ -118,6 +118,23 @@ final class AgentControlTests {
         #expect(agents[a]?["focused"] == .bool(false) && agents[b]?["focused"] == .bool(true))
     }
 
+    @Test func closedLegacyFailuresExposeNormalizedHealthBeforeTheBoardOpens() async throws {
+        let error = String(repeating: "🦊", count: 501)
+        let tile = board.create(type: .terminal, props: .object(["lifecycle": .object(["state": "idle", "seen": false, "error": .string(error), "message": .string(error)])]))
+        let savedAt = Date(timeIntervalSince1970: tile.updatedAt.timeIntervalSince1970.rounded(.down))
+        let since = savedAt.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        let bounded = String(repeating: "🦊", count: 499) + "…"
+        let expected: JSONValue = .object(["state": "idle", "seen": false, "error": .string(bounded), "message": .string(bounded), "errorCount": 1, "errorSince": .string(since)])
+        try registry.close(board.id)
+        let closed = try #require(try await listed()[tile.id])
+        #expect(closed["open"] == false)
+        #expect(closed["lifecycle"] == expected)
+        _ = try await registry.open(root: board.root)
+        let opened = try #require(try await listed()[tile.id])
+        #expect(opened["open"] == true)
+        #expect(opened["lifecycle"] == expected)
+    }
+
     @Test func aClosedBoardsTilesComeFromItsFileWithTheirSessionsLiveness() async throws {
         let otherRoot = dir.appendingPathComponent("lindy")
         try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
@@ -482,12 +499,14 @@ final class AgentControlTests {
         }
         func lifecycle(_ tile: ObjectID) -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
         let error = "400 invalid_request_error: compaction block must be sent first"
-        let failed: JSONValue = .object(["state": "idle", "seen": .bool(false), "message": .string(error), "error": .string(error)])
         for mode in ["resume", "fresh"] {
             for seen in [false, true] {
                 let run = "\(mode)\(seen ? ", seen" : "")"
                 try await report(tile, "working")
                 try await report(tile, "idle", ["error": .string(error)])
+                let since = try #require(lifecycle(tile)?["errorSince"]?.string)
+                #expect((try? Date(since, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) != nil)
+                let failed: JSONValue = .object(["state": "idle", "seen": .bool(false), "message": .string(error), "error": .string(error), "errorCount": 1, "errorSince": .string(since)])
                 #expect(lifecycle(tile) == failed, "\(run): \(String(describing: lifecycle(tile)))")
                 if seen { board.markSeen(tile) }
 
@@ -499,7 +518,7 @@ final class AgentControlTests {
 
                 // The relaunched agent reports in, waiting for a prompt, with no error to report.
                 try await report(tile, "idle")
-                let relaunched: JSONValue = .object(["state": "idle", "seen": .bool(seen), "message": .string(error), "error": .string(error)])
+                let relaunched: JSONValue = .object(["state": "idle", "seen": .bool(seen), "message": .string(error), "error": .string(error), "errorCount": 1, "errorSince": .string(since)])
                 #expect(lifecycle(tile) == relaunched, "\(run): \(String(describing: lifecycle(tile)))")
                 #expect(try await listed()[tile]?["lifecycle"] == relaunched, "\(run): agent.list")
                 #expect(try await call("agent.wait", ["target": "worker"])["result"]?["agent"]?["lifecycle"] == relaunched, "\(run): agent.wait")

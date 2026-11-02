@@ -4,6 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Failed omp model requests remain visible in `agent.list` and terminal lifecycle props while background work keeps the agent working. `error`, `errorCount`, and `errorSince` persist through starts, heartbeats, aborts, seeing the tile, and agent or daemon restarts. Delayed spooled reports retain the first failed response's ending timestamp. A successful dispatched model response, including a tool request, clears the run. Errors are bounded to 500 Unicode characters. Pre-dispatch failures such as missing API keys are outside this contract. Integrations without turn outcomes keep idle-only errors that clear on their next working report.
 - Pin macOS CI and release builds to Xcode 27.0 with Swift 6.4. Fail before building if the runner no longer provides the selected Xcode build or Swift minor version.
 - Before a remote terminal receives its host ID, Escape, paste, and drawing shortcuts now show the same visible refusal as typing. Close, undo, navigation, and window commands keep their existing routing, including configured Control app shortcuts. Option-only input is refused. Refused input is never queued or replayed.
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.

@@ -345,7 +345,9 @@ final class AgentBoardApiTests {
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
         let failed = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","final":"The fee math is","error":"Anthropic stream error (overloaded_error)"}"#)
         #expect(failed["ok"] == .bool(true))
-        #expect(state() == .object(["state": "idle", "seen": .bool(false), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)"]), "not done: the user reads why")
+        let since = try #require(state()?["errorSince"]?.string)
+        #expect((try? Date(since, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) != nil)
+        #expect(state() == .object(["state": "idle", "seen": .bool(false), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)", "errorCount": 1, "errorSince": .string(since)]), "not done: the user reads why")
         let read = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
         #expect(read["result"]?["text"] == "The fee math is" && read["result"]?["cutOff"] == "Anthropic stream error (overloaded_error)")
         #expect(try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","error":"x"}"#)["error"]?["code"] == "invalid_params")
@@ -353,9 +355,9 @@ final class AgentBoardApiTests {
         // after the error (agent.restart) reports a plain `idle`, an aider an `unknown`.
         board.markSeen(tile)
         try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
-        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)"]))
+        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)", "errorCount": 1, "errorSince": .string(since)]))
         try board.reportLifecycle(tile: tile, kind: "omp", state: .unknown, message: nil, seq: nil, source: nil)
-        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)", "via": "notifications"]))
+        #expect(state() == .object(["state": "idle", "seen": .bool(true), "message": "Anthropic stream error (overloaded_error)", "error": "Anthropic stream error (overloaded_error)", "errorCount": 1, "errorSince": .string(since), "via": "notifications"]))
 
         // The next turn finishes: done, and its answer is whole.
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
@@ -369,6 +371,141 @@ final class AgentBoardApiTests {
         try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil, error: "interrupted")
         let none = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
         #expect(none["error"]?["message"]?.string?.contains("ended on an error before any answer: interrupted") == true)
+    }
+
+    @Test func dispatchedFailuresStayVisibleDuringBackgroundWorkUntilSuccessfulResponse() async throws {
+        let tile = terminal(name: "background-worker")
+        func report(_ state: String, _ seq: Int, _ extra: [String: JSONValue] = [:]) async throws {
+            let params: JSONValue = .object(extra.merging(["tile": .string(tile), "kind": "omp", "state": .string(state), "seq": .number(Double(seq)), "source": "canvas-omp"]) { _, required in required })
+            let reply = try await call("agent.report", String(decoding: JSONEncoder().encode(params), as: UTF8.self))
+            #expect(reply["ok"] == true, "\(reply)")
+        }
+        func lifecycle() -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
+        try await report("working", 1, ["protocol": 4])
+        try await report("working", 2, ["turnOutcome": "error", "error": "first provider failure"])
+        let since = try #require(lifecycle()?["errorSince"]?.string)
+        #expect(since.hasSuffix("Z"))
+        #expect((try? Date(since, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))) != nil)
+        #expect(lifecycle() == .object(["state": "working", "seen": false, "error": "first provider failure", "errorCount": 1, "errorSince": .string(since)]))
+        let listed = try await call("agent.list")
+        let entry = listed["result"]?["agents"]?.array?.first { $0["tile"]?.string == tile }
+        #expect(entry?["lifecycle"] == lifecycle())
+        #expect(board.objects[tile]?.props["agent"]?["turnOutcomes"] == true)
+
+        try await report("blocked", 3, ["message": "Approve the background command?"])
+        #expect(lifecycle()?["state"] == "blocked")
+        #expect(lifecycle()?["message"] == "Approve the background command?")
+        #expect(lifecycle()?["error"] == "first provider failure")
+        try await report("blocked", 4, ["turnOutcome": "error", "error": "second provider failure", "message": "Approve the background command?"])
+        #expect(lifecycle()?["state"] == "blocked" && lifecycle()?["errorCount"] == 2)
+        #expect(lifecycle()?["errorSince"] == .string(since))
+        try await report("blocked", 4, ["turnOutcome": "error", "error": "duplicate"])
+        #expect(lifecycle()?["error"] == "second provider failure" && lifecycle()?["errorCount"] == 2)
+        try await report("working", 5)
+        try await report("working", 6, ["turnOutcome": "aborted"])
+        try await report("idle", 7, ["final": "unfinished answer"])
+        board.markSeen(tile)
+        try await report("idle", 8)
+        #expect(lifecycle() == .object(["state": "idle", "seen": true, "message": "second provider failure", "error": "second provider failure", "errorCount": 2, "errorSince": .string(since)]))
+        let unfinished = try await call("agent.read", #"{"target":"background-worker","final":true}"#)
+        #expect(unfinished["result"]?["text"] == "unfinished answer" && unfinished["result"]?["cutOff"] == "interrupted")
+        try await report("working", 9)
+        #expect(lifecycle()?["errorCount"] == 2 && lifecycle()?["errorSince"] == .string(since))
+        #expect(lifecycle() == .object(["state": "working", "seen": false, "error": "second provider failure", "errorCount": 2, "errorSince": .string(since)]))
+        try await report("working", 10, ["turnOutcome": "success"])
+        #expect(lifecycle() == .object(["state": "working", "seen": false]))
+        try await report("idle", 11, ["final": "complete answer"])
+        #expect(lifecycle() == .object(["state": "done", "seen": false]))
+        let complete = try await call("agent.read", #"{"target":"background-worker","final":true}"#)
+        #expect(complete["result"]?["text"] == "complete answer" && complete["result"]?["cutOff"] == nil)
+        try await report("idle", 12, ["turnOutcome": "error", "error": "next run"])
+        #expect(lifecycle()?["state"] == "idle" && lifecycle()?["errorCount"] == 1)
+        try await report("idle", 13, ["turnOutcome": "error", "error": "latest idle failure"])
+        #expect(lifecycle()?["message"] == "latest idle failure" && lifecycle()?["errorCount"] == 2)
+    }
+
+    @Test func outcomeReportsValidateBeforeMutatingAndBoundUnicodeErrors() async throws {
+        let tile = terminal()
+        for extra in [
+            #""turnOutcome":"unknown""#, #""turnOutcome":1"#, #""turnOutcome":null"#,
+            #""turnOutcome":"error""#, #""turnOutcome":"error","error":" \n ""#,
+            #""turnOutcome":"error","error":4"#, #""turnOutcome":"success","error":"wrong""#,
+            #""turnOutcome":"aborted","error":"interrupted""#,
+            #""turnEndedAt":"2020-01-02T03:04:05Z""#,
+            #""turnOutcome":"success","turnEndedAt":null"#,
+            #""turnOutcome":"aborted","turnEndedAt":42"#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"""#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"2020-01-02""#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"2020-01-02T03:04:05+01:00""#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"2020-01-02T03:04:05+00:00""#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"2020-02-30T03:04:05Z""#,
+            #""turnOutcome":"error","error":"failure","turnEndedAt":"2020-01-02T03:04:05.1234567890Z""#
+        ] {
+            let reply = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":1,\#(extra)}"#)
+            #expect(reply["error"]?["code"] == "invalid_params", "\(extra): \(reply)")
+            #expect(board.objects[tile]?.props["lifecycle"] == nil)
+        }
+        let long = String(repeating: "🦊", count: 501)
+        let accepted = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":1,"turnOutcome":"error","error":"\#(long)"}"#)
+        #expect(accepted["ok"] == true)
+        let failure = try #require(board.objects[tile]?.props["lifecycle"]?["error"]?.string)
+        #expect(failure == String(repeating: "🦊", count: 499) + "…")
+        #expect(failure.unicodeScalars.count == 500)
+        let exact = String(repeating: "🦊", count: 500)
+        let boundary = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","seq":2,"turnOutcome":"error","error":"\#(exact)"}"#)
+        #expect(boundary["ok"] == true)
+        #expect(board.objects[tile]?.props["lifecycle"]?["error"] == .string(exact))
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorCount"] == 2)
+    }
+
+    @Test func outcomeAwareReportsNeverInferHealthFromLegacyErrors() async throws {
+        let tile = terminal()
+        for version in [4, 3] {
+            let reply = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","protocol":\#(version),"error":"not an outcome"}"#)
+            #expect(reply["ok"] == true)
+            #expect(board.objects[tile]?.props["lifecycle"]?["error"] == nil)
+        }
+        let failed = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","turnOutcome":"error","error":"real failure"}"#)
+        #expect(failed["ok"] == true)
+        let since = try #require(board.objects[tile]?.props["lifecycle"]?["errorSince"])
+        let legacy = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","protocol":1,"error":"must not replace real failure"}"#)
+        #expect(legacy["ok"] == true)
+        #expect(board.objects[tile]?.props["lifecycle"]?["error"] == "real failure")
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorSince"] == since)
+    }
+
+    @Test func outcomeAwareFinalAnswersRemainCutOffAcrossNewWorkingReportsUntilSuccess() async throws {
+        let tile = terminal(name: "cut-off")
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: nil, final: "partial", error: "provider failure", turnOutcome: .error, protocol: 4)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 2, source: nil)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 3, source: nil, final: "not yet settled")
+        let unfinished = try await call("agent.read", #"{"target":"cut-off","final":true}"#)
+        #expect(unfinished["result"]?["text"] == "not yet settled")
+        #expect(unfinished["result"]?["cutOff"] == "provider failure")
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 4, source: nil, turnOutcome: .success)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 5, source: nil, final: "settled")
+        let finished = try await call("agent.read", #"{"target":"cut-off","final":true}"#)
+        #expect(finished["result"]?["text"] == "settled" && finished["result"]?["cutOff"] == nil)
+    }
+
+    @Test func spooledFailureKeepsTheFirstResponseEndTimeRatherThanReportReceipt() async throws {
+        let tile = terminal(name: "delayed-outcome")
+        let first = "2020-01-02T03:04:05.123456789Z"
+        let failed = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":1,"turnOutcome":"error","error":"delayed provider failure","turnEndedAt":"\#(first)"}"#)
+        #expect(failed["ok"] == true)
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorSince"] == .string(first))
+        let repeated = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":2,"turnOutcome":"error","error":"another failure","turnEndedAt":"2020-01-02T04:05:06Z"}"#)
+        #expect(repeated["ok"] == true)
+        let entry = try await call("agent.list")["result"]?["agents"]?.array?.first { $0["tile"]?.string == tile }
+        #expect(entry?["lifecycle"]?["errorSince"] == .string(first))
+        #expect(entry?["lifecycle"]?["errorCount"] == 2)
+        let recovered = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":3,"turnOutcome":"success","turnEndedAt":"2020-01-02T05:06:07.000Z"}"#)
+        #expect(recovered["ok"] == true)
+        let next = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","seq":4,"turnOutcome":"error","error":"new run","turnEndedAt":"2020-01-02T06:07:08.120000000Z"}"#)
+        #expect(next["ok"] == true)
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorSince"] == "2020-01-02T06:07:08.12Z")
+        #expect(board.objects[tile]?.props["lifecycle"]?["errorCount"] == 1)
     }
 
     // MARK: board.export
