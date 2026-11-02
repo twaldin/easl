@@ -28,6 +28,7 @@ Check every diagram detector in the pinned baseline, not only its published synt
 Generate one page per case so every result has a named tile and can be inspected separately. This command writes API request bodies, not passing evidence. Set `CASES` to each copied JSON array and `OUT` to a fresh directory:
 
 ```sh
+set -eu
 export CASES="$G/corpus.json" OUT="$G/corpus-requests"
 bun -e '
 const fs = require("node:fs");
