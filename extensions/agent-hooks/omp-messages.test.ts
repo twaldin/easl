@@ -1674,6 +1674,8 @@ test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful f
   await until(() => easl.reports.at(-1)?.state === "idle");
   expect(easl.reports.at(-1)).toMatchObject({ state: "idle", error: "provider refused" });
   expect(easl.calls.filter((call) => call.method === "agent.report" && "turnOutcome" in call.params)).toHaveLength(1);
+  const probe = easl.calls.find((call) => call.method === "agent.report" && "turnOutcome" in call.params)!;
+  expect(easl.calls.filter((call) => call.method === "agent.report" && call.params.seq === probe.params.seq).map((call) => "turnOutcome" in call.params)).toEqual([true, false]);
 
   await omp.emit("agent_start");
   const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] };
@@ -1716,6 +1718,29 @@ for (const legacy of [false, true]) {
     response.resolve();
     await settle(500);
     expect(easl.calls.slice(released + 1).filter((call) => call.method === "agent.report")).toEqual([]);
+  });
+}
+
+for (const legacy of [false, true]) {
+  test(`session switches preserve pending ${legacy ? "legacy errors" : "modern outcomes"}`, async () => {
+    const easl = fakeEasl();
+    easl.legacyReports = legacy;
+    const response = Promise.withResolvers<void>();
+    easl.outcomeReported = response.promise;
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    await omp.emit("message_end", { message: { role: "assistant", stopReason: "toolUse" } });
+    await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+    const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
+    await omp.emit("message_end", { message: failed });
+    await omp.emit("agent_end", { messages: [failed] });
+    omp.state.sessionId = "ses_2";
+    await omp.emit("session_switch");
+    response.resolve();
+    await until(() => easl.reports.at(-1)?.state === "idle");
+    if (legacy) expect(easl.reports.at(-1)).toMatchObject({ state: "idle", error: "provider refused" });
+    else expect(easl.reports.filter((params) => params.turnOutcome).map((params) => params.turnOutcome)).toEqual(["success", "error"]);
   });
 }
 
