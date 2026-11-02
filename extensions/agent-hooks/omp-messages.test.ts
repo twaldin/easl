@@ -328,6 +328,72 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
   return omp;
 }
 
+for (const method of ["approve", "select"] as const) {
+  for (const rejected of [false, true]) {
+    test(`a tool ${method} dialog blocks until it ${rejected ? "rejects" : "answers"}`, async () => {
+      const easl = fakeEasl();
+      const omp = fakeOmp(easl);
+      const answer = Promise.withResolvers<unknown>();
+      const ui = Object.assign(omp.ctx.ui, { [method]: (_prompt: unknown) => answer.promise }) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      await omp.emit("session_start");
+      await omp.emit("agent_start");
+      await until(() => easl.reports.at(-1)?.state === "working");
+
+      const title = "Allow tool: bash\nCommand: echo approved";
+      const pending = ui[method](method === "approve" ? { full: title, compact: "Allow tool: bash" } : title);
+      const result = pending.catch((error) => error);
+      await until(() => easl.reports.at(-1)?.state === "blocked");
+      expect(easl.reports.at(-1)).toMatchObject({ state: "blocked", message: "approve bash?" });
+
+      const error = new Error("dialog interrupted");
+      if (rejected) answer.reject(error);
+      else answer.resolve("once");
+      expect(await result).toBe(rejected ? error : "once");
+      await until(() => easl.reports.at(-1)?.state === "working");
+      expect(easl.reports.at(-1)?.message).toBeUndefined();
+    });
+  }
+}
+
+test("answering one tool approval leaves another approval blocked", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const bash = Promise.withResolvers<unknown>();
+  const write = Promise.withResolvers<unknown>();
+  const ui = Object.assign(omp.ctx.ui, {
+    approve: (prompt: { full: string }) => prompt.full.endsWith("bash") ? bash.promise : write.promise,
+  });
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await until(() => easl.reports.at(-1)?.state === "working");
+  const first = ui.approve({ full: "Allow tool: bash" });
+  const second = ui.approve({ full: "Allow tool: write" });
+  await until(() => easl.reports.at(-1)?.state === "blocked");
+  bash.resolve("once");
+  await first;
+  await until(() => easl.reports.at(-1)?.message === "approve write?");
+  expect(easl.reports.at(-1)?.state).toBe("blocked");
+  write.resolve("deny");
+  await second;
+  await until(() => easl.reports.at(-1)?.state === "working");
+});
+
+test("a non-tool approval dialog does not block the agent", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const answer = Promise.withResolvers<unknown>();
+  const ui = Object.assign(omp.ctx.ui, { approve: (_prompt: { full: string; compact: string }) => answer.promise });
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await until(() => easl.reports.at(-1)?.state === "working");
+  const pending = ui.approve({ full: "Change setting: theme", compact: "Change setting: theme" });
+  answer.resolve("once");
+  await pending;
+  await omp.emit("agent_end", { messages: [] });
+  await until(() => easl.reports.at(-1)?.state === "idle");
+  expect(easl.reports.some((report) => report.state === "blocked")).toBe(false);
+});
+
 test("a message is acked once omp records it, over the inbox connection; a restarted omp acks one offered again", async () => {
   const easl = fakeEasl();
   const omp = fakeOmp(easl);

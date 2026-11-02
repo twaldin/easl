@@ -53,13 +53,15 @@ type Launch = { thinking?: string; session?: string; switched: boolean };
 // The board's standing orders: its note with this key, injected up to this many UTF-8 bytes.
 const RULES_KEY = "rules";
 const RULES_MAX_BYTES = 8192;
-// Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
-const OMP_SELECT = Symbol.for("canvas-omp.select");
+const APPROVAL_DIALOGS = [
+  ["select", Symbol.for("canvas-omp.select")],
+  ["approve", Symbol.for("canvas-omp.approve")],
+] as const;
 
 type Staged = { prompt: string; ids: string[]; context: string; committed: boolean };
 type ToolCall = { name: string; args: Record<string, unknown> | undefined };
 type Details = Record<string, any>;
-type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
+type ApprovalDialog = (this: unknown, prompt: unknown, ...rest: unknown[]) => Promise<unknown>;
 // What the agent runs, as agent.report_session `model` and `thinking` say it.
 type RunsWith = { model?: string; thinking?: string };
 // A `thinking_level_change` entry of omp's session, as the extension reads it.
@@ -320,32 +322,29 @@ export default function canvas(pi: ExtensionAPI): void {
     return change;
   }
 
-  // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
-  // Its tool_approval_requested event comes only from its registered-tool wrapper: eval preludes
-  // (the `browser` and `computer` globals inside eval) prompt without any event.
-  // So the tile's UI context is watched instead: each approval dialog blocks the tile until the
-  // user answers it (approve, deny, or interrupt). `ctx.ui` is a per-handler proxy (trapping only
-  // `get`) over the one UI context omp's tools and preludes prompt with, so property descriptors
-  // read and defined through it are that object's. A reload rewraps omp's own select, so only the
-  // live extension instance reports.
+  // Eval preludes prompt without tool_approval_requested, so watch the shared UI behind ctx.ui.
+  // Reloads replace our wrappers rather than reporting through an obsolete extension instance.
   function watchApprovals(ui: object): void {
-    const current = Object.getOwnPropertyDescriptor(ui, "select");
-    if (typeof current?.value !== "function") return;
-    const base: Select = current.value[OMP_SELECT] ?? current.value;
-    const select = async function (this: unknown, title: unknown, ...rest: unknown[]): Promise<unknown> {
-      const tool = typeof title === "string" ? /^Allow tool: (.+)$/.exec(title.split("\n", 1)[0])?.[1] : undefined;
-      if (!tool) return base.call(this, title, ...rest);
-      const key = `approval:${++approvals}`;
-      blockers.set(key, `approve ${tool}?`);
-      publish();
-      try {
-        return await base.call(this, title, ...rest);
-      } finally {
-        blockers.delete(key);
+    for (const [name, marker] of APPROVAL_DIALOGS) {
+      const current = Object.getOwnPropertyDescriptor(ui, name);
+      if (typeof current?.value !== "function") continue;
+      const base: ApprovalDialog = current.value[marker] ?? current.value;
+      const dialog = async function (this: unknown, prompt: unknown, ...rest: unknown[]): Promise<unknown> {
+        const title = name === "approve" ? (prompt as { full?: unknown } | undefined)?.full : prompt;
+        const tool = typeof title === "string" ? /^Allow tool: (.+)$/.exec(title.split("\n", 1)[0])?.[1] : undefined;
+        if (!tool) return base.call(this, prompt, ...rest);
+        const key = `approval:${++approvals}`;
+        blockers.set(key, `approve ${tool}?`);
         publish();
-      }
-    };
-    Object.defineProperty(ui, "select", { ...current, value: Object.assign(select, { [OMP_SELECT]: base }) });
+        try {
+          return await base.call(this, prompt, ...rest);
+        } finally {
+          blockers.delete(key);
+          publish();
+        }
+      };
+      Object.defineProperty(ui, name, { ...current, value: Object.assign(dialog, { [marker]: base }) });
+    }
   }
 
   // A hangup (the terminal's session killed: its host rebooting, easld or zmx stopped) or a
