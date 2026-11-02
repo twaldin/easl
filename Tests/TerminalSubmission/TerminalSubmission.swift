@@ -14,10 +14,10 @@ private enum TerminalSubmission {
         if !condition() { throw Failed(message: message) }
     }
 
-    static func until(_ predicate: () -> Bool) async throws {
+    static func until(failure: @autoclosure () -> String = "terminal observation deadline expired", _ predicate: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while !predicate() {
-            if ContinuousClock.now >= deadline { throw Failed(message: "terminal observation deadline expired") }
+            if ContinuousClock.now >= deadline { throw Failed(message: failure()) }
             await MainTurns.next()
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -208,6 +208,7 @@ private enum TerminalSubmission {
         let accepted = await submission.value
         try require(!accepted, "the replaced submission must not complete")
         try await until { notices.count == 1 }
+        f.view.keyDown(with: event)
         let control = await f.submit("explicit-key-control")
         try require(control, "refusing an old key must not close the replacement")
         try await until { (try? String(contentsOf: receipt, encoding: .utf8)) == "explicit-key-control\n" }
@@ -221,6 +222,14 @@ private enum TerminalSubmission {
         try require(f.view.performBindingAction("select_all"), "the exited screen must remain selectable")
         var notices: [String] = []
         f.view.onImageProblem = { notices.append($0) }
+        let refused = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                       timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: f.window.windowNumber, context: nil,
+                                       characters: "e", charactersIgnoringModifiers: "e",
+                                       isARepeat: false, keyCode: 14)!
+        f.view.keyDown(with: refused)
+        try require(notices.count == 1, "raw input must be refused before checking Copy")
+        notices.removeAll()
         let before = NSPasteboard.general.changeCount
         let copy = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
                                    timestamp: ProcessInfo.processInfo.systemUptime,
@@ -274,6 +283,121 @@ private enum TerminalSubmission {
         try require(notices.count == 1, "a key refused by an exited attachment needs a visible notice")
     }
 
+    static func earlyTypingCannotDeliverOnlyTheTail() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        try await until { f.surface != nil }
+        f.view.controller = nil
+        try require(f.view.surface == nil, "the first keys must arrive before attachment")
+        var notices: [String] = []
+        f.view.onImageProblem = { notices.append($0) }
+        func type(_ text: String) {
+            for character in text {
+                let text = String(character)
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: f.window.windowNumber, context: nil,
+                                            characters: text, charactersIgnoringModifiers: text,
+                                            isARepeat: false, keyCode: character == "\r" ? 36 : 0)!
+                f.view.keyDown(with: event)
+            }
+        }
+        type("echo ")
+        try require(!notices.isEmpty, "refusing the prefix must show a notice")
+        f.view.controller = f.controller
+        try await until { f.surface != nil }
+        type("burst\r")
+        let accepted = await f.submit("explicit-control")
+        try require(accepted, "the new attachment must accept an explicit submission")
+        try await until { f.text().contains("explicit-control\n") }
+        print("EARLY_TYPING_RECEIPT \(String(reflecting: f.text()))")
+        try require(f.text() == "explicit-control\n", "the shell must receive none of a refused typing run, never its tail")
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20),
+                                      modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: f.window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        f.view.mouseDown(with: click)
+        type("after-click\r")
+        try await until { f.text().contains("after-click\n") }
+        try require(f.text() == "explicit-control\nafter-click\n", "a click must allow a new complete typing run exactly once")
+    }
+
+    static func refusedPressCannotLeakItsRelease(queued: Bool) async throws {
+        let f = Fixture()
+        defer { f.close() }
+        let receipt = f.receipt.appendingPathExtension("releases")
+        func observation() -> String {
+            let screen = (0..<10).compactMap { f.surface?.viewportRow($0, columns: 80) }.joined(separator: "\n")
+            let received = (try? Data(contentsOf: receipt)).map { String(reflecting: String(decoding: $0, as: UTF8.self)) } ?? "<missing>"
+            return "queued=\(queued), attached=\(f.surface != nil), running=\(f.surface?.isProcessRunning ?? false), exited=\(f.exited), screen=\(String(reflecting: screen)), receipt=\(received)"
+        }
+        try await until(failure: "waiting for initial Kitty fixture attachment; \(observation())") { f.surface != nil }
+        func key(_ type: NSEvent.EventType, _ text: String, _ code: UInt16) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                             timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: f.window.windowNumber, context: nil,
+                             characters: text, charactersIgnoringModifiers: text,
+                             isARepeat: false, keyCode: code)!
+        }
+        let pending: Task<Bool, Never>?
+        if queued {
+            var pasted = false
+            pending = Task { @MainActor in
+                await f.view.submitOrdered({
+                    pasted = f.view.paste(text: "original-only")
+                    return pasted
+                }, delay: .seconds(30))
+            }
+            try await until(failure: "waiting for original paste before queuing Kitty keys; \(observation())") { pasted }
+            f.view.keyDown(with: key(.keyDown, "x", 7))
+        } else {
+            pending = nil
+            f.view.controller = nil
+            f.view.keyDown(with: key(.keyDown, "e", 14))
+        }
+        defer { pending?.cancel() }
+        let script = """
+        import os, tty
+        tty.setraw(0)
+        os.write(1, b'fixture startup banner\\r\\n\\x1b[>11uREADY')
+        with open(\(String(reflecting: receipt.path)), 'wb', buffering=0) as receipt:
+            while True:
+                receipt.write(os.read(0, 4096))
+        """
+        var options = f.view.configuration
+        options.command = ShellWords.quote(["/usr/bin/python3", "-c", script])
+        f.view.configuration = options
+        if !queued { f.view.controller = f.controller }
+        try await until(failure: "waiting for Kitty mode READY marker; \(observation())") {
+            guard let surface = f.surface, let handle = surface.handle else { return false }
+            let size = ghostty_surface_size(handle)
+            return (0..<Int(size.rows)).contains {
+                surface.viewportRow($0, columns: Int(size.columns))?.trimmingCharacters(in: .whitespacesAndNewlines) == "READY"
+            }
+        }
+        if queued { f.view.keyDown(with: key(.keyDown, "e", 14)) }
+        f.view.keyUp(with: key(.keyUp, "e", 14))
+        if let pending {
+            pending.cancel()
+            let accepted = await pending.value
+            try require(!accepted, "cancelling the original submission must drain the queued keys without Enter")
+        }
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20),
+                                      modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: f.window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        f.view.mouseDown(with: click)
+        f.view.keyDown(with: key(.keyDown, "a", 0))
+        f.view.keyUp(with: key(.keyUp, "a", 0))
+        try await until(failure: "waiting for accepted a-key release ESC[97;1:3u; \(observation())") {
+            (try? String(contentsOf: receipt, encoding: .utf8))?.contains("\u{1b}[97;1:3u") == true
+        }
+        let received = try String(contentsOf: receipt, encoding: .utf8)
+        print("KEY_RELEASE_RECEIPT \(String(reflecting: received))")
+        try require(received == "\u{1b}[97u\u{1b}[97;1:3u",
+                    "only the accepted press and its release may reach the program, never the refused key's release")
+    }
+
     static func main() {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -293,6 +417,9 @@ private enum TerminalSubmission {
             ("queued key is refused without reaching replacement", queuedKeyCannotDisappearOrReachReplacement),
             ("exited terminal still copies selection", exitedTerminalStillCopiesSelection),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
+            ("early typing never delivers only the tail", earlyTypingCannotDeliverOnlyTheTail),
+            ("refused key press cannot leak its release", { try await refusedPressCannotLeakItsRelease(queued: false) }),
+            ("queued refused key press cannot leak its release", { try await refusedPressCannotLeakItsRelease(queued: true) }),
             ("exited attachment keeps composer draft", exitedAttachmentKeepsComposerDraft),
         ]
         var failures = 0

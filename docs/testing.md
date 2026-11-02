@@ -392,14 +392,21 @@ Run this AppKit regression in a claimed GUI guest:
 ```sh
 	swift build --build-system native -j 2 --product Easl
 	python3 Tests/TerminalRekey/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+	python3 Tests/TerminalSubmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 ```
 
 The runner launches a private bundle with a disposable home and real key windows. It checks synchronous terminal focus and selection across host-ID replacement. Composer, another terminal, and another key window must keep focus if the user moved there first. It also checks a composer focus change before initial terminal focus could be deferred. This runner has no live host session or WindowServer captures. Use the terminal and remote-board journeys in `.agents/skills/verify-easl/` for native pixels and shell execution.
 
-The added key-routing cases send native events through the installed canvas monitor and the real window controller and menu. Escape, Command-V, raw typing, Return, custom Control-V paste, custom Option-R drawing, an Option-D Ghostty remap, and unavailable custom Control-Z Undo/Redo must preserve board objects, selection, and terminal focus while showing the refusal pill. Controls exercise custom Control-= zoom, Command-Z routing, Command-Escape Leave Tile, Command-M minimization, Command-Option-Right tile navigation, Command-W close confirmation, Command-modified Ghostty New Terminal and Close Terminal remaps, and the real composer across rekey. A separate real socket/router fixture loads a host-confirmed terminal identity and checks that its typing does not receive the provisional refusal. These cases do not prove PTY delivery or no replay into a live shell; retain that evidence in the delayed-host guest journey.
+The added key-routing cases send native events through the installed canvas monitor and the real window controller and menu. Escape, Command-V, raw typing, Return, custom Control-V paste, custom Option-R drawing, an Option-D Ghostty remap, and unavailable custom Control-Z Undo/Redo must preserve board objects, selection, and terminal focus while showing the refusal pill. Controls exercise custom Control-= zoom, Command-Z routing, Command-Escape Leave Tile, Command-M minimization, Command-Option-Right tile navigation, Command-W close confirmation, Command-modified Ghostty New Terminal and Close Terminal remaps, and the real composer across rekey. A separate real socket/router fixture loads a host-confirmed terminal identity and checks that its typing does not receive the provisional refusal. The rekey case refuses a command prefix, replaces the provisional tile, and checks a real PTY receipt to ensure that the tail never arrives. Remote-host execution and native pixels remain separate guest proof.
 
 The fixture uses `CanvasApplication` with development input enabled. Escape, Command-V, and typing replayed to a non-key board window must show the same refusal without changing that board or its terminal focus.
 The native key-window cases also refuse an enabled Zoom In command bound to Option-= and plain e/f. Every refusal must leave zoom unchanged; the Option-only case starts at 50% so a dispatched Zoom In would be observable.
+
+`TerminalSubmission` checks text and Enter delivery, stale exits, cancellation, replacement during submission, and queued keys bound to an old attachment. Its early-typing case refuses `echo ` without an attachment, attaches a live process, and types `burst` and Return. Only a later explicit control may appear in the PTY receipt, never `burst`. A terminal click must then allow a complete new typing run exactly once. Copy must still work on an exited terminal after a raw-key refusal.
+
+Two Kitty keyboard protocol cases use a real raw-mode PTY consumer. A refused press's release must not arrive after attachment readiness or after a queued stale-attachment refusal. After a click, an accepted press and its release must arrive in order.
+
+The Kitty consumer emits a startup banner before its `READY` line. The fixture finds that exact line anywhere in the visible viewport because macOS login may print its own banner first. Timeout messages name the awaited observation and include attachment/process state, terminal text, and received bytes. The five-second deadline and exact press/release assertions stay unchanged.
 
 ### Move tool input isolation
 

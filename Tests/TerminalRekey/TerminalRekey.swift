@@ -120,6 +120,12 @@ private enum TerminalRekey {
         switch owner {
         case .terminal:
             expected = first.terminal
+            let early = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: window.windowNumber, context: nil,
+                                        characters: "e", charactersIgnoringModifiers: "e",
+                                        isARepeat: false, keyCode: 14)!
+            try require(!canvas.admitsKeyDown(early), "the provisional terminal must refuse the command prefix")
         case .composer, .movedBeforeInitialFocus:
             try require(window.makeFirstResponder(composer), "composer must take keyboard")
             expected = composer
@@ -162,6 +168,30 @@ private enum TerminalRekey {
         await turn()
         if owner == .terminal {
             try require(window.firstResponder === replacement.terminal, "canonical focus must survive queued work")
+            let receipt = root.appendingPathComponent("typing")
+            var options = replacement.terminal.configuration
+            options.command = ShellWords.quote(["/bin/sh", "-c", "exec /bin/cat > " + ShellWords.quote([receipt.path])])
+            replacement.terminal.configuration = options
+            for character in "cho burst\r" {
+                let text = String(character)
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: window.windowNumber, context: nil,
+                                            characters: text, charactersIgnoringModifiers: text,
+                                            isARepeat: false, keyCode: character == "\r" ? 36 : 0)!
+                replacement.terminal.keyDown(with: event)
+            }
+            let accepted = await replacement.terminal.submitOrdered({
+                replacement.terminal.paste(text: "explicit-control")
+            }, delay: .zero)
+            try require(accepted, "the canonical attachment must accept an explicit submission")
+            let deadline = ContinuousClock.now + .seconds(5)
+            while (try? String(contentsOf: receipt, encoding: .utf8))?.contains("explicit-control\n") != true {
+                try require(ContinuousClock.now < deadline, "the canonical receipt must arrive")
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            let received = try String(contentsOf: receipt, encoding: .utf8)
+            try require(received == "explicit-control\n", "a provisional refusal must not deliver the tail after rekey: \(String(reflecting: received))")
         } else if owner == .otherWindow {
             try require(otherWindow.isKeyWindow && otherWindow.firstResponder === otherEditor,
                         "queued work must not steal another window's focus")
@@ -238,10 +268,11 @@ private enum TerminalRekey {
             canvas.subviews.compactMap { $0 as? NoticePill }.forEach { $0.isHidden = true }
         }
         func refusalVisible() -> Bool {
-            guard let pill = canvas.subviews.compactMap({ $0 as? NoticePill }).first,
-                  !pill.isHidden, pill.alphaValue == 1 else { return false }
-            return pill.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ==
-                "Terminal not ready. Nothing typed; try again after it starts."
+            canvas.subviews.compactMap { $0 as? NoticePill }.contains { pill in
+                !pill.isHidden && pill.alphaValue == 1 && pill.subviews.compactMap { $0 as? NSTextField }.contains {
+                    $0.stringValue.contains("Nothing typed") && $0.stringValue.localizedCaseInsensitiveContains("click")
+                }
+            }
         }
         let objects = board.objects
         let selection = canvas.selection
@@ -425,7 +456,7 @@ private enum TerminalRekey {
         NSApp.sendEvent(event)
         let refused = canvas.subviews.compactMap { $0 as? NoticePill }.contains { pill in
             !pill.isHidden && pill.subviews.compactMap { $0 as? NSTextField }.contains {
-                $0.stringValue == "Terminal not ready. Nothing typed; try again after it starts."
+                $0.stringValue.contains("Nothing typed")
             }
         }
         try require(!refused && window.firstResponder === tile.terminal,
