@@ -44,8 +44,8 @@ jobs:
       - name: Native HTML tile keyboard regression
         id: html-keyboard
         run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)" --artifacts "${{ runner.temp }}/html-export-artifacts"
-      - name: Preserve failed HTML export evidence
-        if: failure() && steps.html-keyboard.outcome == 'failure'
+      - name: Preserve HTML export evidence
+        if: always() && steps.html-keyboard.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: html-export-diagnostics

@@ -381,7 +381,7 @@ The runner also exercises hostile click handlers, including delayed script evalu
 
 The default suite also exports a hostile HTML tile through `HtmlTile.exportDocument` and reopens the saved file in an ordinary WebKit view. It checks the export-only policy, removal of active content, and preservation of rendered diagrams, math, code, images, and links. Add `--exports` to the runner command for this regression alone. Native Save as HTML and Open in Browser captures remain separate guest proof under `html-export` in the verification map.
 
-The runner keeps `export.html` and `stylesheets.json` outside its disposable home, under the build directory's `html-export-artifacts` by default. Use `--artifacts <directory>` to choose another location. Each stylesheet report records whether it was kept, its sanitized rule counts, and the first rule whose two sanitized serializations differ. CI uploads this directory as `html-export-diagnostics` when the native HTML test fails. These files contain the hostile test fixture; inspect them as untrusted content.
+The runner keeps `export.html` and `stylesheets.json` outside its disposable home, under the build directory's `html-export-artifacts` by default. Use `--artifacts <directory>` to choose another location. Each stylesheet report records whether it was kept, its sanitized rule counts, and the first rule whose two sanitized serializations differ. CI uploads this directory as `html-export-diagnostics` after the native HTML test, whether it passes or fails. These files contain the hostile test fixture; inspect them as untrusted content.
 
 ### Remote terminal keyboard ownership
 

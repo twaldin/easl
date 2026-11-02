@@ -340,6 +340,8 @@ extension HtmlTile {
     };
     let usesDataFonts = false;
     const sanitizeDeclarations = async (style, base, fontFace = false) => {
+      // Shorthands can serialize longhands the same browser cannot parse.
+      if (!fontFace) style.cssText = style.cssText;
       for (const property of [...style]) {
         const value = style.getPropertyValue(property);
         if (fontFace && property === 'src') {
