@@ -2,7 +2,31 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.4
+
+easl 0.3.4 makes HTML exports inert, so saving or opening an export cannot run an agent's scripts outside the tile's network limits. This safety and reliability release also keeps agent errors visible until success, marks pending approvals blocked, and stops new-terminal typing from reaching the board or running only a command's tail.
+
+### easld, the app, and the omp extension
+
+Errors that remain visible while an agent works need both easld 0.3.4 and the new omp extension on remote boards. Local boards need the 0.3.4 app and the new extension.
+
+An old extension on a new easld keeps the idle-only error behavior. A new extension on easld 0.3.3 falls back to idle-only errors after one live report is rejected, resends without the new outcome fields, and preserves final answers. Reports saved before that rejection are not converted for offline replay.
+
+Blocked tool approvals work with easld 0.3.3. Terminal input and HTML export fixes run in the app and do not need a new easld. Updating the app does not replace the extension already loaded in a running omp session. Sessions load the new extension only after they restart.
+
+### Board format
+
+The board format is unchanged, still format 3.
+
+### Known limits
+
+- A remote terminal refuses typing in its first moments until you click it. Refused keys are not queued or replayed.
+- Approval detection depends on omp's `Allow tool:` dialog title.
+- An omp error raised before any request is sent, including the `-p` path, does not show on the tile.
+- CI's native tests now run on macOS 27. The runtime release checks ran on macOS 26.6.
+- Save as HTML and Open in Browser remain unavailable on remote boards.
+
+### Changes
 
 - After a terminal refuses a raw key because it is not ready, exited, or reattached, raw keys stay refused until you click the terminal. A new attachment or remote host ID cannot accept only the tail of that command. Nothing is replayed, and Copy and other Ghostty bindings remain available on exited terminals.
 - omp tiles now show `blocked` during real tool approval dialogs on omp 18.12.3 and 18.15.0, then resume when the dialog is answered or interrupted. The extension watches `ui.approve` as well as the older `ui.select` path.
