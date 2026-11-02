@@ -322,6 +322,47 @@ private enum TerminalSubmission {
         try require(f.text() == "explicit-control\nafter-click\n", "a click must allow a new complete typing run exactly once")
     }
 
+    static func refusedPressCannotLeakItsRelease() async throws {
+        let f = Fixture()
+        defer { f.close() }
+        f.view.controller = nil
+        func key(_ type: NSEvent.EventType, _ text: String, _ code: UInt16) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                             timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: f.window.windowNumber, context: nil,
+                             characters: text, charactersIgnoringModifiers: text,
+                             isARepeat: false, keyCode: code)!
+        }
+        f.view.keyDown(with: key(.keyDown, "e", 14))
+        let receipt = f.receipt.appendingPathExtension("releases")
+        let script = """
+        import os, tty
+        tty.setraw(0)
+        os.write(1, b'\\x1b[>11uREADY')
+        with open(\(String(reflecting: receipt.path)), 'wb', buffering=0) as receipt:
+            while True:
+                receipt.write(os.read(0, 4096))
+        """
+        var options = f.view.configuration
+        options.command = ShellWords.quote(["/usr/bin/python3", "-c", script])
+        f.view.configuration = options
+        f.view.controller = f.controller
+        try await until { f.surface?.viewportRow(0, columns: 80)?.contains("READY") == true }
+        f.view.keyUp(with: key(.keyUp, "e", 14))
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20),
+                                      modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: f.window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        f.view.mouseDown(with: click)
+        f.view.keyDown(with: key(.keyDown, "a", 0))
+        f.view.keyUp(with: key(.keyUp, "a", 0))
+        try await until { (try? String(contentsOf: receipt, encoding: .utf8))?.contains("\u{1b}[97;1:3u") == true }
+        let received = try String(contentsOf: receipt, encoding: .utf8)
+        print("KEY_RELEASE_RECEIPT \(String(reflecting: received))")
+        try require(received == "\u{1b}[97u\u{1b}[97;1:3u",
+                    "only the accepted press and its release may reach the program, never the refused key's release")
+    }
+
     static func main() {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
@@ -342,6 +383,7 @@ private enum TerminalSubmission {
             ("exited terminal still copies selection", exitedTerminalStillCopiesSelection),
             ("exited raw key is refused visibly", exitedRawKeyIsRefusedVisibly),
             ("early typing never delivers only the tail", earlyTypingCannotDeliverOnlyTheTail),
+            ("refused key press cannot leak its release", refusedPressCannotLeakItsRelease),
             ("exited attachment keeps composer draft", exitedAttachmentKeepsComposerDraft),
         ]
         var failures = 0
