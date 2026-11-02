@@ -1689,6 +1689,54 @@ test("a stop diagnosed as an error at agent_end never reports a premature succes
   expect(outcomes()[1]).toMatchObject({ state: "working", turnOutcome: "success" });
 });
 
+for (const [stopReason, outcome, errorMessage] of [
+  ["error", "error", "provider refused"],
+  ["length", "error", undefined],
+  ["aborted", "aborted", "Interrupted by user"],
+] as const) {
+  test(`a later ${stopReason} response cannot reuse an earlier stop`, async () => {
+    const easl = fakeEasl();
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "First answer." }] };
+    const endedAt = new Date().toISOString();
+    await omp.emit("message_end", { message: stopped });
+    const resumed = { role: "assistant", stopReason, errorMessage };
+    await omp.emit("message_end", { message: resumed });
+    await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [stopped, resumed] });
+    const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+    await until(() => outcomes().length >= 2);
+    expect(outcomes().map((params) => params.turnOutcome)).toEqual(["success", outcome]);
+    expect(outcomes()[0]).toMatchObject({ state: "working", turnEndedAt: endedAt });
+    if (outcome === "aborted") expect(outcomes()[1].error).toBeUndefined();
+    else expect(outcomes()[1].error).toBe(stopReason === "length" ? "stopped at the output token limit" : errorMessage);
+  });
+}
+
+test("a normal stop reports its outcome separately from the debounced idle final", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Final answer." }] };
+  await omp.emit("message_end", { message: stopped });
+  const finishedAt = Date.now();
+  await omp.emit("agent_end", { messages: [stopped] });
+  const reports = () => easl.calls.filter((call) => call.method === "agent.report").map((call) => call.params);
+  await until(() => reports().some((params) => params.turnOutcome === "success"));
+  expect(reports().find((params) => params.turnOutcome === "success")).toMatchObject({ state: "working" });
+  vi.advanceTimersByTime(249 - (Date.now() - finishedAt));
+  await turn();
+  expect(reports().filter((params) => params.state === "idle")).toEqual([]);
+  vi.advanceTimersByTime(1);
+  await until(() => reports().some((params) => params.state === "idle"));
+  const settled = reports().find((params) => params.state === "idle")!;
+  expect(settled.final).toBe("Final answer.");
+  expect(settled.turnOutcome).toBeUndefined();
+  expect(settled.turnEndedAt).toBeUndefined();
+});
+
 test("response errors omit request dumps and cap Unicode diagnostics without truncating surrogate pairs", async () => {
   const easl = fakeEasl();
   const omp = fakeOmp(easl);
