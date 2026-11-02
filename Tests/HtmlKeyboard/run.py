@@ -15,11 +15,15 @@ def main():
                         help="The directory printed by swift build --show-bin-path after a native Easl build with testing enabled.")
     parser.add_argument("--exports", action="store_true",
                         help="Run only the real HTML export security and static-content regression.")
+    parser.add_argument("--artifacts", type=pathlib.Path,
+                        help="Keep exported HTML and stylesheet diagnostics here, including when the regression fails.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS.")
     root = pathlib.Path(__file__).resolve().parents[2]
     build = args.bin_path.resolve()
+    artifacts = (args.artifacts or build / "html-export-artifacts").resolve()
+    artifacts.mkdir(parents=True, exist_ok=True)
     link_file = build / "Easl.product" / "Objects.LinkFileList"
     if not link_file.is_file() or not (build / "description.json").is_file():
         parser.error("Build Easl with --build-system native first, then pass that build's --show-bin-path. This runner never rebuilds the app.")
@@ -57,6 +61,7 @@ def main():
         environment["CFFIXED_USER_HOME"] = temporary
         environment["XDG_CONFIG_HOME"] = temporary
         environment["EASL_NO_ACTIVATE"] = "1"
+        environment["EASL_HTML_EXPORT_ARTIFACTS"] = str(artifacts)
         environment.pop("EASL_ROOT", None)
         subprocess.run([str(executable), *(["--exports"] if args.exports else [])],
                        cwd=root, env=environment, check=True, timeout=120)

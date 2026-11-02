@@ -233,16 +233,29 @@ extension HtmlTile {
     /// (excerpts, Mermaid, and Tailwind settled), then its DOM with images inlined as `data:` URLs,
     /// the kit stylesheet and math fonts inlined, and active content removed (the generated styles,
     /// `<canvas-code>` rows and diagrams are already in the DOM). The file needs no scripts or network.
-    func exportDocument() async throws -> String {
-        let (html, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
-            try await web.callAsyncJavaScript(Self.exportScript, arguments: [:], in: nil, contentWorld: .world(name: "canvas-html-export")) as? String
+    func exportDocument(diagnosticsDirectory: URL? = nil) async throws -> String {
+        let (result, reason) = await withOffscreenPage(size: RenderMath.body(of: object), appearance: effectiveAppearance) { web in
+            try await web.callAsyncJavaScript(Self.exportScript, arguments: ["collectDiagnostics": diagnosticsDirectory != nil],
+                                             in: nil, contentWorld: .world(name: "canvas-html-export")) as? [String: Any]
         }
-        guard let html = html ?? nil else { throw ExportFailure(reason ?? "the page produced no document") }
+        guard let report = result ?? nil, let html = report["html"] as? String else {
+            throw ExportFailure(reason ?? "the page produced no document")
+        }
+        if let diagnosticsDirectory {
+            guard let stylesheets = report["stylesheets"] as? [[String: Any]] else {
+                throw ExportFailure("the page produced no stylesheet diagnostics")
+            }
+            try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
+            try Data(html.utf8).write(to: diagnosticsDirectory.appendingPathComponent("export.html"), options: .atomic)
+            try JSONSerialization.data(withJSONObject: stylesheets, options: [.prettyPrinted, .sortedKeys])
+                .write(to: diagnosticsDirectory.appendingPathComponent("stylesheets.json"), options: .atomic)
+        }
         return html
     }
 
     /// Runs as the body of an async function in the page.
     static let exportScript = #"""
+    const stylesheets = collectDiagnostics ? [] : null;
     const dataURL = async (url) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`${response.status}`);
@@ -375,11 +388,25 @@ extension HtmlTile {
       sheet.replaceSync(element.textContent);
       const base = styleBases.get(element) || document.baseURI;
       await sanitizeRules(sheet, base);
-      const serialized = [...sheet.cssRules].map((rule) => rule.cssText).join('\n');
+      const before = [...sheet.cssRules].map((rule) => rule.cssText);
+      const serialized = before.join('\n');
       const reparsed = new CSSStyleSheet();
       reparsed.replaceSync(serialized);
       await sanitizeRules(reparsed, base);
-      if ([...reparsed.cssRules].map((rule) => rule.cssText).join('\n') !== serialized) {
+      const after = [...reparsed.cssRules].map((rule) => rule.cssText);
+      const stable = after.join('\n') === serialized;
+      if (stylesheets) {
+        let firstDifference = null;
+        if (!stable) {
+          let index = before.findIndex((text, i) => text !== after[i]);
+          if (index < 0) index = before.length;
+          firstDifference = { index, type: sheet.cssRules[index]?.type ?? null,
+                              before: before[index] ?? null, after: after[index] ?? null };
+        }
+        stylesheets.push({ index: stylesheets.length, base, foreign, kept: stable,
+                           rulesBefore: before.length, rulesAfter: after.length, firstDifference });
+      }
+      if (!stable) {
         element.remove();
         return;
       }
@@ -445,7 +472,7 @@ extension HtmlTile {
     charset.setAttribute('charset', 'utf-8');
     head.prepend(charset);
     head.prepend(policy);
-    return '\uFEFF<!doctype html>\n' + clone.outerHTML;
+    return { html: '\uFEFF<!doctype html>\n' + clone.outerHTML, stylesheets };
     """#
 }
 

@@ -200,7 +200,10 @@ private enum HtmlKeyboard {
         let object = board.create(type: .html, props: .object(["html": .string(exportHTML())]),
                                   frame: Frame(x: 0, y: 0, w: 900, h: 900))
         let tile = HtmlTile(object: object, board: board)
-        let document = try await tile.exportDocument()
+        guard let artifacts = ProcessInfo.processInfo.environment["EASL_HTML_EXPORT_ARTIFACTS"] else {
+            throw Failure(message: "run.py must provide EASL_HTML_EXPORT_ARTIFACTS")
+        }
+        let document = try await tile.exportDocument(diagnosticsDirectory: URL(fileURLWithPath: artifacts))
         check("real HtmlTile.exportDocument returned \(document.utf8.count) bytes")
         let file = root.appendingPathComponent("export.html")
         try Data(document.utf8).write(to: file)
