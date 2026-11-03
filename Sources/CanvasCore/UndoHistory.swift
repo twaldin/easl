@@ -210,7 +210,10 @@ public final class UndoHistory {
         if before.type != after.type { return true }
         let skipped = bookkeeping(before)
         func ignored(_ key: String) -> Bool {
-            skipped.contains(key) || before.type == .group && key == "members" || before.type == .browser && key == "urlIntent"
+            if skipped.contains(key) || before.type == .group && key == "members" || before.type == .browser && key == "urlIntent" { return true }
+            guard before.type == .arrow, key == "from" || key == "to" else { return false }
+            return before.props[key]?["object"]?.string == nil && after.props[key]?["object"]?.string == nil
+                && before.props[key]?["point"]?.array?.count == 2 && after.props[key]?["point"]?.array?.count == 2
         }
         if let patch = patch?.object {
             return patch.keys.contains { !ignored($0) && before.props[$0] != after.props[$0] }

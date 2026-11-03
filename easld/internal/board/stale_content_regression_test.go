@@ -183,19 +183,31 @@ func TestStaleContentAgePreservesDeletedObjectAgeOnUndo(t *testing.T) {
 	assertUntouched(t, b, now, "obj_note", true)
 }
 
-func TestStaleContentAgeTracksExplicitArrowProps(t *testing.T) {
-	for _, patch := range []map[string]any{
-		{"from": map[string]any{"point": []any{10.0, 20.0}}},
-		{"to": map[string]any{"point": []any{300.0, 200.0}}},
-		{"label": "Updated relationship"},
+func TestStaleContentAgeTreatsArrowCoordinatesAsGeometry(t *testing.T) {
+	for _, tc := range []struct {
+		patch     map[string]any
+		untouched bool
+	}{
+		{map[string]any{"from": map[string]any{"point": []any{10.0, 20.0}}}, true},
+		{map[string]any{"to": map[string]any{"point": []any{300.0, 200.0}}}, true},
+		{map[string]any{"to": map[string]any{"object": "obj_target"}}, false},
+		{map[string]any{"label": "Updated relationship"}, false},
+		{map[string]any{"color": "red"}, false},
 	} {
-		b, now := agedContentBoard(model.Object{ID: "obj_arrow", Type: model.Arrow, Props: map[string]any{
-			"from": map[string]any{"point": []any{0.0, 0.0}},
-			"to":   map[string]any{"point": []any{100.0, 100.0}},
-		}})
-		if _, err := b.Update("obj_arrow", nil, nil, nil, patch, "", ""); err != nil {
+		b, now := agedContentBoard(
+			model.Object{ID: "obj_arrow", Type: model.Arrow, Props: map[string]any{
+				"from": map[string]any{"point": []any{0.0, 0.0}},
+				"to":   map[string]any{"point": []any{100.0, 100.0}},
+			}},
+			model.Object{ID: "obj_target", Type: model.Shape, Frame: model.Frame{W: 160, H: 100}, Props: map[string]any{"kind": "rect"}},
+		)
+		if _, err := b.Translate([]string{"obj_arrow"}, 50, 25, ""); err != nil {
 			t.Fatal(err)
 		}
-		assertUntouched(t, b, now, "obj_arrow", false)
+		assertUntouched(t, b, now, "obj_arrow", true)
+		if _, err := b.Update("obj_arrow", nil, nil, nil, tc.patch, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		assertUntouched(t, b, now, "obj_arrow", tc.untouched)
 	}
 }

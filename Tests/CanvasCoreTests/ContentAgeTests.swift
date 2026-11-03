@@ -154,18 +154,22 @@ struct ContentAgeTests {
         #expect(!untouched(board).contains(arrow.id))
     }
 
-    @Test(arguments: ["endpoint", "label", "style"])
-    func explicitArrowEndpointsLabelsAndStyleRefreshContent(edit: String) throws {
+    @Test(arguments: ["point", "endpoint", "label", "style"])
+    func arrowCoordinatesAreGeometryButBindingsLabelsAndStyleAreContent(edit: String) throws {
         let initial = Board(id: "brd_arrow_age", root: root)
         let arrow = initial.create(type: .arrow, props: ArrowSpec(from: .point(CGPoint(x: 0, y: 0)), to: .point(CGPoint(x: 300, y: 100))).props)
+        let target = initial.create(type: .shape, props: .object(["kind": "rect"]))
         let board = try aged(initial)
+        _ = try board.translate([arrow.id], dx: 50, dy: 25)
+        #expect(untouched(board).contains(arrow.id))
         let patch: JSONValue = switch edit {
-        case "endpoint": .object(["to": ArrowBinding.point(CGPoint(x: 400, y: 200)).json])
+        case "point": .object(["to": ArrowBinding.point(CGPoint(x: 400, y: 200)).json])
+        case "endpoint": .object(["to": ArrowBinding.object(target.id).json])
         case "label": .object(["label": "authored"])
         default: .object(["color": "red"])
         }
         _ = try board.update(arrow.id, props: patch)
-        #expect(untouched(board).isEmpty)
+        #expect(untouched(board).contains(arrow.id) == (edit == "point"))
     }
 
 }

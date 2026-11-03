@@ -68,8 +68,17 @@ func sameContent(a, b model.Object) bool {
 
 func sameAuthoredPatch(a, b model.Object, patch map[string]any) bool {
 	skipped := bookkeeping(a)
+	freePoint := func(value any) bool {
+		end, _ := value.(map[string]any)
+		_, bound := end["object"].(string)
+		point, _ := end["point"].([]any)
+		return !bound && len(point) == 2
+	}
 	for key := range patch {
 		if skipped[key] || (a.Type == model.Group && key == "members") || (a.Type == model.Browser && key == "urlIntent") {
+			continue
+		}
+		if a.Type == model.Arrow && (key == "from" || key == "to") && freePoint(a.Props[key]) && freePoint(b.Props[key]) {
 			continue
 		}
 		if !jsonEqualKey(a.Props, b.Props, key) {
