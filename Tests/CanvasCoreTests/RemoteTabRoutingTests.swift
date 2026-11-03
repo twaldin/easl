@@ -143,9 +143,11 @@ extension ApiRouterTests {
             })
         }
         for frame in [Frame(x: 600, y: 400, w: 280, h: 200), Frame(x: 600, y: 400, w: 500, h: 350)] {
-            let response = try await call(client, "object.update", ["board": .string(view.id), "id": .string(note.id), "frame": JSONValue(frame)])
-            #expect(response["ok"] == .bool(true))
-            let revision = try #require(response["result"]?["object"]?["rev"]?.int)
+            let response = try await call(client, "object.batch", ["board": .string(view.id), "ops": .array([
+                .object(["method": "object.update", "params": .object(["id": .string(note.id), "frame": JSONValue(frame)])]),
+            ])])
+            #expect(response["ok"] == .bool(true), "\(response)")
+            let revision = try #require(response["result"]?["results"]?.array?.first?["object"]?["rev"]?.int)
             for _ in 0..<500 where view.objects[note.id]?.rev != revision {
                 try await Task.sleep(for: .milliseconds(20))
             }
@@ -163,7 +165,9 @@ extension ApiRouterTests {
         _ = await mirror.undo(redo: false).value
         #expect(authoritative.objects[note.id]?.props["markdown"] == "old")
         #expect(try await stale(createdBy: creator.id) == [note.id, group.id])
-        let edited = try await call(client, "object.update", ["board": .string(view.id), "id": .string(note.id), "props": .object(["markdown": "fresh"])])
+        let edited = try await call(client, "object.batch", ["board": .string(view.id), "ops": .array([
+            .object(["method": "object.update", "params": .object(["id": .string(note.id), "props": .object(["markdown": "fresh"])])]),
+        ])])
         #expect(edited["ok"] == .bool(true))
         #expect(try await stale(createdBy: creator.id) == [group.id])
         #expect(try await stale(createdBy: otherCreator.id) == [other.id])
