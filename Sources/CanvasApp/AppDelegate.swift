@@ -1752,7 +1752,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
-        let profiles = Set(registry.boards.values.flatMap { $0.objects.values }.filter { $0.type == .browser }.compactMap { BrowserProfile.name(in: $0.props) })
+        let boards = Array(registry.boards.values) + remoteControllers.values.map(\.board)
+        let profiles = Set(boards.flatMap { $0.objects.values }.filter { $0.type == .browser }.compactMap { BrowserProfile.name(in: $0.props) })
         BrowserProfile.confirmClear(in: window, profiles: profiles) { [weak controller] in controller?.canvas.showNotice("Browsing data cleared") }
     }
 
