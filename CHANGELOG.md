@@ -5,6 +5,7 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands now return `timeout` after 30 seconds, plus 100 ms for result delivery. Eval, actions, and snapshot keep their callbacks across commits, so a cold page's first command is not falsely cancelled. Commands are never replayed.
+- A cold browser's first document command now waits for its URL to commit and become interactive instead of acting on the initial placeholder. Admission uses the command's existing deadline. Actions are not retried or replayed.
 
 ## 0.3.5
 

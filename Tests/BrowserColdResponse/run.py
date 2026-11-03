@@ -50,7 +50,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     with (output / "link.log").open("w") as log:
         subprocess.run(command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
-    gates = {name: (threading.Event(), threading.Event()) for name in ("click", "eval", "snapshot", "timeout")}
+    gates = {name: (threading.Event(), threading.Event()) for name in
+             ("click", "eval", "snapshot", "timeout", "action-timeout", "eval-budget")}
     requests = []
     lock = threading.Lock()
     fixture_log = (output / "fixture.jsonl").open("w")

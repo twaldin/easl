@@ -143,7 +143,9 @@ private enum BrowserColdResponse {
             ("click", .element(.click, selector: "#go")),
             ("eval", .eval(script: "({url: location.href, title: document.title, token: window.coldToken = 'kept'})")),
             ("snapshot", .snapshot(interactive: false, maxDepth: nil)),
-            ("timeout", .wait(.selector("html"), timeoutMs: 200))
+            ("timeout", .wait(.selector("html"), timeoutMs: 200)),
+            ("action-timeout", .element(.click, selector: "#go")),
+            ("eval-budget", .eval(script: "window.coldPromise = new Promise(() => {})"))
         ]
         for (name, command) in cases {
             let url = origin + "/page/" + name
@@ -163,6 +165,11 @@ private enum BrowserColdResponse {
                 require(reply?.code == "timeout", "short wait must timeout while initial headers remain held, got \(reply?.code ?? "no_reply")")
                 require(reply.map { $0.elapsed >= 0.15 && $0.elapsed < 0.45 } ?? false,
                         "short wait's 200ms bound includes initial admission")
+            } else if name == "action-timeout" {
+                let reply = await pending.finish(within: 30.5)
+                require(reply?.code == "timeout", "uncommitted action must timeout without dispatch")
+                require(reply.map { $0.elapsed >= 29.9 && $0.elapsed < 30.5 } ?? false,
+                        "held action keeps its existing 30-second bound")
             } else {
                 try await Task.sleep(for: .milliseconds(900))
                 require(pending.reply == nil, "\(name) answered before its initial response was released")
@@ -172,7 +179,11 @@ private enum BrowserColdResponse {
             try await control(controlSession, origin: origin, path: "/release/" + name)
             let reply = await pending.finish(within: 31)
             require(reply != nil, "\(name) command must not hang")
-            if name != "timeout" {
+            if name == "eval-budget" {
+                require(reply?.code == "timeout", "a retained eval promise times out after admission")
+                require(reply.map { $0.elapsed >= 29.9 && $0.elapsed < 30.5 } ?? false,
+                        "admission and eval share one absolute 30-second bound")
+            } else if name != "timeout" && name != "action-timeout" {
                 require(reply?.code == "ok", "\(name) succeeds on its own document, got \(reply?.code ?? "no_reply")")
                 require(reply.map { $0.elapsed < 30.5 } ?? false, "\(name) stays inside existing native command bound")
             }
