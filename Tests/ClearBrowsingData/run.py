@@ -10,7 +10,7 @@ import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Check all saved browser profiles clear site data and preserve extension origins.")
+    parser = argparse.ArgumentParser(description="Check all saved browser profiles clear site cookies.")
     parser.add_argument("--bin-path", required=True, type=pathlib.Path)
     args = parser.parse_args()
     if platform.system() != "Darwin":
@@ -28,7 +28,7 @@ def main():
     compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
     command = [compiler, "-swift-version", "6", "-parse-as-library", "-enable-testing",
-               "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx15.4",
+               "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx14.0",
                "-I", str(build / "Modules"), "-I", str(build)]
     description = json.loads((build / "description.json").read_text())
     app = next(value for value in description["swiftCommands"].values() if value["moduleName"] == "CanvasApp")
