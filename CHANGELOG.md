@@ -2,7 +2,33 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.5
+
+easl 0.3.5 is a reliability release that captures the main thread early enough for stall records to show what blocked it. Clear Browsing Data now covers every saved browser profile, including profiles used only on remote boards or closed boards.
+
+The new sampler captures about 150 ms into a turn and keeps records for turns of 250 ms or more. The old sampler started 1 to 2.5 seconds into a stall and mostly saved an idle main thread.
+
+### Measurement change
+
+`app.metrics` main-thread busy time, stretch counts, and the longest stretch now include window-commit observers and autorelease-pool drains. Numbers can read higher than 0.3.4's without easl being slower. Account for this wider timing boundary when comparing versions.
+
+### easld, the app, and the CLI
+
+The new stall capture and Clear Browsing Data fix run in the 0.3.5 app and do not need a new easld. Remote boards work with either easld 0.3.4 or 0.3.5. The release check exercised the 0.3.5 app with easld 0.3.4 and the 0.3.4 app with easld 0.3.5.
+
+The `app.metrics` schema keeps its existing fields, with updated stall descriptions. The release check exercised both CLI directions across 0.3.4 and 0.3.5, including raw `app.metrics` and text output. Those CLI cases had no stall records, so they do not prove mixed-version text output with a saved record.
+
+### Board format
+
+The board format is unchanged, still format 3.
+
+### Known limits
+
+- Clear Browsing Data still clears extensions' own page storage in the default profile, as 0.3.4 did. It keeps `browser.storage.local`.
+- Stall sampling is off during measured runs with `EASL_DEV_PERF=1`.
+- CI's native tests run on macOS 27. The runtime release check ran on macOS 26.6.
+
+### Changes
 
 - Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands keep a 30-second native deadline and their own callback across navigation, so a cold page's first command is not falsely cancelled at commit. Commands are never replayed.
 - Clear Browsing Data now clears every saved browser profile of this app on this Mac, including profiles used only on remote or closed boards. The sheet names known profiles and warns that extensions' page storage is also cleared, as before.
