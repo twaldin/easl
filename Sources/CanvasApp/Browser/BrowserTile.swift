@@ -94,7 +94,7 @@ final class BrowserTile: NSView, TileContent {
     /// page loaded again is the first; the one after it drops the old log.
     fileprivate var previousLoad: PageReport.Released?
     fileprivate var previousRead: Task<Void, Never>?
-    fileprivate var commitsSinceRelease = 0
+    private(set) var commitsSinceRelease = 0
     /// A `file:line` in the error list opened code (`board.openForNavigation`); `existing` when
     /// a tile already showed it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
@@ -573,18 +573,23 @@ final class BrowserTile: NSView, TileContent {
     /// (another Space or a covered window hides the page too), and while the tile can't show the
     /// page (offscreen, its window minimized or in a background tab, the app hidden) the web view
     /// waits in `WebStage`. `drivenIdle` after the last command the normal hide/release policy
-    /// resumes. A page this made visible gets up to `revealWait` to present a frame first, so
-    /// the command that follows already sees `visibilityState` "visible".
-    func markDriven() async {
+    /// resumes. Document commands supply their deadline so the initial reveal belongs to the
+    /// committed document, not WebKit's placeholder.
+    @discardableResult
+    func markDriven(deadline: Date? = nil) async -> Result<Void, Error> {
         let webView = ensureWebView()
         let wasVisible = pageOnScreen
         let starting = !drive.active
         if surface != nil { setDrive(.surface) } else { driveUntilIdle() }
         placePage()
-        guard starting else { return }
-        WebStage.setOcclusionDetection(false, on: webView)
-        if window?.occlusionState.contains(.visible) == false { refreshOcclusion(webView) }
-        if !wasVisible { await presented(webView, within: Self.revealWait) }
+        if starting {
+            WebStage.setOcclusionDetection(false, on: webView)
+            if window?.occlusionState.contains(.visible) == false { refreshOcclusion(webView) }
+        }
+        if starting && !wasVisible || deadline != nil && commitsSinceRelease == 0 {
+            return await presented(webView, within: Self.revealWait, deadline: deadline)
+        }
+        return .success(())
     }
 
     func beginSurfaceDrive() {
@@ -616,8 +621,18 @@ final class BrowserTile: NSView, TileContent {
         }))
     }
 
-    /// Until the page's next frame is on screen, or `limit` passes.
-    private func presented(_ webView: WKWebView, within limit: TimeInterval) async {
+    /// Initial command reveal waits for its document within the command's own deadline.
+    @discardableResult
+    private func presented(_ webView: WKWebView, within limit: TimeInterval, deadline: Date? = nil) async -> Result<Void, Error> {
+        let initialDocument = commitsSinceRelease == 0
+        if let deadline, initialDocument {
+            do { try await wait(for: .loadState(.interactive), deadline: deadline) }
+            catch { return .failure(error) }
+            guard self.webView === webView else {
+                return .failure(CmuxError("unavailable", "the browser page was released"))
+            }
+        }
+        let remaining = min(limit, deadline.map { max(0, $0.timeIntervalSinceNow) } ?? limit)
         @MainActor final class Once { var done = false }
         let once = Once()
         await withCheckedContinuation { continuation in
@@ -627,8 +642,12 @@ final class BrowserTile: NSView, TileContent {
                 continuation.resume()
             }
             WebStage.afterNextPresentationUpdate(webView, finish)
-            DispatchQueue.main.asyncAfter(deadline: .now() + limit) { MainActor.assumeIsolated { finish() } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { MainActor.assumeIsolated { finish() } }
         }
+        if initialDocument, let deadline, Date() >= deadline {
+            return .failure(CmuxError("timeout", "timed out waiting for the browser document"))
+        }
+        return .success(())
     }
 
     private func endDriven() {

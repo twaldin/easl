@@ -9,8 +9,19 @@ extension BrowserTile {
     /// command that can act on the page (navigate, click, type, run script) takes the credit
     /// for what the page does next, as it starts and again as it ends (`NavigationCredit`).
     func perform(_ command: CmuxBrowserCommand, driver: ObjectID?) async throws -> JSONValue {
+        let deadline: Date
+        if case .wait(_, let timeoutMs) = command {
+            deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+        } else {
+            deadline = Date().addingTimeInterval(30)
+        }
         let webView = ensureWebView()
-        await markDriven()
+        switch command {
+        case .navigate, .back, .forward, .reload, .urlGet:
+            await markDriven()
+        default:
+            try await markDriven(deadline: deadline).get()
+        }
         let acts = Self.acts(command)
         if acts { credit.agent(driver) }
         defer {
@@ -35,24 +46,24 @@ extension BrowserTile {
             result["title"] = .string(webView.title ?? "")
             return .object(result)
         case .eval(let script):
-            return .object(["value": try await evaluate(script, in: webView)])
+            return .object(["value": try await evaluate(script, in: webView, deadline: deadline)])
         case .snapshot(let interactive, let maxDepth):
             return try await call("return window.__canvasCmux.snapshot(interactive, maxDepth)",
-                                  ["interactive": interactive, "maxDepth": maxDepth.map { $0 as Any } ?? NSNull()], in: webView)
+                                  ["interactive": interactive, "maxDepth": maxDepth.map { $0 as Any } ?? NSNull()], in: webView, deadline: deadline)
         case .screenshot:
             return try await screenshot(webView)
         case .element(let action, let selector):
-            return try await act(action.rawValue, selector, "", in: webView)
+            return try await act(action.rawValue, selector, "", in: webView, deadline: deadline)
         case .type(let selector, let text):
-            return try await act("type", selector, text, in: webView)
+            return try await act("type", selector, text, in: webView, deadline: deadline)
         case .fill(let selector, let text):
-            return try await act("fill", selector, text, in: webView)
+            return try await act("fill", selector, text, in: webView, deadline: deadline)
         case .press(let key):
-            return try await call("return window.__canvasCmux.press(key)", ["key": key], in: webView)
+            return try await call("return window.__canvasCmux.press(key)", ["key": key], in: webView, deadline: deadline)
         case .scroll(let dx, let dy):
-            return try await call("return window.__canvasCmux.scroll(dx, dy)", ["dx": dx, "dy": dy], in: webView)
-        case .wait(let condition, let timeoutMs):
-            try await wait(for: condition, deadline: Date().addingTimeInterval(Double(timeoutMs) / 1000))
+            return try await call("return window.__canvasCmux.scroll(dx, dy)", ["dx": dx, "dy": dy], in: webView, deadline: deadline)
+        case .wait(let condition, _):
+            try await wait(for: condition, deadline: deadline)
             return .object(location(ensureWebView()))
         }
     }
@@ -97,14 +108,14 @@ extension BrowserTile {
         ["url": .string(webView.url?.absoluteString ?? object.props["url"]?.string ?? "about:blank")]
     }
 
-    private func act(_ action: String, _ selector: String, _ text: String, in webView: WKWebView) async throws -> JSONValue {
-        try await call("return window.__canvasCmux.act(action, selector, text)", ["action": action, "selector": selector, "text": text], in: webView)
+    private func act(_ action: String, _ selector: String, _ text: String, in webView: WKWebView, deadline: Date) async throws -> JSONValue {
+        try await call("return window.__canvasCmux.act(action, selector, text)", ["action": action, "selector": selector, "text": text], in: webView, deadline: deadline)
     }
 
     // MARK: Waits
 
     /// Checks the condition, then parks until the page changes; never polls.
-    private func wait(for condition: CmuxWaitCondition, deadline: Date) async throws {
+    func wait(for condition: CmuxWaitCondition, deadline: Date) async throws {
         while true {
             guard board.objects[objectID] != nil else { throw CmuxError("not_found", "surface \(objectID) was closed") }
             let webView = ensureWebView()
@@ -123,6 +134,7 @@ extension BrowserTile {
         case .urlContains(let fragment):
             return webView.url?.absoluteString.contains(fragment) == true
         case .loadState(let state):
+            guard commitsSinceRelease > 0 else { return false }
             // `interactive` only needs the destination document to have replaced the old one
             // (DOMContentLoaded); `complete` also waits for WebKit to finish every subresource.
             switch state {
@@ -131,7 +143,7 @@ extension BrowserTile {
             }
             let ready: String?
             do {
-                ready = try await call("return document.readyState", [:], in: webView, deadline: deadline).string
+                ready = try await call("return document.readyState", [:], in: webView, deadline: deadline, recheckOnCommit: true).string
             } catch is CmuxError {
                 return false
             }
@@ -140,7 +152,7 @@ extension BrowserTile {
             let remaining = max(0, Int(deadline.timeIntervalSinceNow * 1000))
             do {
                 return try await call("return await window.__canvasCmux.waitFor(selector, timeout)",
-                                      ["selector": selector, "timeout": remaining], in: webView, deadline: deadline) == .bool(true)
+                                      ["selector": selector, "timeout": remaining], in: webView, deadline: deadline, recheckOnCommit: true) == .bool(true)
             } catch let error as CmuxError where error.code != "invalid_params" {
                 return false
             }
@@ -159,8 +171,8 @@ extension BrowserTile {
 
     /// Runs `body` as an async function in the automation world, installing the helper if the
     /// document predates it. Results must be JSON-shaped.
-    private func call(_ body: String, _ arguments: [String: Any], in webView: WKWebView, deadline: Date? = nil) async throws -> JSONValue {
-        try await javascript(deadline: deadline) { finish in
+    private func call(_ body: String, _ arguments: [String: Any], in webView: WKWebView, deadline: Date, recheckOnCommit: Bool = false) async throws -> JSONValue {
+        try await javascript(deadline: deadline, recheckOnCommit: recheckOnCommit) { finish in
             webView.callAsyncJavaScript(BrowserScripts.ensure + body, arguments: arguments, in: nil, in: BrowserScripts.world) {
                 finish($0.map { Optional($0) })
             }
@@ -169,8 +181,8 @@ extension BrowserTile {
 
     /// `browser.eval` in the page's own world: an expression's promise is awaited; statements
     /// run as a program (see `CmuxEval`). Neither is subject to the page's CSP.
-    private func evaluate(_ script: String, in webView: WKWebView) async throws -> JSONValue {
-        try await javascript { finish in
+    private func evaluate(_ script: String, in webView: WKWebView, deadline: Date) async throws -> JSONValue {
+        try await javascript(deadline: deadline) { finish in
             if let body = CmuxEval.awaitingBody(script) {
                 webView.callAsyncJavaScript(body, arguments: [:], in: nil, in: .page) {
                     finish($0.map { Optional($0) })
@@ -192,18 +204,18 @@ extension BrowserTile {
         let recheckOnCommit: Bool
     }
 
-    private func javascript(deadline: Date? = nil, start: (@escaping @MainActor (Result<Any?, Error>) -> Void) -> Void) async throws -> JSONValue {
+    private func javascript(deadline: Date, recheckOnCommit: Bool = false, start: (@escaping @MainActor (Result<Any?, Error>) -> Void) -> Void) async throws -> JSONValue {
         do {
             return try await withCheckedThrowingContinuation { continuation in
                 let id = UUID()
                 // Even a zero-budget condition check needs one WebKit round trip.
-                let limit = (deadline ?? Date().addingTimeInterval(30)).addingTimeInterval(0.1)
+                let limit = deadline.addingTimeInterval(0.1)
                 let timer = Timer(timeInterval: max(0, limit.timeIntervalSinceNow), repeats: false) { [weak self] _ in
                     MainActor.assumeIsolated {
                         self?.finishJavaScript(id, with: .failure(CmuxError("timeout", "timed out waiting for page JavaScript")))
                     }
                 }
-                scriptCalls[id] = ScriptCall(continuation: continuation, timer: timer, recheckOnCommit: deadline != nil)
+                scriptCalls[id] = ScriptCall(continuation: continuation, timer: timer, recheckOnCommit: recheckOnCommit)
                 RunLoop.main.add(timer, forMode: .common)
                 start { [weak self] result in
                     switch result {
@@ -212,7 +224,7 @@ extension BrowserTile {
                     }
                 }
             }
-        } catch ScriptError.documentChanged where deadline == nil {
+        } catch ScriptError.documentChanged where !recheckOnCommit {
             throw CmuxError("js_error", "the page became unavailable before JavaScript returned")
         }
     }
