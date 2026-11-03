@@ -4,7 +4,15 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
+- Replace Mermaid.js with Pele 1.9.1 as the only Mermaid renderer for HTML tiles and note fences. Thanks to @afowic for the original note integration. Declared direction is preserved. HTML diagrams keep natural size with overflow scrolling and a labelled, keyboard-reachable Fit/100% control; scriptless exports remain visible and scrollable without removing authored content. Wide diagrams keep their full height when macOS shows scroll bars. Note images stay static, centred, and natural-size, shrinking only for note width and existing raster caps. Source admission, preparation and active deadlines, process termination, single infrastructure retry, cancellation, pool limits, and source fallback remain unchanged.
+- No Markdown, HTML, or board-data migration is needed. Pages that called the undocumented `window.mermaid` global must use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. Sampled `classDef` colours and stroke widths are supported. This does not promise full Mermaid.js syntax parity.
+
 - Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
+
+### Known limits
+
+- Pele accepts `%%{init}%%` directives but ignores `themeVariables`, so directive colours such as `primaryColor` are not applied. The app palette comes from CSS.
+- `zenuml` renders in neither the replaced Mermaid.js 11.17.2 bundle nor Pele 1.9.1.
 
 ## 0.3.4
 

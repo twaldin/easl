@@ -63,7 +63,7 @@ def main():
         environment["EASL_NO_ACTIVATE"] = "1"
         environment["EASL_HTML_EXPORT_ARTIFACTS"] = str(artifacts)
         environment.pop("EASL_ROOT", None)
-        subprocess.run([str(executable), *(["--exports"] if args.exports else [])],
+        subprocess.run([str(executable), "-AppleShowScrollBars", "Always", *(["--exports"] if args.exports else [])],
                        cwd=root, env=environment, check=True, timeout=120)
 
 

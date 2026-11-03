@@ -17,6 +17,26 @@
   --canvas-ok: #1f8f4e;
   --canvas-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --canvas-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --pele-bg: var(--canvas-background);
+  --pele-fg: var(--canvas-foreground);
+  --pele-muted: var(--canvas-muted-foreground);
+  --pele-line: var(--canvas-muted-foreground);
+  --pele-surface: var(--canvas-card);
+  --pele-surface-alt: var(--canvas-muted);
+  --pele-border: var(--canvas-border);
+  --pele-accent: var(--canvas-accent);
+  --pele-critical: var(--canvas-warn);
+  --pele-error: var(--canvas-warn);
+  --pele-font: var(--canvas-font);
+  --pele-font-mono: var(--canvas-mono);
+  --pele-series-1: var(--canvas-accent);
+  --pele-series-2: var(--canvas-ok);
+  --pele-series-3: var(--canvas-warn);
+  --pele-series-4: var(--canvas-tok-keyword);
+  --pele-series-5: var(--canvas-tok-type);
+  --pele-series-6: var(--canvas-tok-string);
+  --pele-series-7: var(--canvas-tok-number);
+  --pele-series-8: var(--canvas-muted-foreground);
   /* Syntax colors for <canvas-code>. */
   --canvas-tok-keyword: #ad3da4;
   --canvas-tok-string: #c41a16;
@@ -176,8 +196,31 @@
     color: var(--canvas-muted-foreground);
   }
 
-  .mermaid { display: flex; justify-content: center; margin: 12px 0; }
-  .mermaid:not([data-processed]) { white-space: pre; font-family: var(--canvas-mono); color: var(--canvas-muted-foreground); }
+  .mermaid { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; margin: 12px 0; }
+  .mermaid:not([data-mermaid-state="ready"]) { white-space: pre-wrap; font-family: var(--canvas-mono); color: var(--canvas-muted-foreground); }
+  .mermaid > pre { margin: 0; overflow: auto; white-space: pre; }
+  .ck-mermaid-error { margin: 8px 0 0; color: var(--canvas-warn); font: 12px/1.5 var(--canvas-font); white-space: normal; }
+  .ck-mermaid-viewport { display: block; min-height: 0; max-width: 100%; height: var(--ck-mermaid-height, auto); overflow: auto; }
+  .mermaid[data-mermaid-size="fit"] > .ck-mermaid-viewport {
+    height: auto;
+    max-height: var(--ck-mermaid-natural-height);
+    aspect-ratio: var(--ck-mermaid-aspect-ratio);
+    overflow-y: hidden;
+  }
+  .ck-mermaid-viewport > svg { display: block; margin-inline: auto; }
+  .ck-mermaid-size {
+    display: block;
+    margin: 0 0 6px auto;
+    padding: 3px 10px;
+    border: 1px solid var(--canvas-border);
+    border-radius: 4px;
+    background: var(--canvas-card);
+    color: var(--canvas-foreground);
+    font: 12px/1.5 var(--canvas-font);
+    cursor: pointer;
+  }
+  .ck-mermaid-size:hover { border-color: var(--canvas-accent); }
+  .ck-mermaid-size:focus-visible, .ck-mermaid-viewport:focus-visible { outline: 2px solid var(--canvas-accent); outline-offset: 2px; }
 
   /* KaTeX: inline follows the text; display math is its own centered block. */
   .canvas-math { color: inherit; }

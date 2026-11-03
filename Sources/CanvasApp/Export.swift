@@ -271,6 +271,7 @@ extension HtmlTile {
         document.documentElement.tagName.toLowerCase() !== 'html') throw new Error('The page has no HTML document root.');
     const images = [...document.querySelectorAll('img')];
     const clone = document.implementation.createHTMLDocument('').importNode(document.documentElement, true);
+    for (const control of clone.querySelectorAll('.mermaid[data-mermaid-state="ready"] > button.ck-mermaid-size')) control.remove();
     const copies = [...clone.querySelectorAll('img')];
     for (let i = 0; i < copies.length; i++) {
       const source = images[i] && (images[i].currentSrc || images[i].src);

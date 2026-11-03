@@ -71,13 +71,16 @@ button.addEventListener('click', async () => {
 
 ## Mermaid
 
-HTML diagrams use the vendored Mermaid.js 11.17.2 build offline, with `securityLevel: 'strict'`
-and the tile's light or dark theme. Note `mermaid` fences use the same build and container layout in an isolated renderer with a two-second deadline and source fallback.
+HTML diagrams use vendored Pele 1.9.1 offline with strict security stripping, disabled links and images, and the tile's CSS palette and font. Rendering preserves the declared direction with `autoDirection: false`. Notes use the same renderer in isolated WebKit, but display static, centred natural-size images that shrink only for available width and raster caps. Notes have no Fit control.
 
-- **Give diagrams the full width.** Mermaid scales a diagram down to fit its container,
-  so a sequence diagram squeezed into a narrow column (a grid cell, one `canvas-compare` pane) renders its message text at ~9 px, unreadable at 100%.
-  Put diagrams in their own full-width section, keep them to 5–9 nodes or participants, and put the details in sections under them.
-- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram ("Syntax error in text").
+Use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. The undocumented `window.mermaid` global is removed. Failed diagrams show source and a short diagnostic. No stored HTML or Markdown migration is needed.
+
+To change a rendered diagram, replace its element with a new `<pre class="mermaid">` and call `canvasKit.renderMermaid()`.
+
+Pele accepts the sampled `%%{init}%%` directives but ignores their `themeVariables`. Use the app's CSS palette rather than directive theme overrides. Sampled `classDef` colours and stroke widths work. Family coverage is not a promise of full syntax parity. Quote radar labels.
+
+- Give diagrams the full width. HTML diagrams start at their natural viewBox size with overflow scrolling, not automatic downscaling. Fit can shrink labels in a narrow column; 100% restores natural size and lets the reader scroll. Keep diagrams in their own full-width section, with details underneath.
+- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram and shows its source with a diagnostic.
   Use a comma, or `#59;` for a literal semicolon (`A->>B: read#59; retry`).
 - **Building HTML in omp's `eval`:** a Python cell line that starts with `%%` (e.g. a Mermaid `%%{init: …}%%` directive) is taken as a cell magic.
   Keep the directive inside a string that doesn't start a line of the cell, or leave it out.

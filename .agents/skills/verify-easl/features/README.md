@@ -19,6 +19,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Questions and expiry](questions-expiry.md) covers CLI creation, native answers, cancellation, expiry, and archive retention.
 - [Note math](note-math.md) covers native inline and display formulas, source fallback, and literal code.
 - [Note Mermaid](note-mermaid.md) covers isolated rendering, preparation and render deadlines, centred image layers, cold launch, hostile inputs, and process cleanup.
+- [HTML Mermaid](html-mermaid.md) covers Pele family compatibility, all documented entry points, natural-size overflow, real Fit input and wheel scrolling, scriptless export, and mixed-version storage bytes.
 - [Graph diagrams](graph-diagrams.md) covers authored knowledge, statuses, source badges, and expanded detail.
 - [Graded questions](graded-questions.md) covers correct and wrong answers with optional confidence.
 - [HTML keyboard ownership](html-keyboard.md) covers Return, editable clicks, Escape, autofocus, and document grants.
