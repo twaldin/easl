@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
+
 ## 0.3.4
 
 easl 0.3.4 makes new HTML exports inert, so saving or opening a new export cannot run an agent's scripts outside the tile's network limits. This safety and reliability release also keeps agent errors visible until success, marks pending approvals blocked, and stops new-terminal typing from reaching the board or running only a command's tail.
@@ -29,7 +33,6 @@ The board format is unchanged, still format 3.
 
 ### Changes
 
-- Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
 - After a terminal refuses a raw key because it is not ready, exited, or reattached, raw keys stay refused until you click the terminal. A new attachment or remote host ID cannot accept only the tail of that command. Nothing is replayed, and Copy and other Ghostty bindings remain available on exited terminals.
 - omp tiles now show `blocked` during real tool approval dialogs on omp 18.12.3 and 18.15.0, then resume when the dialog is answered or interrupted. The extension watches `ui.approve` as well as the older `ui.select` path.
 - After a live outcome-field rejection, the omp extension keeps v0.3.3 easld's idle-with-error behavior instead of showing a failed turn as done. It retries the report without those fields, preserves final answers, and checks outcome support again when easld reconnects. Reports saved before that rejection are not converted, so offline replay on v0.3.3 can still show a failed turn as done. Outcome-aware daemons keep the current behavior.
