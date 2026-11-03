@@ -51,7 +51,9 @@ def main():
     parser.add_argument("--recovery-only", action="store_true",
                         help="Run only the natural-timeout/ordinary-diagram recovery regression.")
     parser.add_argument("--profile", action="store_true",
-                        help="Keep image assertions, disable only the 50ms limit, and pause 3s after each churn-ready event for sampling.")
+                        help="Keep functional assertions, disable upper timing limits, and pause 3s after each churn-ready event for sampling.")
+    parser.add_argument("--ci-timing-report-only", action="store_true",
+                        help="CI only: report upper timing limits without enforcing them. Keep all functional assertions and add no sampling pauses.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS with a native window session.")
@@ -133,6 +135,8 @@ def run(args, parser, scratch):
                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         if args.profile:
             native_command.append("--profile")
+        if args.ci_timing_report_only:
+            native_command.append("--ci-timing-report-only")
         if args.recovery_only:
             native_command.append("--recovery-only")
         native_log = artifacts / "native.jsonl"
@@ -141,6 +145,7 @@ def run(args, parser, scratch):
         emit({"event": "runner-start", "ownedPid": process.pid,
               "build": str(build), "optimizedObjects": True, "isolatedHome": temporary,
               "artifacts": str(artifacts), "profile": args.profile,
+              "ciTimingReportOnly": args.ci_timing_report_only,
               "stageSeconds": args.stage_seconds, "repo": str(root), "scratch": str(scratch),
               "probeSha256": hashlib.sha256(executable.read_bytes()).hexdigest()})
         try:

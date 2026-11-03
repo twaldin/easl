@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
+
 ## 0.3.4
 
 easl 0.3.4 makes new HTML exports inert, so saving or opening a new export cannot run an agent's scripts outside the tile's network limits. This safety and reliability release also keeps agent errors visible until success, marks pending approvals blocked, and stops new-terminal typing from reaching the board or running only a command's tail.
