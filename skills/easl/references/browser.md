@@ -47,6 +47,8 @@ Errors print `code: message` and exit 1 (`not_found: no element matches #go`, `t
 
 Page JavaScript has a native deadline: the wait's remaining budget, or 30 seconds for other commands, plus 100 ms for result delivery. Only wait conditions are re-checked after commit. Eval, actions, and snapshot keep their callback and deadline across navigation and are never replayed. Process termination or view release ends pending commands with `js_error`.
 
+On a cold tile, document commands wait for the tile URL to commit and become interactive within the same deadline used for execution. A URL that never commits returns `timeout` by that deadline.
+
 Every driven page stays live 60 s after each command, as with omp's tool. `board.history` credits what your commands cause to the terminal that opened the tile; on a tile someone else opened they show as `system`.
 Codex's sandbox blocks the socket: run `easl browser` escalated, like every easl command.
 
