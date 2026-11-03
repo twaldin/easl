@@ -44,6 +44,12 @@ A page an agent is driving stays visible to WebKit for 60 s after its last comma
 | `surface.list` | `surface_id` or `workspace_id` | `workspace_id`, `window_id` (null), `surfaces` (`id`, `type`, `title`: a page's own `pageTitle`, else `title`; `url`) |
 | `surface.close` | `surface_id` (browser only) | — ; a tile opened as `canvas:<tile id>` is let go of, not deleted (each such open lets one close go, in memory); `board.history` credits the terminal the connection opened splits from (`browser.open_split`'s `surface_id`), else the terminal that opened the tile |
 
+`browser.wait` keeps its native deadline across document replacement. Selector, URL, and
+load-state waits check the new document without polling. A missing condition returns `timeout`.
+Page JavaScript has a native deadline too: the wait's remaining budget, or 30 seconds for other
+automation commands, with 100 ms for result delivery. A document replaced before an action or
+eval returns produces `js_error`; the action is not replayed. `object.reload` uses its own timeout.
+
 The terminal a command comes from (its driver) is the one the connection opened splits from, else the one that opened the tile, else none. `board.history` credits a page's URL changes and the tiles it opens (`_blank`, `window.open`, ⌘-click) to whoever last acted on the page within 10 s (`NavigationCredit`): a driven command that can act (`navigate`, `back`, `forward`, `reload`, `eval`, element actions, `type`, `fill`, `press`) → its driver (`system` when none), the user clicking or typing in the page, its address bar, back, forward or reload → `user`; otherwise (a redirect or timer later on) `system`. A tile the user opened from a page is revealed (least pan) and selected; one an agent's command opened isn't. The same address opened again from the same page within 2 s gets the first tile back.
 
 Error codes: `invalid_params`, `not_found`, `method_not_found`, `unauthorized`, `timeout`, `js_error`, `unavailable`. The plain-text line `auth <password>` answers `OK: …` or `ERROR: …`.

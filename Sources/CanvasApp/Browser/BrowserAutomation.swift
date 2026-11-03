@@ -108,7 +108,11 @@ extension BrowserTile {
         while true {
             guard board.objects[objectID] != nil else { throw CmuxError("not_found", "surface \(objectID) was closed") }
             let webView = ensureWebView()
-            if try await satisfied(condition, in: webView, deadline: deadline) { return }
+            do {
+                if try await satisfied(condition, in: webView, deadline: deadline) { return }
+            } catch ScriptError.documentChanged {
+                if Date() < deadline { continue }
+            }
             guard Date() < deadline else { throw CmuxError("timeout", "timed out waiting for \(Self.describe(condition))") }
             await nextChange(before: deadline)
         }
@@ -125,18 +129,25 @@ extension BrowserTile {
             case .interactive: guard uncommittedNavigations.isEmpty else { return false }
             case .complete: guard pendingNavigations.isEmpty, !webView.isLoading else { return false }
             }
-            // A document torn down mid-check is simply not ready yet.
-            let ready = (try? await call("return document.readyState", [:], in: webView))?.string
+            let ready: String?
+            do {
+                ready = try await call("return document.readyState", [:], in: webView, deadline: deadline).string
+            } catch ScriptError.documentChanged {
+                throw ScriptError.documentChanged
+            } catch {
+                return false
+            }
             return state == .complete ? ready == "complete" : ready == "interactive" || ready == "complete"
         case .selector(let selector):
             let remaining = max(0, Int(deadline.timeIntervalSinceNow * 1000))
             do {
                 return try await call("return await window.__canvasCmux.waitFor(selector, timeout)",
-                                      ["selector": selector, "timeout": remaining], in: webView) == .bool(true)
+                                      ["selector": selector, "timeout": remaining], in: webView, deadline: deadline) == .bool(true)
+            } catch ScriptError.documentChanged {
+                throw ScriptError.documentChanged
             } catch let error as CmuxError where error.code == "invalid_params" {
                 throw error
             } catch {
-                // The document went away (navigation); try again in the next one.
                 return false
             }
         }
@@ -154,34 +165,75 @@ extension BrowserTile {
 
     /// Runs `body` as an async function in the automation world, installing the helper if the
     /// document predates it. Results must be JSON-shaped.
-    private func call(_ body: String, _ arguments: [String: Any], in webView: WKWebView) async throws -> JSONValue {
-        do {
-            let value = try await webView.callAsyncJavaScript(BrowserScripts.ensure + body, arguments: arguments, in: nil, contentWorld: BrowserScripts.world)
-            return Self.json(value)
-        } catch {
-            throw Self.cmuxError(error)
+    private func call(_ body: String, _ arguments: [String: Any], in webView: WKWebView, deadline: Date? = nil) async throws -> JSONValue {
+        try await javascript(deadline: deadline) { finish in
+            webView.callAsyncJavaScript(BrowserScripts.ensure + body, arguments: arguments, in: nil, in: BrowserScripts.world) {
+                finish($0.map { Optional($0) })
+            }
         }
     }
 
     /// `browser.eval` in the page's own world: an expression's promise is awaited; statements
     /// run as a program (see `CmuxEval`). Neither is subject to the page's CSP.
     private func evaluate(_ script: String, in webView: WKWebView) async throws -> JSONValue {
-        if let body = CmuxEval.awaitingBody(script) {
-            do {
-                return Self.json(try await webView.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page))
-            } catch {
-                throw Self.cmuxError(error)
-            }
-        }
-        // The completion-handler form: the async overload can't return a program's `undefined`.
-        return try await withCheckedThrowingContinuation { continuation in
-            webView.evaluateJavaScript(script) { value, error in
-                if let error {
-                    continuation.resume(throwing: Self.cmuxError(error))
-                } else {
-                    continuation.resume(returning: Self.json(value))
+        try await javascript { finish in
+            if let body = CmuxEval.awaitingBody(script) {
+                webView.callAsyncJavaScript(body, arguments: [:], in: nil, in: .page) {
+                    finish($0.map { Optional($0) })
+                }
+            } else {
+                webView.evaluateJavaScript(script) { value, error in
+                    if let error { finish(.failure(error)) }
+                    else { finish(.success(value)) }
                 }
             }
+        }
+    }
+
+    enum ScriptError: Error { case documentChanged }
+
+    struct ScriptCall {
+        let continuation: CheckedContinuation<JSONValue, Error>
+        let timer: Timer
+    }
+
+    private func javascript(deadline: Date? = nil, start: (@escaping @MainActor (Result<Any?, Error>) -> Void) -> Void) async throws -> JSONValue {
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                let id = UUID()
+                // Even a zero-budget condition check needs one WebKit round trip.
+                let limit = (deadline ?? Date().addingTimeInterval(30)).addingTimeInterval(0.1)
+                let timer = Timer(timeInterval: max(0, limit.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.finishJavaScript(id, with: .failure(CmuxError("timeout", "timed out waiting for page JavaScript")))
+                    }
+                }
+                scriptCalls[id] = ScriptCall(continuation: continuation, timer: timer)
+                RunLoop.main.add(timer, forMode: .common)
+                start { [weak self] result in
+                    switch result {
+                    case .success(let value): self?.finishJavaScript(id, with: .success(Self.json(value)))
+                    case .failure(let error): self?.finishJavaScript(id, with: .failure(Self.cmuxError(error)))
+                    }
+                }
+            }
+        } catch ScriptError.documentChanged where deadline == nil {
+            throw CmuxError("js_error", "the page navigated before JavaScript returned")
+        }
+    }
+
+    private func finishJavaScript(_ id: UUID, with result: Result<JSONValue, Error>) {
+        guard let call = scriptCalls.removeValue(forKey: id) else { return }
+        call.timer.invalidate()
+        call.continuation.resume(with: result)
+    }
+
+    func invalidateJavaScript() {
+        let calls = scriptCalls.values
+        scriptCalls.removeAll()
+        for call in calls {
+            call.timer.invalidate()
+            call.continuation.resume(throwing: ScriptError.documentChanged)
         }
     }
 

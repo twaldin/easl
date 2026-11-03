@@ -336,6 +336,21 @@ To replay input in Settings or a specific board window, add `--window <id>` to `
 
 Run `scripts/dev.sh stop` when the test is done, not at the end of the session: it also kills the instance's zmx sessions.
 
+### Browser automation deadlines
+
+```sh
+	swift build --build-system native -j 2 --product Easl
+	python3 Tests/BrowserWait/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+```
+
+The native regression links the production app and serves a dummy sign-in form on loopback.
+It holds each POST's 303 until the old document enters its selector wait, then requires success
+on a matching destination or an on-time timeout on a destination without the selector.
+It also checks zero-timeout and invalid selectors, URL and load-state waits, an eval interrupted
+by navigation, and the native deadline for a promise that never resolves.
+The runner supplies a disposable home and never builds the app or uses a real site.
+
+
 ### Mixed drawing and tile stacking
 
 Build the native app objects, then run the AppKit regression on an isolated GUI test machine:
