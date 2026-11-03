@@ -45,6 +45,8 @@ jobs:
         run: python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native browser wait navigation regression
         run: python3 Tests/BrowserWait/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native cold browser first-command regression
+        run: python3 Tests/BrowserColdCommands/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML tile keyboard regression
         id: html-keyboard
         run: python3 Tests/HtmlKeyboard/run.py --bin-path "$(swift build --build-system native --show-bin-path)" --artifacts "${{ runner.temp }}/html-export-artifacts"
