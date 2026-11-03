@@ -81,6 +81,7 @@ private enum BrowserInitialAdmission {
         try await Task.sleep(for: .milliseconds(350))
         require(calls(kind) > 0, "\(kind) must draw its initial preview 599 points beyond the viewport")
         if let browser = tile.content as? BrowserTile {
+            _ = try await browser.perform(.wait(.loadState(.complete), timeoutMs: 5000), driver: nil)
             _ = try await browser.perform(.eval(script: "window.admissionToken = 'kept'; window.admissionToken"), driver: nil)
             let page = browser.webView
             canvas.show(initial)
