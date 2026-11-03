@@ -16,7 +16,7 @@ private enum StallSamplerRegression {
         guard CommandLine.arguments.count == 3,
               let milliseconds = Int(CommandLine.arguments[2]),
               [300, 600, 1500].contains(milliseconds),
-              ["busy", "blocked"].contains(CommandLine.arguments[1]),
+              ["busy", "blocked", "late-busy", "late-blocked"].contains(CommandLine.arguments[1]),
               let home = ProcessInfo.processInfo.environment["EASL_HOME"] else {
             fatalError("run.py must supply a scenario, duration and isolated home")
         }
@@ -25,9 +25,9 @@ private enum StallSamplerRegression {
         let metrics = Metrics.shared
         metrics.monitorMainThread()
         metrics.sampleStalls(into: directory.appendingPathComponent("stalls", isDirectory: true))
-        let timer = Timer(timeInterval: 0.1, repeats: false) { _ in
+        let stall = { @Sendable in
             precondition(Thread.isMainThread)
-            if kind == "busy" {
+            if kind.hasSuffix("busy") {
                 stallBusyLoop(milliseconds: milliseconds)
             } else {
                 let semaphore = DispatchSemaphore(value: 0)
@@ -37,8 +37,12 @@ private enum StallSamplerRegression {
                 semaphore.wait()
             }
         }
-        RunLoop.main.add(timer, forMode: .default)
-        // Keep driving real observer activities after the turn, including late sample delivery.
+        if kind.hasPrefix("late-") {
+            let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, 2_000_000) { _, _ in stall() }
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        } else {
+            RunLoop.main.add(Timer(timeInterval: 0.1, repeats: false) { _ in stall() }, forMode: .default)
+        }
         let deadline = Date(timeIntervalSinceNow: Double(milliseconds) / 1000 + 8)
         while Date() < deadline {
             _ = RunLoop.main.run(mode: .default, before: min(deadline, Date(timeIntervalSinceNow: 0.05)))

@@ -105,6 +105,7 @@ public final class Metrics: @unchecked Sendable {
     private var turnStart: Double?
     private var stallSampler: StallSampler?
     private var stallPolicy = StallSampling()
+    private var stallDeadline: Double?
     /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
     /// its turn, its file once `sample` has finished, and once the turn has ended first, that
     /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
@@ -207,10 +208,7 @@ public final class Metrics: @unchecked Sendable {
         MainMonitor.install(self)
     }
 
-    /// Samples the process (`/usr/bin/sample`, into `directory`) while the main thread has been in
-    /// one turn for `StallSampling.threshold` seconds, at most every `StallSampling.minInterval`;
-    /// the stretch's cause then names the file. Not for measured runs: `sample` suspends the
-    /// task's threads briefly while it walks their stacks.
+    /// Starts sampling turns at 250 ms, at most once every five minutes. Call on main.
     public func sampleStalls(into directory: URL) {
         lock.lock()
         defer { lock.unlock() }
@@ -218,6 +216,16 @@ public final class Metrics: @unchecked Sendable {
         let sampler = StallSampler(directory: directory, metrics: self)
         sampler.start()
         stallSampler = sampler
+        scheduleStallSampling()
+    }
+
+    private func scheduleStallSampling() {
+        guard let stallSampler else { return }
+        stallSampler.publish(turn: turnStart)
+        guard let deadline = stallPolicy.deadline(turnStart: turnStart),
+              stallDeadline == nil || deadline < stallDeadline! else { return }
+        stallDeadline = deadline
+        stallSampler.schedule(at: deadline)
     }
 
     /// The stall watchdog, awake at `now`: the main thread's turn in progress, when the policy
@@ -225,7 +233,11 @@ public final class Metrics: @unchecked Sendable {
     /// sampled, and the policy doesn't count it.
     func claimStall(at now: Double) -> Double? {
         lock.lock()
-        defer { lock.unlock() }
+        stallDeadline = nil
+        defer {
+            scheduleStallSampling()
+            lock.unlock()
+        }
         guard stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
         stallPending = (turnStart, nil, nil)
         return turnStart
@@ -253,9 +265,15 @@ public final class Metrics: @unchecked Sendable {
 
     /// The sample of the turn that started at `turn` left no file: the claim is released (a turn
     /// that already ended has had its line, untagged).
-    func stallFailed(_ turn: Double) {
+    func stallFailed(_ turn: Double, cancelled: Bool = false) {
         lock.lock()
-        if stallPending?.turn == turn { stallPending = nil }
+        if stallPending?.turn == turn {
+            stallPending = nil
+            if cancelled {
+                stallPolicy.cancelled(turn: turn)
+                scheduleStallSampling()
+            }
+        }
         lock.unlock()
     }
 
@@ -276,6 +294,7 @@ public final class Metrics: @unchecked Sendable {
         var line: (ms: Double, cause: String)?
         lock.lock()
         turnStart = next
+        scheduleStallSampling()
         if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
             let ms = ended.ms
             let text = cause()
@@ -435,10 +454,14 @@ final class MainMonitor {
     fileprivate static func install(_ metrics: Metrics) {
         guard observer == nil else { return }
         let monitor = MainMonitor(metrics, at: Metrics.now())
-        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
-        let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
-            monitor.loop(sleeping: activity == .beforeWaiting, at: Metrics.now())
+        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue
+        let awake = CFRunLoopObserverCreateWithHandler(nil, activities, true, CFIndex.min) { _, _ in
+            monitor.loop(sleeping: false, at: Metrics.now())
         }
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, CFIndex.max) { _, _ in
+            monitor.loop(sleeping: true, at: Metrics.now())
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), awake, .commonModes)
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
         installed = monitor

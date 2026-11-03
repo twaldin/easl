@@ -1,21 +1,17 @@
 import Darwin
 import Foundation
+import StallCapture
 
-/// When the main thread has been in one run-loop turn for a second or more, a backtrace of the
-/// whole process is worth more than the stretch's length: `StallSampler` runs `/usr/bin/sample`
-/// on easl itself from a utility thread while the stall is still going, into `stalls/` in the
-/// easl home, and the stretch's cause names the file. `StallSampling` is the policy, apart from
-/// the clock, the process and the file system so it can be tested as a unit: a turn is sampled
-/// once, at most one sample every five minutes, and only the newest twenty files are kept.
 public struct StallSampling: Sendable {
     /// A turn this long (s) is a stall worth a sample.
-    public static let threshold = 1.0
+    public static let threshold = 0.25
     /// At most one sample this often (s): a stalling app shouldn't spend its time being sampled.
     public static let minInterval = 300.0
     /// Files kept, newest by modification time first.
     public static let keep = 20
 
     private var lastSample: Double?
+    private var previousSample: Double?
     private var sampledTurn: Double?
 
     public init() {}
@@ -26,9 +22,20 @@ public struct StallSampling: Sendable {
         guard let turnStart, now - turnStart >= Self.threshold else { return false }
         guard sampledTurn != turnStart else { return false }
         if let lastSample, now - lastSample < Self.minInterval { return false }
+        previousSample = lastSample
         lastSample = now
         sampledTurn = turnStart
         return true
+    }
+
+    func deadline(turnStart: Double?) -> Double? {
+        guard let turnStart, sampledTurn != turnStart else { return nil }
+        return max(turnStart + Self.threshold, (lastSample ?? -.infinity) + Self.minInterval)
+    }
+
+    mutating func cancelled(turn: Double) {
+        guard sampledTurn == turn else { return }
+        lastSample = previousSample
     }
 
     /// Of `files` (with their modification times), the ones beyond the newest `keep`.
@@ -47,52 +54,60 @@ public struct StallSampling: Sendable {
     }
 }
 
-/// The runtime: a 1 s watchdog on a utility queue (one wakeup a second, with leeway) claims the
-/// main thread's turn in progress from `Metrics` when the policy says to sample it, runs
-/// `/usr/bin/sample <pid> 1 -mayDie -file <dir>/<UTC>.txt` with a clean environment, waits for it
-/// at most 15 s (a stuck child is killed), and hands `Metrics` the file for that turn so the
-/// stretch's cause can name it; an attempt that leaves no usable file deletes what it left and
-/// releases the claim. Every attempt ends by pruning the directory. The claim comes before any
-/// file or process work, under the lock the main thread ends its turns with: a turn that ended
-/// as the watchdog woke is never sampled, and a claimed turn's end always finds its claim.
-/// Off under `EASL_DEV_PERF=1` (a sampler suspends the task's threads briefly; measured runs
-/// must not see that).
 final class StallSampler: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "easl.metrics.stalls", qos: .utility)
+    private let queue = DispatchQueue(label: "easl.metrics.stalls", qos: .userInitiated)
     private let directory: URL
     private weak var metrics: Metrics?
     private let now: () -> Double
-    private let sample: (_ file: URL) -> Bool
+    private let sample: ((_ file: URL) -> Bool)?
+    private let capture: OpaquePointer?
     private var timer: DispatchSourceTimer?
 
-    /// `now` and `sample` are the clock and the child (`StallSampler.sample(into:)`): a test
-    /// stands in for both and calls `tick` itself.
-    init(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: @escaping (_ file: URL) -> Bool = StallSampler.sample(into:)) {
+    init(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: ((_ file: URL) -> Bool)? = nil) {
         self.directory = directory
         self.metrics = metrics
         self.now = now
         self.sample = sample
+        capture = sample == nil ? easl_stall_create() : nil
     }
 
-    /// Starts the watchdog.
     func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
+        timer.schedule(deadline: .distantFuture)
         timer.setEventHandler { [weak self] in self?.tick() }
         timer.resume()
         self.timer = timer
     }
 
-    deinit { timer?.cancel() }
+    deinit {
+        timer?.cancel()
+        if let capture { easl_stall_destroy(capture) }
+    }
 
-    /// One wakeup of the watchdog.
+    func publish(turn: Double?) {
+        if let capture { easl_stall_publish(capture, turn?.bitPattern ?? 0) }
+    }
+
+    func schedule(at deadline: Double) {
+        timer?.schedule(deadline: DispatchTime(uptimeNanoseconds: UInt64(deadline * 1e9)),
+                        leeway: .milliseconds(1))
+    }
+
     func tick() {
         guard let metrics, let turn = metrics.claimStall(at: now()) else { return }
         defer { prune() }
+        var record = EaslStallRecord()
+        if sample == nil {
+            guard let capture, easl_stall_capture(capture, turn.bitPattern, &record) else {
+                metrics.stallFailed(turn, cancelled: record.error == EASL_STALL_ERROR_TURN_CHANGED)
+                return
+            }
+        }
         let name = StallSampling.fileName(at: Date())
         let file = directory.appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        guard sample(file), let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+        guard sample?(file) ?? write(record, into: file, turn: turn),
+              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
             try? FileManager.default.removeItem(at: file)
             metrics.stallFailed(turn)
             return
@@ -100,27 +115,38 @@ final class StallSampler: @unchecked Sendable {
         metrics.stallSampled(turn, file: "stalls/\(name)")
     }
 
-    /// Runs `/usr/bin/sample` on this process for a second into `file`, with a clean
-    /// environment, waiting at most 15 s: true when it finished successfully.
-    static func sample(into file: URL) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
-        process.arguments = [String(getpid()), "1", "-mayDie", "-file", file.path]
-        process.environment = [:]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.qualityOfService = .utility
-        let done = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in done.signal() }
-        do { try process.run() } catch { return false }
-        if done.wait(timeout: .now() + 15) == .timedOut {
-            // `terminate()` is only SIGTERM: a wedged child could ignore it and outlive the
-            // bounded wait. Kill this exact child and give its termination callback a bound too.
-            kill(process.processIdentifier, SIGKILL)
-            _ = done.wait(timeout: .now() + 1)
-            return false
+    private func write(_ record: EaslStallRecord, into file: URL, turn: Double) -> Bool {
+        let count = Int(record.frame_count)
+        let addresses = withUnsafeBytes(of: record.frames) { bytes in
+            bytes.bindMemory(to: UInt.self).prefix(count).map { UnsafeMutableRawPointer(bitPattern: $0) }
         }
-        return process.terminationStatus == 0
+        guard let symbols = addresses.withUnsafeBufferPointer({ backtrace_symbols($0.baseAddress, Int32(count)) }) else { return false }
+        defer { free(symbols) }
+        let state = Self.state(runState: record.run_state, suspendCount: record.suspend_count, cpuNs: record.cpu_ns)
+        let latency = (Double(record.captured_ns) / 1e9 - turn) * 1000
+        var text = """
+        easl main-thread stall
+        Capture latency ms: \(latency)
+        State: \(state) (Mach run_state=\(record.run_state), suspend_count=\(record.suspend_count))
+        Main CPU ns: \(record.cpu_ns) over \(record.bracket_ns) ns before capture
+        Suspension ns: \(record.suspend_ns)
+        Walk status: \(record.walk_status), error: \(record.error)
+        Main thread stack:
+
+        """
+        for index in 0..<count {
+            text += String(cString: symbols[index]!) + "\n"
+        }
+        do {
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            return true
+        } catch { return false }
+    }
+
+    static func state(runState: Int32, suspendCount: Int32, cpuNs: UInt64) -> String {
+        if suspendCount > 0 { return "not running" }
+        if runState == TH_STATE_WAITING || runState == TH_STATE_UNINTERRUPTIBLE { return "blocked in a wait" }
+        return runState == TH_STATE_RUNNING && cpuNs > 0 ? "on-CPU" : "not running"
     }
 
     private func prune() {

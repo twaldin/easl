@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 
 
-CASES = [(kind, duration) for kind in ("busy", "blocked") for duration in (300, 600, 1500)]
+CASES = [(kind, duration) for kind in ("busy", "blocked") for duration in (300, 600, 1500)] + [("late-busy", 300), ("late-blocked", 300)]
 
 
 def main_frames(text):
@@ -48,9 +48,15 @@ def validate(home, kind):
     if metrics.get("longest", {}).get("ms", 0) < 250:
         raise ValueError("app.metrics longest does not describe a >=250 ms turn")
     frames = main_frames(text)
-    expected = r"stallBusyLoop" if kind == "busy" else r"(?:semaphore_wait(?:_trap)?|dispatch_semaphore_wait|DispatchSemaphore\.wait)"
+    expected = r"stallBusyLoop" if kind.endswith("busy") else r"(?:semaphore_wait(?:_trap)?|dispatch_semaphore_wait|DispatchSemaphore\.wait)"
     if not re.search(expected, frames):
         raise ValueError(f"main-thread stack does not contain actual {kind} work; idle-only stacks are not sufficient")
+    state = "on-CPU" if kind.endswith("busy") else "blocked in a wait"
+    if f"State: {state}" not in text:
+        raise ValueError(f"saved record does not classify the main thread as {state}")
+    match = re.search(r"(?m)^Capture latency ms: ([0-9.]+)$", text)
+    if not match or not 250 <= float(match[1]) < 300:
+        raise ValueError("capture must start inside a 300 ms turn, at 250–300 ms")
     latency = re.findall(r"(?im)^.*capture[^\n]*latency[^\n]*$", text)
     return {"record": newest, "longest": metrics["longest"], "captureLatency": latency}
 

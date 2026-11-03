@@ -65,9 +65,11 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter/tree-sitter-rust", exact: "0.24.2"),
     ],
     targets: [
+        .target(name: "StallCapture"),
         .target(
             name: "CanvasCore",
             dependencies: [
+                "StallCapture",
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
