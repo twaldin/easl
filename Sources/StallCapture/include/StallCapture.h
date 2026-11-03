@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "StallTimer.h"
 
 #ifdef __cplusplus
 extern "C" {
