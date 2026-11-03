@@ -3,8 +3,10 @@ import Foundation
 import StallCapture
 
 public struct StallSampling: Sendable {
-    /// A turn this long (s) is a stall worth a sample.
+    /// Keep a captured stack only when its turn lasts this long (s).
     public static let threshold = 0.25
+    /// Capture early enough to leave scheduling and CPU-bracketing margin for a 300 ms stall.
+    public static let captureDelay = 0.15
     /// At most one sample this often (s): a stalling app shouldn't spend its time being sampled.
     public static let minInterval = 300.0
     /// Files kept, newest by modification time first.
@@ -16,12 +18,11 @@ public struct StallSampling: Sendable {
 
     public init() {}
 
-    /// A watchdog tick at `now` with the main thread's current turn started at `turnStart` (nil
-    /// while it sleeps): true when a sample should be taken now.
+    /// Claims one early capture of the published turn, or none while the loop sleeps.
     public mutating func shouldSample(turnStart: Double?, now: Double) -> Bool {
-        guard let turnStart, now - turnStart >= Self.threshold else { return false }
+        guard let turnStart, now >= turnStart + Self.captureDelay else { return false }
         guard sampledTurn != turnStart else { return false }
-        if let lastSample, now - lastSample < Self.minInterval { return false }
+        if let lastSample, now < lastSample + Self.minInterval { return false }
         previousSample = lastSample
         lastSample = now
         sampledTurn = turnStart
@@ -30,7 +31,11 @@ public struct StallSampling: Sendable {
 
     func deadline(turnStart: Double?) -> Double? {
         guard let turnStart, sampledTurn != turnStart else { return nil }
-        return max(turnStart + Self.threshold, (lastSample ?? -.infinity) + Self.minInterval)
+        return max(turnStart + Self.captureDelay, (lastSample ?? -.infinity) + Self.minInterval)
+    }
+
+    static func qualifies(turnStart: Double, at now: Double) -> Bool {
+        now >= turnStart + threshold
     }
 
     mutating func cancelled(turn: Double) {
@@ -55,19 +60,23 @@ public struct StallSampling: Sendable {
 }
 
 final class StallSampler: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "easl.metrics.stalls", qos: .userInitiated)
+    let queue = DispatchQueue(label: "easl.metrics.stalls", qos: .userInitiated)
     private let directory: URL
     private weak var metrics: Metrics?
     private let now: () -> Double
     private let sample: ((_ file: URL) -> Bool)?
+    private let captured: (() -> Void)?
     private let capture: OpaquePointer?
     private var timer: DispatchSourceTimer?
+    private var pending: (turn: Double, record: EaslStallRecord)?
 
-    init?(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: ((_ file: URL) -> Bool)? = nil) {
+    init?(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now,
+          sample: ((_ file: URL) -> Bool)? = nil, captured: (() -> Void)? = nil) {
         self.directory = directory
         self.metrics = metrics
         self.now = now
         self.sample = sample
+        self.captured = captured
         capture = sample == nil ? easl_stall_create() : nil
         if sample == nil && capture == nil { return nil }
     }
@@ -89,31 +98,58 @@ final class StallSampler: @unchecked Sendable {
         if let capture { easl_stall_publish(capture, turn?.bitPattern ?? 0) }
     }
 
-    func schedule(at deadline: Double) {
-        timer?.schedule(deadline: DispatchTime(uptimeNanoseconds: UInt64(deadline * 1e9)),
+    func schedule(at deadline: Double?) {
+        timer?.schedule(deadline: deadline.map { DispatchTime(uptimeNanoseconds: UInt64($0 * 1e9)) } ?? .distantFuture,
                         leeway: .milliseconds(1))
     }
 
+    func finish(_ turn: Double) {
+        queue.async { [weak self] in
+            guard let self, pending?.turn == turn else { return }
+            finishPending()
+        }
+    }
+
     func tick() {
-        guard let metrics, let turn = metrics.claimStall(at: now()) else { return }
-        defer { prune() }
+        guard let metrics else { return }
+        if pending != nil { finishPending() }
+        guard pending == nil, let turn = metrics.claimStall(at: now(), sampler: self) else { return }
         var record = EaslStallRecord()
         if sample == nil {
             guard let capture, easl_stall_capture(capture, turn.bitPattern, &record) else {
                 metrics.stallFailed(turn, cancelled: record.error == EASL_STALL_ERROR_TURN_CHANGED)
+                prune()
                 return
             }
         }
+        pending = (turn, record)
+        captured?()
+        finishPending()
+    }
+
+    private func finishPending() {
+        guard let pending, let metrics else { return }
+        switch metrics.prepareStall(pending.turn, at: now()) {
+        case .wait: return
+        case .discard:
+            self.pending = nil
+            return
+        case .write: break
+        }
+        self.pending = nil
+        defer { prune() }
         let name = StallSampling.fileName(at: Date())
         let file = directory.appendingPathComponent(name)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        guard sample?(file) ?? write(record, into: file, turn: turn),
+        guard sample?(file) ?? write(pending.record, into: file, turn: pending.turn),
               let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
             try? FileManager.default.removeItem(at: file)
-            metrics.stallFailed(turn)
+            metrics.stallFailed(pending.turn)
             return
         }
-        metrics.stallSampled(turn, file: "stalls/\(name)")
+        if !metrics.stallSampled(pending.turn, file: "stalls/\(name)") {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     private func write(_ record: EaslStallRecord, into file: URL, turn: Double) -> Bool {
@@ -127,6 +163,7 @@ final class StallSampler: @unchecked Sendable {
         var text = """
         easl main-thread stall
         Capture latency ms: \(latency)
+        Capture uptime ns: \(record.captured_ns)
         State: \(state) (Mach run_state=\(record.run_state), suspend_count=\(record.suspend_count))
         Main CPU ns: \(record.cpu_ns) over \(record.bracket_ns) ns before capture
         Suspension ns: \(record.suspend_ns)

@@ -106,11 +106,16 @@ public final class Metrics: @unchecked Sendable {
     private var stallSampler: StallSampler?
     private var stallPolicy = StallSampling()
     private var stallDeadline: Double?
-    /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
-    /// its turn, its file once capture has finished, and once the turn has ended first, that
-    /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
-    /// window's `longest` if that turn still is it.
-    private var stallPending: (turn: Double, file: String?, ended: Stretch?)?
+    private struct PendingStall {
+        enum Phase {
+            case capturing, captured, writing, written(String)
+        }
+        let turn: Double
+        let sampler: StallSampler
+        var phase = Phase.capturing
+        var ended: Stretch?
+    }
+    private var stallPending: PendingStall?
     private var stallsSampled = 0
     private var stallNewest: String?
     /// Where a long stretch's line goes: `app.log` (NSLog), or a test's list.
@@ -208,7 +213,7 @@ public final class Metrics: @unchecked Sendable {
         MainMonitor.install(self)
     }
 
-    /// Starts sampling turns at 250 ms, at most once every five minutes. Call on main.
+    /// Captures near 150 ms and retains turns reaching 250 ms, at most once every five minutes.
     public func sampleStalls(into directory: URL) {
         lock.lock()
         defer { lock.unlock() }
@@ -216,63 +221,92 @@ public final class Metrics: @unchecked Sendable {
         guard let sampler = StallSampler(directory: directory, metrics: self) else { return }
         sampler.start()
         stallSampler = sampler
+        sampler.publish(turn: turnStart)
         scheduleStallSampling()
     }
 
+    /// Called only with `lock` held, including from callbacks of an obsolete timer deadline.
     private func scheduleStallSampling() {
         guard let stallSampler else { return }
-        stallSampler.publish(turn: turnStart)
-        guard let deadline = stallPolicy.deadline(turnStart: turnStart),
-              stallDeadline == nil || deadline < stallDeadline! else { return }
+        let deadline: Double?
+        if let turnStart, let pending = stallPending,
+           pending.turn == turnStart, case .captured = pending.phase {
+            deadline = turnStart + StallSampling.threshold
+        } else {
+            deadline = stallPending == nil ? stallPolicy.deadline(turnStart: turnStart) : nil
+        }
+        guard deadline != stallDeadline else { return }
         stallDeadline = deadline
         stallSampler.schedule(at: deadline)
     }
 
-    /// The stall watchdog, awake at `now`: the main thread's turn in progress, when the policy
-    /// samples it now, becomes the sample in flight. Nil once that turn has ended: it isn't
-    /// sampled, and the policy doesn't count it.
-    func claimStall(at now: Double) -> Double? {
+    func claimStall(at now: Double, sampler: StallSampler) -> Double? {
         lock.lock()
-        stallDeadline = nil
         defer {
             scheduleStallSampling()
             lock.unlock()
         }
-        guard stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
-        stallPending = (turnStart, nil, nil)
+        guard stallPending == nil,
+              stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
+        stallPending = PendingStall(turn: turnStart, sampler: sampler)
         return turnStart
     }
 
-    /// The sample of the turn that started at `turn` is in `file`.
-    func stallSampled(_ turn: Double, file: String) {
-        var line: Stretch?
-        lock.lock()
-        stallsSampled += 1
-        stallNewest = file
-        if let pending = stallPending, pending.turn == turn {
-            if var ended = pending.ended {
-                ended.cause = "\(file); \(ended.cause)"
-                line = ended
-                if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
-                stallPending = nil
-            } else {
-                stallPending?.file = file
-            }
-        }
-        lock.unlock()
-        if let line { log(Self.busyLine(line.ms, line.cause)) }
+    enum StallRetention {
+        case discard, wait, write
     }
 
-    /// Releases a failed capture's claim. Cancelled turns ended before capture and do not spend
-    /// the five-minute interval.
+    /// Qualifying here is final: a later observer publication cannot revoke an active 250 ms turn.
+    func prepareStall(_ turn: Double, at now: Double) -> StallRetention {
+        lock.lock()
+        defer {
+            scheduleStallSampling()
+            lock.unlock()
+        }
+        guard let pending = stallPending, pending.turn == turn else { return .discard }
+        switch pending.phase {
+        case .capturing, .captured:
+            if pending.ended != nil || turnStart == turn && StallSampling.qualifies(turnStart: turn, at: now) {
+                stallPending?.phase = .writing
+                return .write
+            }
+            stallPending?.phase = .captured
+            return .wait
+        case .writing, .written: return .discard
+        }
+    }
+
+    /// The sample of the turn that started at `turn` is in `file`.
+    func stallSampled(_ turn: Double, file: String) -> Bool {
+        var line: Stretch?
+        lock.lock()
+        guard let pending = stallPending, pending.turn == turn, case .writing = pending.phase else {
+            lock.unlock()
+            return false
+        }
+        stallsSampled += 1
+        stallNewest = file
+        if var ended = pending.ended {
+            ended.cause = "\(file); \(ended.cause)"
+            line = ended
+            if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
+            stallPending = nil
+        } else {
+            stallPending?.phase = .written(file)
+        }
+        scheduleStallSampling()
+        lock.unlock()
+        if let line { log(Self.busyLine(line.ms, line.cause)) }
+        return true
+    }
+
+    /// A cancelled capture or a turn ending before qualification refunds the five-minute interval.
     func stallFailed(_ turn: Double, cancelled: Bool = false) {
         lock.lock()
         if stallPending?.turn == turn {
             stallPending = nil
-            if cancelled {
-                stallPolicy.cancelled(turn: turn)
-                scheduleStallSampling()
-            }
+            if cancelled { stallPolicy.cancelled(turn: turn) }
+            scheduleStallSampling()
         }
         lock.unlock()
     }
@@ -283,18 +317,14 @@ public final class Metrics: @unchecked Sendable {
     /// no cause of its own in the new window (its spans were dropped at its end, the first activity
     /// after the reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line.
     ///
-    /// Publishing `next` and settling the ended turn's sample are one critical section on the
-    /// lock the watchdog claims with, so no claim lands between them: the ended turn's claim,
-    /// if any, is still its own, and the next turn can't be claimed before it is published. The
-    /// caller formats `cause` beforehand for a turn of `hitchStretch` or more; a shorter one's is
-    /// formatted here only if the watchdog claimed it (the observer timed its end before the
-    /// claim and published it after), which is rare. Lines are formatted and logged after.
+    /// Turn publication, qualification, and timer changes share the watchdog's lock. Only a
+    /// captured turn needs queued completion when it ends; ordinary turns enqueue nothing.
     fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
                               cause: @autoclosure () -> String, wholeCause: String?) {
         var line: (ms: Double, cause: String)?
         lock.lock()
         turnStart = next
-        scheduleStallSampling()
+        stallSampler?.publish(turn: next)
         if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
             let ms = ended.ms
             let text = cause()
@@ -305,20 +335,30 @@ public final class Metrics: @unchecked Sendable {
                 series["main.stretch250", default: Series()].add(tally, at: now)
                 line = (ms: ms, cause: text)
             }
-            if stallPending?.turn == ended.start {
-                // The sampled turn's line is all of it, though a reset may have cut what the
-                // window counts.
+            if let pending = stallPending, pending.turn == ended.start {
                 let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? text, at: now)
-                if let file = stallPending?.file {
-                    tag = "\(file); "
-                    stallPending = nil
-                } else {
-                    stallPending?.ended = whole
+                let qualified: Bool
+                switch pending.phase {
+                case .writing, .written: qualified = true
+                case .capturing, .captured: qualified = StallSampling.qualifies(turnStart: ended.start, at: now)
                 }
-                line = (ms: whole.ms, cause: tag + whole.cause)
+                if qualified {
+                    if case .written(let file) = pending.phase {
+                        tag = "\(file); "
+                        stallPending = nil
+                    } else {
+                        stallPending?.ended = whole
+                    }
+                    line = (ms: whole.ms, cause: tag + whole.cause)
+                } else {
+                    stallPolicy.cancelled(turn: pending.turn)
+                    stallPending = nil
+                }
+                if case .captured = pending.phase { pending.sampler.finish(pending.turn) }
             }
             if ms >= Self.hitchStretch && ms > (longest?.ms ?? 0) { longest = Stretch(ms: ms, cause: tag + text, at: now) }
         }
+        scheduleStallSampling()
         lock.unlock()
         if let line { log(Self.busyLine(line.ms, line.cause)) }
     }

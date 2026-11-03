@@ -52,17 +52,25 @@ private enum StallSamplerRegression {
             fatalError("run.py must supply a scenario, duration and isolated home")
         }
         let kind = CommandLine.arguments[1]
-        if kind == "busy" && milliseconds == 300 { rejectsRetiredTurns() }
+        if kind == "busy" && milliseconds == 600 { rejectsRetiredTurns() }
         let directory = URL(fileURLWithPath: home, isDirectory: true)
         let metrics = Metrics.shared
         metrics.monitorMainThread()
         metrics.sampleStalls(into: directory.appendingPathComponent("stalls", isDirectory: true))
         let stall = { @Sendable in
             precondition(Thread.isMainThread)
+            let started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             if kind.hasSuffix("busy") {
                 stallBusyLoop(milliseconds: milliseconds)
             } else {
                 stallBlockedWait(milliseconds: milliseconds)
+            }
+            let ended = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            do {
+                try JSONEncoder().encode(["startedNs": started, "endedNs": ended])
+                    .write(to: directory.appendingPathComponent("stall-window.json"), options: .atomic)
+            } catch {
+                fatalError("cannot retain stall interval: \(error)")
             }
         }
         if kind.hasPrefix("late-") {
