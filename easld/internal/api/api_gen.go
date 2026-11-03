@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "eb73e1b3d153aa27"
+const SchemaHash = "67bab73682dd02b1"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -1038,8 +1038,6 @@ type CanvasObject struct {
 	UpdatedBy Actor   `json:"updatedBy,omitempty"`
 	CreatedAt string  `json:"createdAt"`
 	UpdatedAt string  `json:"updatedAt"`
-	// last content change, initialized at creation; absent on older objects means updatedAt. Persisted as an optional format-3 field and carried by API objects and events. See board.stale for content rules.
-	ContentUpdatedAt *string `json:"contentUpdatedAt,omitempty"`
 	// absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled
 	Expires *string `json:"expires,omitempty"`
 	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)

@@ -220,6 +220,7 @@ type Object struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	ContentUpdatedAt time.Time
+	ContentRev       int
 	Expires          *time.Time
 	Props            map[string]any
 	// Unknown is a stored object's keys easld doesn't know (written by a newer app); FileJSON
@@ -235,7 +236,7 @@ func (o Object) Hidden() bool {
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
-	"updatedBy": true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "expires": true, "props": true,
+	"updatedBy": true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "contentRev": true, "expires": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -256,9 +257,9 @@ func (o Object) Clone() Object {
 	return c
 }
 
-// ContentTime falls back to the last write for objects saved before content age was tracked.
+// ContentTime trusts content age only while its revision matches the stored object.
 func (o Object) ContentTime() time.Time {
-	if !o.ContentUpdatedAt.IsZero() {
+	if o.ContentRev > 0 && o.ContentRev == o.Rev && !o.ContentUpdatedAt.IsZero() {
 		return o.ContentUpdatedAt
 	}
 	return o.UpdatedAt
@@ -304,9 +305,6 @@ func (o Object) encode(timeOf func(time.Time) any) map[string]any {
 	if o.UpdatedBy != nil {
 		m["updatedBy"] = o.UpdatedBy.JSON()
 	}
-	if !o.ContentUpdatedAt.IsZero() {
-		m["contentUpdatedAt"] = timeOf(o.ContentUpdatedAt)
-	}
 	if o.Expires != nil {
 		m["expires"] = o.Expires.UTC().Format(time.RFC3339Nano)
 	}
@@ -321,6 +319,12 @@ func (o Object) APIJSON() map[string]any {
 // FileJSON is the object as the board file stores it, keys easld doesn't know included.
 func (o Object) FileJSON() map[string]any {
 	m := o.encode(func(t time.Time) any { return FileTime(t) })
+	if !o.ContentUpdatedAt.IsZero() {
+		m["contentUpdatedAt"] = FileTime(o.ContentUpdatedAt)
+	}
+	if o.ContentRev != 0 {
+		m["contentRev"] = float64(o.ContentRev)
+	}
 	for k, v := range o.Unknown {
 		if !ObjectKeys[k] {
 			m[k] = v
@@ -357,6 +361,9 @@ func ObjectFromJSON(v any) (Object, error) {
 	o.UpdatedAt = parseFileTime(m["updatedAt"])
 	if value, present := m["contentUpdatedAt"]; present && value != nil {
 		o.ContentUpdatedAt = parseFileTime(value)
+	}
+	if value, ok := m["contentRev"].(float64); ok {
+		o.ContentRev = int(value)
 	}
 	if value, present := m["expires"]; present && value != nil {
 		text, ok := value.(string)

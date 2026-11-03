@@ -14,6 +14,7 @@ struct ContentAgeTests {
             entry["createdAt"] = .number(now.addingTimeInterval(-30 * 86400).timeIntervalSinceReferenceDate)
             entry["updatedAt"] = .number(now.addingTimeInterval(-8 * 86400).timeIntervalSinceReferenceDate)
             entry.removeValue(forKey: "contentUpdatedAt")
+            entry.removeValue(forKey: "contentRev")
             return .object(entry)
         })
         return Board(snapshot: try JSONValue.object(fields).decode(BoardSnapshot.self))
@@ -73,7 +74,7 @@ struct ContentAgeTests {
         let initial = Board(id: "brd_legacy_age", root: root)
         let note = initial.create(type: .note, props: .object(["markdown": "same"]))
         let board = try aged(initial)
-        _ = try board.update(note.id, props: .object(["markdown": "same"]))
+        _ = try board.update(note.id, props: .object(["markdown": "same", "absent": .null]))
         #expect(untouched(board) == [note.id])
         #expect(board.undo() == false)
         _ = try board.update(note.id, z: 20, expires: .set(ObjectExpiry(now.addingTimeInterval(86400))))
@@ -83,6 +84,7 @@ struct ContentAgeTests {
         var snapshot = board.snapshot
         var recentObject = try #require(JSONValue.encode(snapshot.objects[0]).object)
         recentObject.removeValue(forKey: "contentUpdatedAt")
+        recentObject.removeValue(forKey: "contentRev")
         recentObject["updatedAt"] = .number(now.timeIntervalSinceReferenceDate)
         snapshot.objects[0] = try JSONValue.object(recentObject).decode(CanvasObject.self)
         let recent = Board(snapshot: snapshot)
@@ -152,31 +154,18 @@ struct ContentAgeTests {
         #expect(!untouched(board).contains(arrow.id))
     }
 
-    @Test(arguments: [false, true])
-    func explicitArrowEndpointsAndLabelsRefreshContent(endpoint: Bool) throws {
+    @Test(arguments: ["endpoint", "label", "style"])
+    func explicitArrowEndpointsLabelsAndStyleRefreshContent(edit: String) throws {
         let initial = Board(id: "brd_arrow_age", root: root)
         let arrow = initial.create(type: .arrow, props: ArrowSpec(from: .point(CGPoint(x: 0, y: 0)), to: .point(CGPoint(x: 300, y: 100))).props)
         let board = try aged(initial)
-        let patch: JSONValue = endpoint
-            ? .object(["to": ArrowBinding.point(CGPoint(x: 400, y: 200)).json])
-            : .object(["label": "authored"])
+        let patch: JSONValue = switch edit {
+        case "endpoint": .object(["to": ArrowBinding.point(CGPoint(x: 400, y: 200)).json])
+        case "label": .object(["label": "authored"])
+        default: .object(["color": "red"])
+        }
         _ = try board.update(arrow.id, props: patch)
         #expect(untouched(board).isEmpty)
     }
 
-    @Test func timestampsSurviveAPIAndCodableRoundTripsAndTypeRestoreCountsAsContent() throws {
-        let initial = Board(id: "brd_codec_age", root: root)
-        let note = initial.create(type: .note, props: .object(["markdown": "old"]))
-        #expect(JSONValue(note)["contentUpdatedAt"] == .number(note.createdAt.timeIntervalSinceReferenceDate))
-        let board = try aged(initial)
-        let moved = try board.update(note.id, frame: Frame(x: 20, y: 30, w: 100, h: 100))
-        #expect(try JSONValue(moved).decode(CanvasObject.self) == moved)
-        #expect(try JSONValue.encode(moved) == JSONValue(moved))
-        var changed = moved
-        changed.type = .html
-        changed.updatedAt = Date()
-        board.restore(changed)
-        #expect(untouched(board).isEmpty)
-        #expect(try board.object(note.id).type == .html)
-    }
 }

@@ -6,7 +6,7 @@ Each version's section is its GitHub release's notes.
 
 ### Fixed
 
-- `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist an optional `contentUpdatedAt` field without changing board format 3; older objects fall back to `updatedAt`.
+- `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist optional `contentUpdatedAt` and `contentRev` fields without changing board format 3. Older objects, and objects edited by an older host, safely fall back to `updatedAt`.
 
 ### Added
 

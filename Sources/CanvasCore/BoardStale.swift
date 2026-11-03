@@ -105,7 +105,7 @@ extension Board {
             var reasons: [JSONValue] = []
             if case .agent(let tile) = object.createdBy, objects[tile]?.type != .terminal { reasons.append(.string("creator-gone")) }
             if let expires = object.expires, expires.date <= now { reasons.append(.string("expired")) }
-            if (object.contentUpdatedAt ?? object.updatedAt) < cutoff { reasons.append(.string("untouched")) }
+            if object.effectiveContentUpdatedAt < cutoff { reasons.append(.string("untouched")) }
             if object.type == .terminal, exited.contains(object.id) { reasons.append(.string("exited")) }
             guard !reasons.isEmpty else { return nil }
             let title = object.props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 }

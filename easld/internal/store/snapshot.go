@@ -610,6 +610,11 @@ func decodeObject(v any) (model.Object, error) {
 			return model.Object{}, fmt.Errorf("contentUpdatedAt is not an ISO 8601 date")
 		}
 	}
+	if value, present := m["contentRev"]; present && value != nil {
+		if rev, ok := intOf(value); !ok || value != float64(rev) {
+			return model.Object{}, fmt.Errorf("contentRev is not an integer")
+		}
+	}
 	if _, present := m["props"]; !present {
 		return model.Object{}, fmt.Errorf("missing props")
 	}

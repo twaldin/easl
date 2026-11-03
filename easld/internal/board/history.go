@@ -66,28 +66,13 @@ func sameContent(a, b model.Object) bool {
 	return a.Type == b.Type && a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && sameExpiry(a.Expires, b.Expires) && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
 }
 
-func sameAuthoredContent(a, b model.Object) bool {
-	if a.Type != b.Type {
-		return false
-	}
+func sameAuthoredPatch(a, b model.Object, patch map[string]any) bool {
 	skipped := bookkeeping(a)
-	ignored := func(key string) bool {
-		return skipped[key] || (a.Type == model.Group && key == "members") || (a.Type == model.Browser && key == "urlIntent")
-	}
-	for key, value := range a.Props {
-		if ignored(key) {
+	for key := range patch {
+		if skipped[key] || (a.Type == model.Group && key == "members") || (a.Type == model.Browser && key == "urlIntent") {
 			continue
 		}
-		other, present := b.Props[key]
-		if !present || !model.Equal(value, other) {
-			return false
-		}
-	}
-	for key := range b.Props {
-		if ignored(key) {
-			continue
-		}
-		if _, present := a.Props[key]; !present {
+		if !jsonEqualKey(a.Props, b.Props, key) {
 			return false
 		}
 	}
@@ -111,7 +96,6 @@ func anyMap(m map[string]any) any {
 // restoring is target's content applied to current, keeping current's bookkeeping props.
 func restoring(target, current model.Object) model.Object {
 	o := current.Clone()
-	o.Type = target.Type
 	o.Frame, o.Z, o.Parent = target.Frame, target.Z, target.Parent
 	o.Expires = nil
 	if target.Expires != nil {
@@ -120,9 +104,6 @@ func restoring(target, current model.Object) model.Object {
 	}
 	props := model.Clone(anyMap(contentProps(target))).(map[string]any)
 	kept := bookkeeping(current)
-	if target.Type != current.Type {
-		kept = nil
-	}
 	for k := range kept {
 		if v, ok := current.Props[k]; ok {
 			props[k] = model.Clone(v)
@@ -251,6 +232,7 @@ func (b *Board) put(target model.Object) {
 	}
 	now := time.Now()
 	o.ContentUpdatedAt = target.ContentTime()
+	o.ContentRev = o.Rev
 	o.UpdatedAt = now
 	user := model.Actor{Kind: "user"}
 	o.UpdatedBy = &user

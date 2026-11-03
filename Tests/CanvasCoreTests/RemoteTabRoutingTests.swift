@@ -105,6 +105,70 @@ extension ApiRouterTests {
         #expect(mirror.objects.isEmpty)
     }
 
+    @Test func remoteStaleUsesHostContentAgeAfterLayoutAndMarkdownEdits() async throws {
+        let host = try await ApiRouterTests()
+        let creator = host.board.create(type: .terminal, props: .object([:]))
+        let otherCreator = host.board.create(type: .terminal, props: .object([:]))
+        let note = host.board.create(type: .note, props: .object(["markdown": "old"]), caller: creator.id)
+        let other = host.board.create(type: .note, props: .object(["markdown": "other"]), caller: otherCreator.id)
+        let group = host.board.create(type: .group, props: .object(["members": .array([.string(note.id)]), "title": "old group"]), caller: creator.id)
+        var snapshot = host.board.snapshot
+        for index in snapshot.objects.indices {
+            snapshot.objects[index].updatedAt = Date().addingTimeInterval(-8 * 86400)
+            snapshot.objects[index].contentUpdatedAt = nil
+            snapshot.objects[index].contentRev = nil
+        }
+        let oldGroup = try #require(snapshot.objects.first { $0.id == group.id })
+        try host.registry.close(host.board.id)
+        try host.registry.store.saveChecked(Board(snapshot: snapshot))
+        let authoritative = try await host.registry.open(root: host.board.root)
+        let socket = host.dir.appendingPathComponent("s").path
+        let mirror = BoardMirror(hostName: "host", board: authoritative.id, connection: .unixSocket(socket), diagrams: .unixSocket(socket))
+        defer { mirror.close() }
+        let view = try await mirror.load()
+        router.remoteTabs = {
+            [remoteTabFixture(board: view) { method, params in
+                try await mirror.connection.request(method, params)
+            }]
+        }
+        let client = try connect()
+        func stale(createdBy: ObjectID? = nil) async throws -> Set<ObjectID> {
+            var params: [String: JSONValue] = ["board": .string(view.id), "olderThan": "7d"]
+            if let createdBy { params["createdBy"] = .string(createdBy) }
+            let response = try await call(client, "board.stale", params)
+            #expect(response["ok"] == .bool(true))
+            let entries = try #require(response["result"]?["objects"]?.array)
+            return Set(entries.compactMap { entry in
+                entry["reasons"]?.array?.contains("untouched") == true ? entry["id"]?.string : nil
+            })
+        }
+        for frame in [Frame(x: 600, y: 400, w: 280, h: 200), Frame(x: 600, y: 400, w: 500, h: 350)] {
+            let response = try await call(client, "object.update", ["id": .string(note.id), "frame": JSONValue(frame)])
+            #expect(response["ok"] == .bool(true))
+            let revision = try #require(response["result"]?["object"]?["rev"]?.int)
+            for _ in 0..<500 where view.objects[note.id]?.rev != revision {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(view.objects[note.id]?.rev == revision)
+            #expect(view.objects[note.id]?.frame == frame)
+            #expect(try await stale(createdBy: creator.id) == [note.id, group.id])
+            #expect(try await stale(createdBy: otherCreator.id) == [other.id])
+        }
+        #expect(try authoritative.object(group.id).updatedAt > oldGroup.updatedAt)
+        try view.delete(note.id)
+        for _ in 0..<500 where authoritative.objects[note.id] != nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(authoritative.objects[note.id] == nil)
+        _ = await mirror.undo(redo: false).value
+        #expect(authoritative.objects[note.id]?.props["markdown"] == "old")
+        #expect(try await stale(createdBy: creator.id) == [note.id, group.id])
+        let edited = try await call(client, "object.update", ["id": .string(note.id), "props": .object(["markdown": "fresh"])])
+        #expect(edited["ok"] == .bool(true))
+        #expect(try await stale(createdBy: creator.id) == [group.id])
+        #expect(try await stale(createdBy: otherCreator.id) == [other.id])
+    }
+
     @Test func remoteLookupReportsAmbiguityButLocalAndMergedIdsWin() async throws {
         let first = remoteTabFixture()
         let second = remoteTabFixture(id: "other|brd_remote|socket")

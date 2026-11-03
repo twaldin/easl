@@ -195,6 +195,7 @@ final class ObjectExpiryTests {
             snapshot.objects[index].expires = ObjectExpiry(now.addingTimeInterval(-1))
             snapshot.objects[index].updatedAt = now.addingTimeInterval(-8 * 86400)
             snapshot.objects[index].contentUpdatedAt = nil
+            snapshot.objects[index].contentRev = nil
         }
         let loaded = Board(snapshot: snapshot)
         var events = 0
@@ -431,6 +432,8 @@ final class ObjectExpiryTests {
         var snapshot = board.snapshot
         for index in snapshot.objects.indices where snapshot.objects[index].id == old.id {
             snapshot.objects[index].updatedAt = now.addingTimeInterval(-8 * 86400)
+            snapshot.objects[index].contentUpdatedAt = nil
+            snapshot.objects[index].contentRev = nil
         }
         let loaded = Board(snapshot: snapshot)
         let entries = try #require(loaded.staleObjects(now: now, exited: [exited.id])["objects"]?.array)

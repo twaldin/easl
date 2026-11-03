@@ -2038,7 +2038,7 @@ public final class ApiRouter {
             let acknowledged = board.seen(id, rev: p["rev"]?.int, marker: marker)
             var result: [String: JSONValue] = ["cleared": .bool(acknowledged.cleared), "seen": .bool(acknowledged.seen)]
             if matchesRevision, acknowledged.seen, let terminal = board.objects[id], terminal.type == .terminal {
-                result["object"] = try JSONValue.encode(board.reported(terminal))
+                result["object"] = JSONValue(board.reported(terminal))
             }
             return .object(result)
         case "view.open_url":
@@ -2049,7 +2049,7 @@ public final class ApiRouter {
             let source = caller.flatMap { board.objects[$0] == nil ? nil : $0 }
             let opened = board.openLink(url, near: source, caller: caller)
             showOpenedLink?(board, opened.object.id, source)
-            return .object(["object": try JSONValue.encode(board.reported(opened.object)), "existing": .bool(opened.existing)])
+            return .object(["object": JSONValue(board.reported(opened.object)), "existing": .bool(opened.existing)])
 
         case "view.get":
             let board = try board(p)

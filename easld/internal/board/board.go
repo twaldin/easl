@@ -535,7 +535,7 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		props = b.stampingWorktree(props)
 	}
 	now := time.Now()
-	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, ContentUpdatedAt: now, Props: props}
+	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, ContentUpdatedAt: now, ContentRev: 1, Props: props}
 	if len(expiry) > 0 && expiry[0].At != nil {
 		at := *expiry[0].At
 		o.Expires = &at
@@ -705,10 +705,11 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	if fitted, ok := b.fittedFrame(o); ok {
 		o.Frame = fitted
 	}
-	o.Rev++
-	o.UpdatedAt = time.Now()
 	o.ContentUpdatedAt = before.ContentTime()
-	if props != nil && !sameAuthoredContent(before, o) {
+	o.Rev++
+	o.ContentRev = o.Rev
+	o.UpdatedAt = time.Now()
+	if props != nil && !sameAuthoredPatch(before, o, props) {
 		o.ContentUpdatedAt = o.UpdatedAt
 	}
 	updatedBy := model.ActorFor(caller)
@@ -893,6 +894,7 @@ func (b *Board) log(kind string, o model.Object, actor Actor, summary, cause str
 // restore puts an object's content back (same id and z), with a revision newer than any it
 // has had. Restored browser URLs carry fresh intent so drawing clients can undo navigation.
 func (b *Board) restore(o model.Object, intentActor model.Actor) {
+	o.ContentUpdatedAt = o.ContentTime()
 	previous, existed := b.objects[o.ID]
 	high := b.revHighWater[o.ID]
 	if existed && previous.Rev > high {
@@ -902,6 +904,7 @@ func (b *Board) restore(o model.Object, intentActor model.Actor) {
 		high = o.Rev
 	}
 	o.Rev = high + 1
+	o.ContentRev = o.Rev
 	if existed && o.Type == model.Browser && (!jsonEqualKey(previous.Props, o.Props, "url") || !jsonEqualKey(previous.Props, o.Props, "urlIntent")) {
 		if url, ok := o.Props["url"].(string); ok {
 			o.Props["urlIntent"] = map[string]any{"url": url, "rev": float64(o.Rev), "actor": intentActor.JSON()}

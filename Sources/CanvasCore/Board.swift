@@ -588,10 +588,11 @@ public final class Board {
             throw BoardError.invalidParams("terminal \(id) runs on \(was): a terminal's host can't change (create a terminal on \(now) instead)")
         }
         if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
-        object.contentUpdatedAt = before.contentUpdatedAt ?? before.updatedAt
+        object.contentUpdatedAt = before.effectiveContentUpdatedAt
         object.rev += 1
         object.updatedAt = Date()
-        if props != nil, UndoHistory.authoredContentChanged(from: before, to: object) {
+        object.contentRev = object.rev
+        if let props, UndoHistory.authoredContentChanged(from: before, to: object, patch: props) {
             object.contentUpdatedAt = object.updatedAt
         }
         object.updatedBy = Actor(caller: caller)
@@ -704,11 +705,16 @@ public final class Board {
     func restore(_ object: CanvasObject, restoringContentAge: Bool = false) {
         var object = object
         let previous = objects[object.id]
+        let contentUpdatedAt: Date
         if let previous, !restoringContentAge {
-            object.contentUpdatedAt = UndoHistory.authoredContentChanged(from: previous, to: object)
-                ? object.updatedAt : previous.contentUpdatedAt ?? previous.updatedAt
+            contentUpdatedAt = UndoHistory.authoredContentChanged(from: previous, to: object)
+                ? object.updatedAt : previous.effectiveContentUpdatedAt
+        } else {
+            contentUpdatedAt = object.effectiveContentUpdatedAt
         }
         object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
+        object.contentUpdatedAt = contentUpdatedAt
+        object.contentRev = object.rev
         commit(object)
         Metrics.shared.record("board.undo")
         if let previous {

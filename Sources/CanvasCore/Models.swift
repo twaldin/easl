@@ -129,8 +129,15 @@ public struct CanvasObject: Codable, Equatable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
     public var contentUpdatedAt: Date? = nil
+    public var contentRev: Int? = nil
     public var expires: ObjectExpiry? = nil
     public var props: JSONValue
+
+    /// Older hosts preserve unknown fields but advance rev, invalidating the recorded content age.
+    public var effectiveContentUpdatedAt: Date {
+        guard let contentRev, contentRev > 0, contentRev == rev else { return updatedAt }
+        return contentUpdatedAt ?? updatedAt
+    }
 
     public var isHidden: Bool {
         type == .question && props["archived"]?.bool == true
@@ -148,6 +155,7 @@ public struct CanvasObject: Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = createdAt
         self.contentUpdatedAt = createdAt
+        self.contentRev = rev
         self.props = props
     }
 }

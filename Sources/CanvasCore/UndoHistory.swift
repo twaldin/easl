@@ -206,13 +206,16 @@ public final class UndoHistory {
         props(of: object, without: bookkeeping(object))
     }
 
-    static func authoredContentChanged(from before: CanvasObject, to after: CanvasObject) -> Bool {
+    static func authoredContentChanged(from before: CanvasObject, to after: CanvasObject, patch: JSONValue? = nil) -> Bool {
         if before.type != after.type { return true }
-        guard let old = before.props.object, let new = after.props.object else { return before.props != after.props }
         let skipped = bookkeeping(before)
         func ignored(_ key: String) -> Bool {
             skipped.contains(key) || before.type == .group && key == "members" || before.type == .browser && key == "urlIntent"
         }
+        if let patch = patch?.object {
+            return patch.keys.contains { !ignored($0) && before.props[$0] != after.props[$0] }
+        }
+        guard let old = before.props.object, let new = after.props.object else { return before.props != after.props }
         return old.contains { !ignored($0.key) && new[$0.key] != $0.value }
             || new.contains { !ignored($0.key) && old[$0.key] == nil }
     }
@@ -243,7 +246,6 @@ public final class UndoHistory {
     /// `target`'s content applied to `current`, keeping current's bookkeeping props.
     static func restoring(_ target: CanvasObject, onto current: CanvasObject) -> CanvasObject {
         var object = current
-        object.type = target.type
         object.frame = target.frame
         object.z = target.z
         object.parent = target.parent
@@ -403,8 +405,8 @@ extension Board {
     /// with the same id and z (undo of a delete).
     private func put(_ target: CanvasObject, restoringContentAge: Bool = false) {
         var object = objects[target.id].map { UndoHistory.restoring(target, onto: $0) } ?? target
-        object.contentUpdatedAt = object.contentUpdatedAt ?? object.updatedAt
-        if restoringContentAge { object.contentUpdatedAt = target.contentUpdatedAt ?? target.updatedAt }
+        object.contentUpdatedAt = restoringContentAge ? target.effectiveContentUpdatedAt : object.effectiveContentUpdatedAt
+        object.contentRev = object.rev
         object.updatedAt = Date()
         object.updatedBy = .user
         restore(object, restoringContentAge: restoringContentAge)
