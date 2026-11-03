@@ -107,7 +107,7 @@ public final class Metrics: @unchecked Sendable {
     private var stallPolicy = StallSampling()
     private var stallDeadline: Double?
     /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
-    /// its turn, its file once `sample` has finished, and once the turn has ended first, that
+    /// its turn, its file once capture has finished, and once the turn has ended first, that
     /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
     /// window's `longest` if that turn still is it.
     private var stallPending: (turn: Double, file: String?, ended: Stretch?)?
@@ -213,7 +213,7 @@ public final class Metrics: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard stallSampler == nil else { return }
-        let sampler = StallSampler(directory: directory, metrics: self)
+        guard let sampler = StallSampler(directory: directory, metrics: self) else { return }
         sampler.start()
         stallSampler = sampler
         scheduleStallSampling()
@@ -263,8 +263,8 @@ public final class Metrics: @unchecked Sendable {
         if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
 
-    /// The sample of the turn that started at `turn` left no file: the claim is released (a turn
-    /// that already ended has had its line, untagged).
+    /// Releases a failed capture's claim. Cancelled turns ended before capture and do not spend
+    /// the five-minute interval.
     func stallFailed(_ turn: Double, cancelled: Bool = false) {
         lock.lock()
         if stallPending?.turn == turn {

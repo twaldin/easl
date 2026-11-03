@@ -63,12 +63,13 @@ final class StallSampler: @unchecked Sendable {
     private let capture: OpaquePointer?
     private var timer: DispatchSourceTimer?
 
-    init(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: ((_ file: URL) -> Bool)? = nil) {
+    init?(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now, sample: ((_ file: URL) -> Bool)? = nil) {
         self.directory = directory
         self.metrics = metrics
         self.now = now
         self.sample = sample
         capture = sample == nil ? easl_stall_create() : nil
+        if sample == nil && capture == nil { return nil }
     }
 
     func start() {

@@ -2,7 +2,6 @@
 
 #include "StallCapture.h"
 
-#include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <pthread.h>
@@ -27,15 +26,6 @@ _Static_assert(sizeof(uintptr_t) == 8, "StallCapture requires 64-bit pointers");
 _Static_assert(ATOMIC_LONG_LOCK_FREE == 2 && ATOMIC_LLONG_LOCK_FREE == 2,
                "Suspended capture requires lock-free turn publication");
 
-typedef kern_return_t (*StateFunction)(thread_act_t, thread_state_flavor_t,
-                                      thread_state_t, mach_msg_type_number_t *);
-typedef kern_return_t (*ReadFunction)(mach_port_t, mach_vm_address_t, mach_vm_size_t,
-                                     mach_vm_address_t, mach_vm_size_t *);
-typedef kern_return_t (*ThreadFunction)(thread_act_t);
-typedef uint64_t (*ClockFunction)(clockid_t);
-typedef kern_return_t (*InfoFunction)(thread_inspect_t, thread_flavor_t,
-                                     thread_info_t, mach_msg_type_number_t *);
-typedef void (*ExitFunction)(int) __attribute__((noreturn));
 
 struct EaslStallCapture {
     _Atomic(uint64_t) turn;
@@ -43,13 +33,6 @@ struct EaslStallCapture {
     mach_port_t task;
     uintptr_t stack_low;
     uintptr_t stack_high;
-    StateFunction get_state;
-    ReadFunction read_memory;
-    ThreadFunction suspend;
-    ThreadFunction resume;
-    ClockFunction now;
-    InfoFunction get_info;
-    ExitFunction exit_process;
 };
 
 static inline __attribute__((always_inline)) uintptr_t strip_code_pointer(uintptr_t value) {
@@ -98,47 +81,6 @@ EaslStallCapture *easl_stall_create(void) {
         return NULL;
     }
     capture->stack_low = capture->stack_high - stack_size;
-
-    // Never enter dyld while main might be suspended holding its locks.
-    capture->get_state = (StateFunction)dlsym(RTLD_DEFAULT, "thread_get_state");
-    capture->read_memory = (ReadFunction)dlsym(RTLD_DEFAULT, "mach_vm_read_overwrite");
-    capture->suspend = (ThreadFunction)dlsym(RTLD_DEFAULT, "thread_suspend");
-    capture->resume = (ThreadFunction)dlsym(RTLD_DEFAULT, "thread_resume");
-    capture->now = (ClockFunction)dlsym(RTLD_DEFAULT, "clock_gettime_nsec_np");
-    capture->get_info = (InfoFunction)dlsym(RTLD_DEFAULT, "thread_info");
-    capture->exit_process = (ExitFunction)dlsym(RTLD_DEFAULT, "_exit");
-    if (!capture->get_state || !capture->read_memory || !capture->suspend ||
-        !capture->resume || !capture->now || !capture->get_info || !capture->exit_process) {
-        easl_stall_destroy(capture);
-        return NULL;
-    }
-
-    thread_state_data_t warm_state = {0};
-    mach_msg_type_number_t warm_count = THREAD_STATE_MAX;
-#if defined(__arm64__)
-    capture->get_state(capture->main_thread, ARM_THREAD_STATE64, warm_state, &warm_count);
-#else
-    capture->get_state(capture->main_thread, x86_THREAD_STATE64, warm_state, &warm_count);
-#endif
-    uint64_t source = UINT64_C(0x4541534c5354414c);
-    uint64_t destination = 0;
-    mach_vm_size_t read_size = 0;
-    kern_return_t error = capture->read_memory(capture->task,
-        (mach_vm_address_t)(uintptr_t)&source, sizeof(source),
-        (mach_vm_address_t)(uintptr_t)&destination, &read_size);
-    if (error != KERN_SUCCESS || read_size != sizeof(source) || destination != source ||
-        !capture->now(CLOCK_UPTIME_RAW)) {
-        easl_stall_destroy(capture);
-        return NULL;
-    }
-    thread_basic_info_data_t warm_info = {0};
-    mach_msg_type_number_t info_count = THREAD_BASIC_INFO_COUNT;
-    error = thread_info(capture->main_thread, THREAD_BASIC_INFO,
-                        (thread_info_t)&warm_info, &info_count);
-    if (error != KERN_SUCCESS || info_count < THREAD_BASIC_INFO_COUNT) {
-        easl_stall_destroy(capture);
-        return NULL;
-    }
     return capture;
 }
 
@@ -178,7 +120,7 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
         out->error = EASL_STALL_ERROR_SHORT_INFO;
         return false;
     }
-    uint64_t bracket_start = capture->now(CLOCK_UPTIME_RAW);
+    uint64_t bracket_start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     struct timespec delay = { .tv_sec = 0, .tv_nsec = EASL_STALL_CPU_BRACKET_NS };
     if (nanosleep(&delay, NULL) != 0) {
         out->error = EASL_STALL_ERROR_SLEEP;
@@ -187,7 +129,7 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
     count = THREAD_BASIC_INFO_COUNT;
     out->error = thread_info(capture->main_thread, THREAD_BASIC_INFO,
                              (thread_info_t)&after, &count);
-    out->bracket_ns = capture->now(CLOCK_UPTIME_RAW) - bracket_start;
+    out->bracket_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - bracket_start;
     if (out->error != KERN_SUCCESS) return false;
     if (count < THREAD_BASIC_INFO_COUNT) {
         out->error = EASL_STALL_ERROR_SHORT_INFO;
@@ -221,17 +163,17 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
     uintptr_t sp = 0;
     bool accepted = false;
     uintptr_t lr = 0;
-    uint64_t suspend_start = capture->now(CLOCK_UPTIME_RAW);
-    out->error = capture->suspend(capture->main_thread);
+    uint64_t suspend_start = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    out->error = thread_suspend(capture->main_thread);
     if (out->error != KERN_SUCCESS) return false;
 
-    out->captured_ns = capture->now(CLOCK_UPTIME_RAW);
+    out->captured_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     if (atomic_load_explicit(&capture->turn, memory_order_seq_cst) != expected) {
         out->error = EASL_STALL_ERROR_TURN_CHANGED;
         goto resume_main;
     }
     count = THREAD_BASIC_INFO_COUNT;
-    out->error = capture->get_info(capture->main_thread, THREAD_BASIC_INFO,
+    out->error = thread_info(capture->main_thread, THREAD_BASIC_INFO,
                                   (thread_info_t)&after, &count);
     if (out->error != KERN_SUCCESS) goto resume_main;
     if (count < THREAD_BASIC_INFO_COUNT) {
@@ -240,8 +182,8 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
     }
     after_cpu = cpu_ns(&after);
     out->cpu_ns = after_cpu >= before_cpu ? after_cpu - before_cpu : 0;
-    out->bracket_ns = capture->now(CLOCK_UPTIME_RAW) - bracket_start;
-    out->error = capture->get_state(capture->main_thread, flavor,
+    out->bracket_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - bracket_start;
+    out->error = thread_get_state(capture->main_thread, flavor,
                                     (thread_state_t)&state, &state_count);
     if (out->error != KERN_SUCCESS) goto resume_main;
     if (state_count < expected_count) {
@@ -275,7 +217,7 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
             out->walk_status = EASL_STALL_WALK_END;
             goto resume_main;
         }
-        if (capture->now(CLOCK_UPTIME_RAW) - out->captured_ns >= EASL_STALL_WALK_BUDGET_NS) {
+        if (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - out->captured_ns >= EASL_STALL_WALK_BUDGET_NS) {
             out->walk_status = EASL_STALL_WALK_BUDGET;
             goto resume_main;
         }
@@ -285,7 +227,7 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
             goto resume_main;
         }
         read_size = 0;
-        out->error = capture->read_memory(capture->task, (mach_vm_address_t)fp, sizeof(pair),
+        out->error = mach_vm_read_overwrite(capture->task, (mach_vm_address_t)fp, sizeof(pair),
                                          (mach_vm_address_t)(uintptr_t)pair, &read_size);
         if (out->error != KERN_SUCCESS) {
             out->walk_status = EASL_STALL_WALK_READ_ERROR;
@@ -313,8 +255,8 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
     out->walk_status = EASL_STALL_WALK_LIMIT;
 
 resume_main:
-    if (capture->resume(capture->main_thread) != KERN_SUCCESS)
-        capture->exit_process(EASL_STALL_EXIT_RESUME_FAILED);
-    out->suspend_ns = capture->now(CLOCK_UPTIME_RAW) - suspend_start;
+    if (thread_resume(capture->main_thread) != KERN_SUCCESS)
+        _exit(EASL_STALL_EXIT_RESUME_FAILED);
+    out->suspend_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - suspend_start;
     return accepted;
 }

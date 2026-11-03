@@ -2,6 +2,8 @@ import CoreFoundation
 import Darwin
 import Foundation
 import CanvasCore
+import os
+import StallCapture
 
 @inline(never)
 func stallBusyLoop(milliseconds: Int) {
@@ -12,6 +14,25 @@ func stallBusyLoop(milliseconds: Int) {
 
 @MainActor
 private enum StallSamplerRegression {
+    private static func rejectsRetiredTurns() {
+        let capture = easl_stall_create()!
+        defer { easl_stall_destroy(capture) }
+        easl_stall_publish(capture, 2)
+        let result = OSAllocatedUnfairLock(initialState: (capture: capture, accepted: true, error: Int32(0)))
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            result.withLock { state in
+                var record = EaslStallRecord()
+                state.accepted = easl_stall_capture(state.capture, 1, &record)
+                state.error = record.error
+            }
+            done.signal()
+        }
+        precondition(done.wait(timeout: .now() + 5) == .success)
+        precondition(result.withLock { !$0.accepted && $0.error == EASL_STALL_ERROR_TURN_CHANGED })
+        print("PASS retired turn returns cancellation, not a capture failure")
+    }
+
     static func main() throws {
         guard CommandLine.arguments.count == 3,
               let milliseconds = Int(CommandLine.arguments[2]),
@@ -21,6 +42,7 @@ private enum StallSamplerRegression {
             fatalError("run.py must supply a scenario, duration and isolated home")
         }
         let kind = CommandLine.arguments[1]
+        if kind == "busy" && milliseconds == 300 { rejectsRetiredTurns() }
         let directory = URL(fileURLWithPath: home, isDirectory: true)
         let metrics = Metrics.shared
         metrics.monitorMainThread()

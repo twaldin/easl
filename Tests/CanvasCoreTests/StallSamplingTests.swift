@@ -48,7 +48,8 @@ struct StallSamplingTests {
         var policy = StallSampling()
         #expect(policy.deadline(turnStart: nil) == nil)
         #expect(policy.deadline(turnStart: 100) == 100.25)
-        #expect(policy.shouldSample(turnStart: 100, now: 100.25))
+        let sampled = policy.shouldSample(turnStart: 100, now: 100.25)
+        #expect(sampled)
         #expect(policy.deadline(turnStart: 100) == nil)
         #expect(policy.deadline(turnStart: 101) == 400.25)
         #expect(policy.deadline(turnStart: 500) == 500.25)
@@ -56,12 +57,14 @@ struct StallSamplingTests {
 
     @Test func aTurnThatEndsBeforeCaptureDoesNotSpendTheCaptureInterval() {
         var policy = StallSampling()
-        #expect(policy.shouldSample(turnStart: 100, now: 100.25))
+        let first = policy.shouldSample(turnStart: 100, now: 100.25)
+        #expect(first)
         policy.cancelled(turn: 100)
-        #expect(!policy.shouldSample(turnStart: 100, now: 101))
-        #expect(policy.shouldSample(turnStart: 101, now: 101.25))
-        #expect(!policy.shouldSample(turnStart: 102, now: 102.25))
-        #expect(policy.shouldSample(turnStart: 401, now: 401.25))
+        let same = policy.shouldSample(turnStart: 100, now: 101)
+        let next = policy.shouldSample(turnStart: 101, now: 101.25)
+        let limited = policy.shouldSample(turnStart: 102, now: 102.25)
+        let later = policy.shouldSample(turnStart: 401, now: 401.25)
+        #expect(!same && next && !limited && later)
     }
 
     @Test func mainThreadStatesDistinguishCPUWaitsAndNotRunning() {
