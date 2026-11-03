@@ -107,7 +107,6 @@ func TestContentAgeFallsBackAfterReleasedHostRoundTrip(t *testing.T) {
 	object := saved["objects"].([]any)[0].(map[string]any)
 	for _, marker := range []string{"retained", "absent"} {
 		t.Run(marker, func(t *testing.T) {
-			// Released hosts retain unknown fields, but only advance the normal write metadata.
 			object["rev"] = object["rev"].(float64) + 1
 			object["updatedAt"] = model.FileTime(now)
 			object["props"].(map[string]any)["markdown"] = "edited by released host"

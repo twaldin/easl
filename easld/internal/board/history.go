@@ -63,7 +63,7 @@ func propsWithout(props map[string]any, keys map[string]bool) map[string]any {
 func contentProps(o model.Object) map[string]any { return propsWithout(o.Props, bookkeeping(o)) }
 
 func sameContent(a, b model.Object) bool {
-	return a.Type == b.Type && a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && sameExpiry(a.Expires, b.Expires) && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
+	return a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && sameExpiry(a.Expires, b.Expires) && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
 }
 
 func sameAuthoredPatch(a, b model.Object, patch map[string]any) bool {

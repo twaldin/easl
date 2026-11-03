@@ -92,8 +92,7 @@ public enum JSONValue: Codable, Equatable, Sendable {
 }
 
 extension JSONValue {
-    /// The API object shape excludes file-only content-age metadata. Props are already JSON,
-    /// so manifests, write results and events do not need to encode and re-parse them.
+    /// The API object shape excludes file-only content-age metadata.
     public init(_ object: CanvasObject) {
         var fields: [String: JSONValue] = [
             "id": .string(object.id), "type": .string(object.type.rawValue), "frame": JSONValue(object.frame),
