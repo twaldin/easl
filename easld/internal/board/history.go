@@ -112,8 +112,7 @@ func restoring(target, current model.Object) model.Object {
 		o.Expires = &at
 	}
 	props := model.Clone(anyMap(contentProps(target))).(map[string]any)
-	kept := bookkeeping(current)
-	for k := range kept {
+	for k := range bookkeeping(current) {
 		if v, ok := current.Props[k]; ok {
 			props[k] = model.Clone(v)
 		} else {
@@ -239,10 +238,9 @@ func (b *Board) put(target model.Object) {
 	if current, ok := b.objects[target.ID]; ok {
 		o = restoring(target, current)
 	}
-	now := time.Now()
 	o.ContentUpdatedAt = target.ContentTime()
 	o.ContentRev = o.Rev
-	o.UpdatedAt = now
+	o.UpdatedAt = time.Now()
 	user := model.Actor{Kind: "user"}
 	o.UpdatedBy = &user
 	intentActor := target.CreatedBy

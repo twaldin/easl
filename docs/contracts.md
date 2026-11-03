@@ -594,6 +594,7 @@ The app-to-host audit for changes after v0.3.0 is:
 | Change | Requests or wire changes | Current app on v0.3.0 easld |
 | --- | --- | --- |
 | #159, expiry and stale listing | `object.create` and `object.update` can carry `expires`. The app does not call `board.stale`. | Already included in v0.3.0. Deadlines retain host-owned deletion behavior. CLI stale listing is also supported. |
+| Content-age cleanup | Adds optional `board.stale.createdBy`; object replies and events are unchanged. | Requires an updated board host for content age and creator filtering. Older hosts keep last-write age and reject `createdBy`. Format-3 board files remain readable; revision-bound metadata falls back safely after older-host writes. |
 | #163, unreadable boards | Existing `board.open` and saved-board loading, with no new request fields. | Remote opening retains v0.3.0 host behavior. The newer app's stricter local-file reader does not read or rewrite host board files. |
 | #164, browser measurements | Viewer-only development observations, with no protocol change. | Existing browser relay and reports work unchanged. |
 | #165, composer editing | Native undo and input-method handling, with no protocol change. | Local editor fixes apply before the existing remote send. |

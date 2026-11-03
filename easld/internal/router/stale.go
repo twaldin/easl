@@ -70,7 +70,7 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 		matching := objects[:0]
 		for _, value := range objects {
 			entry := value.(map[string]any)
-			creator := model.ActorFromJSON(entry["createdBy"])
+			creator := b.Objects()[entry["id"].(string)].CreatedBy
 			if creator.Kind == "agent" && creator.Tile == createdBy {
 				matching = append(matching, value)
 			}

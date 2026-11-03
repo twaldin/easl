@@ -207,7 +207,6 @@ public final class UndoHistory {
     }
 
     static func authoredContentChanged(from before: CanvasObject, to after: CanvasObject, patch: JSONValue? = nil) -> Bool {
-        if before.type != after.type { return true }
         let skipped = bookkeeping(before)
         func ignored(_ key: String) -> Bool {
             if skipped.contains(key) || before.type == .group && key == "members" || before.type == .browser && key == "urlIntent" { return true }

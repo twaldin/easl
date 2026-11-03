@@ -33,6 +33,38 @@ final class ObjectExpiryTests {
         return try await client.next()
     }
 
+    @Test func publicObjectRepliesAndEventsKeepTheDeclaredWireFields() async throws {
+        let schemaURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("schema/easl-api.json")
+        let schema = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: schemaURL))
+        let definition = try #require(schema["definitions"]?["CanvasObject"])
+        let allowed = Set(try #require(definition["properties"]?.object).keys)
+        let required = Set(try #require(definition["required"]?.array).compactMap(\.string))
+        func accepts(_ value: JSONValue?) throws {
+            let keys = Set(try #require(value?.object).keys)
+            #expect(required.isSubset(of: keys))
+            #expect(keys.isSubset(of: allowed))
+        }
+        let observer = try LineClient(path: dir.appendingPathComponent("s").path)
+        observer.send(String(decoding: try JSONEncoder().encode(JSONValue.object([
+            "id": "subscribe", "method": "events.subscribe", "params": .object(["board": .string(board.id)]),
+        ])), as: UTF8.self))
+        #expect(try await observer.next()["ok"] == .bool(true))
+        let created = try await call("object.create", ["board": .string(board.id), "type": "note", "props": .object(["markdown": "public wire shape"])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        try accepts(created["result"]?["object"])
+        let creation = try await observer.next()
+        #expect(creation["event"] == "object.created")
+        try accepts(creation["data"])
+        _ = try await call("object.update", ["id": .string(id), "frame": JSONValue(Frame(x: 800, y: 200, w: 400, h: 240))])
+        let moved = try await observer.next()
+        #expect(moved["event"] == "object.updated")
+        #expect(moved["data"]?["id"] == .string(id))
+        try accepts(moved["data"])
+        let fetched = try await call("object.get", ["id": .string(id)])
+        try accepts(fetched["result"]?["object"])
+    }
+
     @Test func staleCreatorFilterMatchesCreatorTileEvenAfterItIsGone() async throws {
         let creator = board.create(type: .terminal, props: .object([:]))
         let mine = board.create(type: .note, props: .object(["markdown": "mine"]), caller: creator.id)
