@@ -268,7 +268,7 @@ In `agent-gui`, use the already-authorized CuaDriver with both the dev process P
 
 ## Native browsing-data regression
 
-Build with `swift build --build-system native -j 2 --product Easl -Xswiftc -enable-testing`, then run `python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"` in the queued guest. The fixture needs macOS 15.4 or later for its synthetic WebKit extension. It uses an isolated home and reads back real cookies from the default, local, remote-only, and closed-board-only profile stores after confirming the native sheet. The latter two stores are absent from the supplied local profile names and the in-memory named-store cache. It also reloads an extension page and requires its localStorage sentinel to survive. CI runs the same fixture.
+Build with `swift build --build-system native -j 2 --product Easl -Xswiftc -enable-testing`, then run `python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"` in the queued guest. It uses an isolated home and reads back real cookies from the default, local, remote-only, and closed-board-only profile stores after confirming the native sheet. The latter two stores are absent from the supplied local profile names and the in-memory named-store cache. CI runs the same fixture.
 
 ## Native remote video regression
 

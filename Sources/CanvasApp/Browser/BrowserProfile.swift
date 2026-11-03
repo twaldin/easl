@@ -74,7 +74,7 @@ enum BrowserProfile {
         return "Version/\(version) Safari/605.1.15"
     }()
 
-    /// Clears sites in every saved browser profile, not just profiles on open boards.
+    /// Uses a sheet so socket requests keep running; `profiles` supplies display names only.
     static func confirmClear(in window: NSWindow, profiles: Set<String>, done: @escaping @MainActor () -> Void) {
         Task { @MainActor in
             let defaultStore = store
@@ -86,7 +86,7 @@ enum BrowserProfile {
             alert.messageText = "Clear browsing data?"
             let listed = names.isEmpty ? "" : " Also clears the \(names.sorted().map { "“\($0)”" }.joined(separator: ", ")) profile\(names.count == 1 ? "" : "s")."
             let others = otherSaved ? " Other saved browser profiles on this Mac are cleared too." : ""
-            alert.informativeText = "Removes every browser tile's cookies and logins, local storage and databases, and cached files, on every board.\(listed)\(others) Extension data is kept. Pages open now keep what they show until they reload."
+            alert.informativeText = "Removes every browser tile's cookies and logins, local storage and databases, and cached files, on every board.\(listed)\(others) Extensions' page storage is also cleared. Pages open now keep what they show until they reload."
             // Return and Esc cancel: this signs you out of every site, so it takes a click.
             alert.addButton(withTitle: "Cancel")
             let clear = alert.addButton(withTitle: "Clear")
@@ -98,9 +98,7 @@ enum BrowserProfile {
                     let stores = [defaultStore] + saved.filter { $0 != defaultStore.identifier }.map { WKWebsiteDataStore(forIdentifier: $0) }
                     let types = WKWebsiteDataStore.allWebsiteDataTypes()
                     for cleared in stores {
-                        // Public records exclude webkit-extension origins; whole-store removal erases them.
-                        let records = await cleared.dataRecords(ofTypes: types)
-                        await cleared.removeData(ofTypes: types, for: records)
+                        await cleared.removeData(ofTypes: types, modifiedSince: .distantPast)
                     }
                     NSLog("easl: cleared browsing data")
                     done()

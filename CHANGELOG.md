@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Clear Browsing Data now clears site cookies, storage, and caches from every saved browser profile on this Mac, including profiles used only on remote or closed boards. Extension data is kept.
+- Clear Browsing Data now clears every saved browser profile of this app on this Mac, including profiles used only on remote or closed boards. The sheet names known profiles and warns that extensions' page storage is also cleared, as before.
 - Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
 - Capture main-thread stacks once near 150 ms and retain records only for turns reaching 250 ms, including late window-commit work. Disarm sampling while the main loop sleeps. A Mach timer port arms and cancels deadlines without per-turn libdispatch timer configuration. Records report CPU or wait state and keep their metrics linkage, five-minute rate limit, and twenty-file retention; discarded short-turn captures do not spend the interval.
 - Main-thread busy time, stretch counts, and the longest stretch now include window-commit observers and autorelease-pool drains. Higher reported totals can reflect this wider timing boundary rather than slower work.
