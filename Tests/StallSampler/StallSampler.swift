@@ -5,6 +5,12 @@ import CanvasCore
 import os
 import StallCapture
 
+private struct StallWindow: Encodable {
+    let startedNs: UInt64
+    let endedNs: UInt64
+    let sampledBeforeTurnEnd: Int
+}
+
 @inline(never)
 func stallBusyLoop(milliseconds: Int) {
     let end = ProcessInfo.processInfo.systemUptime + Double(milliseconds) / 1000
@@ -67,7 +73,9 @@ private enum StallSamplerRegression {
             }
             let ended = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
             do {
-                try JSONEncoder().encode(["startedNs": started, "endedNs": ended])
+                let window = StallWindow(startedNs: started, endedNs: ended,
+                                         sampledBeforeTurnEnd: metrics.snapshot()["stalls"]?["sampled"]?.int ?? -1)
+                try JSONEncoder().encode(window)
                     .write(to: directory.appendingPathComponent("stall-window.json"), options: .atomic)
             } catch {
                 fatalError("cannot retain stall interval: \(error)")

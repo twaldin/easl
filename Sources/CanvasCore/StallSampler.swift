@@ -7,7 +7,7 @@ public struct StallSampling: Sendable {
     public static let threshold = 0.25
     /// Capture early enough to leave scheduling and CPU-bracketing margin for a 300 ms stall.
     public static let captureDelay = 0.15
-    /// At most one sample this often (s): a stalling app shouldn't spend its time being sampled.
+    /// At most one retained record this often (s).
     public static let minInterval = 300.0
     /// Files kept, newest by modification time first.
     public static let keep = 20
@@ -118,7 +118,6 @@ final class StallSampler: @unchecked Sendable {
         if sample == nil {
             guard let capture, easl_stall_capture(capture, turn.bitPattern, &record) else {
                 metrics.stallFailed(turn, cancelled: record.error == EASL_STALL_ERROR_TURN_CHANGED)
-                prune()
                 return
             }
         }
@@ -147,9 +146,7 @@ final class StallSampler: @unchecked Sendable {
             metrics.stallFailed(pending.turn)
             return
         }
-        if !metrics.stallSampled(pending.turn, file: "stalls/\(name)") {
-            try? FileManager.default.removeItem(at: file)
-        }
+        metrics.stallSampled(file: "stalls/\(name)")
     }
 
     private func write(_ record: EaslStallRecord, into file: URL, turn: Double) -> Bool {

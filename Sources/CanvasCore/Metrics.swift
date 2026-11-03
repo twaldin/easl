@@ -225,7 +225,6 @@ public final class Metrics: @unchecked Sendable {
         scheduleStallSampling()
     }
 
-    /// Called only with `lock` held, including from callbacks of an obsolete timer deadline.
     private func scheduleStallSampling() {
         guard let stallSampler else { return }
         let deadline: Double?
@@ -256,7 +255,6 @@ public final class Metrics: @unchecked Sendable {
         case discard, wait, write
     }
 
-    /// Qualifying here is final: a later observer publication cannot revoke an active 250 ms turn.
     func prepareStall(_ turn: Double, at now: Double) -> StallRetention {
         lock.lock()
         defer {
@@ -276,14 +274,10 @@ public final class Metrics: @unchecked Sendable {
         }
     }
 
-    /// The sample of the turn that started at `turn` is in `file`.
-    func stallSampled(_ turn: Double, file: String) -> Bool {
+    func stallSampled(file: String) {
         var line: Stretch?
         lock.lock()
-        guard let pending = stallPending, pending.turn == turn, case .writing = pending.phase else {
-            lock.unlock()
-            return false
-        }
+        let pending = stallPending!
         stallsSampled += 1
         stallNewest = file
         if var ended = pending.ended {
@@ -297,10 +291,8 @@ public final class Metrics: @unchecked Sendable {
         scheduleStallSampling()
         lock.unlock()
         if let line { log(Self.busyLine(line.ms, line.cause)) }
-        return true
     }
 
-    /// A cancelled capture or a turn ending before qualification refunds the five-minute interval.
     func stallFailed(_ turn: Double, cancelled: Bool = false) {
         lock.lock()
         if stallPending?.turn == turn {
@@ -311,14 +303,6 @@ public final class Metrics: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over and
-    /// `next` begins (nil: the loop sleeps). `ended.ms` is the part of the turn the window counts,
-    /// from the last reset if one came during it, and `cause` what it ran. A turn a reset cut has
-    /// no cause of its own in the new window (its spans were dropped at its end, the first activity
-    /// after the reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line.
-    ///
-    /// Turn publication, qualification, and timer changes share the watchdog's lock. Only a
-    /// captured turn needs queued completion when it ends; ordinary turns enqueue nothing.
     fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
                               cause: @autoclosure () -> String, wholeCause: String?) {
         var line: (ms: Double, cause: String)?

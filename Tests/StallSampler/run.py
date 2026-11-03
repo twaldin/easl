@@ -29,7 +29,7 @@ def main_frames(text):
     raise ValueError("saved record has no identifiable main-thread stack")
 
 
-def validate(home, kind, result, ci_timing_report_only):
+def validate(home, kind, duration, result, ci_timing_report_only):
     metrics = json.loads((home / "metrics.json").read_text())
     stalls = metrics.get("stalls", {})
     longest = metrics.get("longest", {})
@@ -41,7 +41,10 @@ def validate(home, kind, result, ci_timing_report_only):
     turn_timing = {"event": "capture-inside-stall", "captureUptimeNs": None,
                    "startedNs": window["startedNs"], "endedNs": window["endedNs"],
                    "withinLimit": False, "assertsTiming": result["mandatory"]}
-    result["timings"] = [latency_timing, turn_timing]
+    record_timing = {"event": "record-before-turn-end", "sampledBeforeTurnEnd": window["sampledBeforeTurnEnd"],
+                     "withinLimit": window["sampledBeforeTurnEnd"] == 1,
+                     "assertsTiming": not ci_timing_report_only and duration > 300}
+    result["timings"] = [latency_timing, turn_timing, record_timing]
     newest = stalls.get("newest", "")
     relative = pathlib.PurePosixPath(newest)
     if relative.is_absolute() or len(relative.parts) != 2 or relative.parts[0] != "stalls":
@@ -73,12 +76,14 @@ def validate(home, kind, result, ci_timing_report_only):
     if kind.endswith("blocked") and "stallBlockedWait" not in walked:
         raise ValueError("main-thread walk must identify the function blocked in the wait")
     state = "on-CPU" if kind.endswith("busy") else "blocked in a wait"
-    if f"State: {state}" not in text:
+    if not ci_timing_report_only and f"State: {state}" not in text:
         raise ValueError(f"saved record does not classify the main thread as {state}")
     if not turn_timing["withinLimit"]:
         raise ValueError("capture must start after its turn begins and before that same turn ends")
     if latency_timing["assertsTiming"] and not latency_timing["withinLimit"]:
         raise ValueError("capture latency must be positive and below 300 ms")
+    if record_timing["assertsTiming"] and not record_timing["withinLimit"]:
+        raise ValueError("qualified record must exist before the longer main-thread turn ends")
 
 
 def main():
@@ -150,7 +155,7 @@ def main():
                     raise ValueError("child exceeded its 25 s lifetime")
             if status:
                 raise ValueError(f"child exited with status {status}")
-            validate(home, kind, result, args.ci_timing_report_only)
+            validate(home, kind, duration, result, args.ci_timing_report_only)
             result["passed"] = True
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             result["error"] = str(error)

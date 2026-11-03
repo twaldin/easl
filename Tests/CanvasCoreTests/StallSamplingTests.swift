@@ -127,7 +127,6 @@ private final class StallRig: @unchecked Sendable {
     private var capture = StandInCapture.samples
     private var whileSampling: () -> Void = {}
     private var whileCapturing: () -> Void = {}
-    /// How many captures ran.
     private(set) var samples = 0
 
     init(at now: Double) {
@@ -167,7 +166,6 @@ private final class StallRig: @unchecked Sendable {
         monitor.loop(sleeping: !intoNext, at: end)
     }
 
-    /// Advances the watchdog clock; capture and file-writing callbacks can publish turn ends.
     func wake(at now: Double, capture: StandInCapture = .samples,
               whileCapturing: @escaping () -> Void = {}, whileSampling: @escaping () -> Void = {}) {
         sampler?.queue.sync {
@@ -387,7 +385,6 @@ struct StallSamplingCorrelationTests {
         let t = Metrics.now() - 10
         let rig = StallRig(at: t)
         rig.begin(at: t)
-        // The capture outlasts the turn, and the window is reset before it finishes.
         rig.wake(at: t + 1.5, whileSampling: { rig.end(at: t + 3, stall: 3000); rig.metrics.reset() })
         let file = try #require(rig.newest)
         #expect(rig.busy(naming: file).map(\.ms) == [3000], "the late, tagged line")
@@ -395,8 +392,6 @@ struct StallSamplingCorrelationTests {
         #expect(rig.sampled == 1, "the launch total survives a reset")
     }
 
-    /// A failed or empty capture's file is deleted and the stretch names nothing.
-    /// The directory is pruned all the same.
     @Test(arguments: [StandInCapture.fails, .writesNothing]) func aSampleThatLeavesNoUsableFileIsDeletedAndNamesNothing(capture: StandInCapture) throws {
         let t = Metrics.now()
         let rig = StallRig(at: t)
