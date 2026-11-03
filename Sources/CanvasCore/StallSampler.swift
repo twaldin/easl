@@ -67,7 +67,7 @@ final class StallSampler: @unchecked Sendable {
     private let sample: ((_ file: URL) -> Bool)?
     private let captured: (() -> Void)?
     private let capture: OpaquePointer?
-    private var timer: DispatchSourceTimer?
+    private var timer: (source: DispatchSourceMachReceive, context: OpaquePointer, lock: NSLock)?
     private var pending: (turn: Double, record: EaslStallRecord)?
 
     init?(directory: URL, metrics: Metrics, now: @escaping () -> Double = Metrics.now,
@@ -81,16 +81,43 @@ final class StallSampler: @unchecked Sendable {
         if sample == nil && capture == nil { return nil }
     }
 
-    func start() {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .distantFuture)
-        timer.setEventHandler { [weak self] in self?.tick() }
-        timer.resume()
-        self.timer = timer
+    func start() -> Bool {
+        guard let context = easl_stall_timer_create() else {
+            NSLog("easl: couldn't create the stall timer; sampling disabled")
+            return false
+        }
+        let source = DispatchSource.makeMachReceiveSource(port: easl_stall_timer_port(context), queue: queue)
+        let lock = NSLock()
+        let address = UInt(bitPattern: context)
+        source.setEventHandler { [weak self] in
+            guard let self, let timer = self.timer else { return }
+            var expired = false
+            while !timer.source.isCancelled {
+                let result = easl_stall_timer_take(timer.context)
+                if result == KERN_SUCCESS {
+                    expired = true
+                } else if result == MACH_RCV_TIMED_OUT {
+                    if expired && !timer.source.isCancelled { tick() }
+                    return
+                } else {
+                    NSLog("easl: stall timer receive failed (%d); sampling disabled", result)
+                    timer.source.cancel()
+                    return
+                }
+            }
+        }
+        source.setCancelHandler {
+            lock.lock()
+            easl_stall_timer_destroy(OpaquePointer(bitPattern: address))
+            lock.unlock()
+        }
+        timer = (source, context, lock)
+        source.resume()
+        return true
     }
 
     deinit {
-        timer?.cancel()
+        timer?.source.cancel()
         if let capture { easl_stall_destroy(capture) }
     }
 
@@ -99,8 +126,15 @@ final class StallSampler: @unchecked Sendable {
     }
 
     func schedule(at deadline: Double?) {
-        timer?.schedule(deadline: deadline.map { DispatchTime(uptimeNanoseconds: UInt64($0 * 1e9)) } ?? .distantFuture,
-                        leeway: .milliseconds(1))
+        guard let timer else { return }
+        timer.lock.lock()
+        defer { timer.lock.unlock() }
+        guard !timer.source.isCancelled else { return }
+        let result = easl_stall_timer_set(timer.context, deadline.map { UInt64($0 * 1e9) } ?? 0)
+        if result != KERN_SUCCESS {
+            NSLog("easl: stall timer arm/cancel failed (%d); sampling disabled", result)
+            timer.source.cancel()
+        }
     }
 
     func finish(_ turn: Double) {

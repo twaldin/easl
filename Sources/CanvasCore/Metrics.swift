@@ -218,8 +218,7 @@ public final class Metrics: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard stallSampler == nil else { return }
-        guard let sampler = StallSampler(directory: directory, metrics: self) else { return }
-        sampler.start()
+        guard let sampler = StallSampler(directory: directory, metrics: self), sampler.start() else { return }
         stallSampler = sampler
         sampler.publish(turn: turnStart)
         scheduleStallSampling()
