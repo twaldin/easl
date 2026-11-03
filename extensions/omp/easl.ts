@@ -20,6 +20,7 @@ import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
+const REPORT_PROTOCOL = 4;
 const IDLE_DEBOUNCE_MS = 250;
 // The inbox's long poll (agent.inbox `waitMs`), and how long a failed poll waits to try again.
 const INBOX_WAIT_MS = 55_000;
@@ -52,13 +53,15 @@ type Launch = { thinking?: string; session?: string; switched: boolean };
 // The board's standing orders: its note with this key, injected up to this many UTF-8 bytes.
 const RULES_KEY = "rules";
 const RULES_MAX_BYTES = 8192;
-// Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
-const OMP_SELECT = Symbol.for("canvas-omp.select");
+const APPROVAL_DIALOGS = [
+  ["select", Symbol.for("canvas-omp.select")],
+  ["approve", Symbol.for("canvas-omp.approve")],
+] as const;
 
 type Staged = { prompt: string; ids: string[]; context: string; committed: boolean };
 type ToolCall = { name: string; args: Record<string, unknown> | undefined };
 type Details = Record<string, any>;
-type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
+type ApprovalDialog = (this: unknown, prompt: unknown, ...rest: unknown[]) => Promise<unknown>;
 // What the agent runs, as agent.report_session `model` and `thinking` say it.
 type RunsWith = { model?: string; thinking?: string };
 // A `thinking_level_change` entry of omp's session, as the extension reads it.
@@ -87,21 +90,27 @@ export default function canvas(pi: ExtensionAPI): void {
   const calls = new Map<string, ToolCall>();
   // What each submitted prompt drained, in submission order, until its context is handed back.
   let staged: Staged[] = [];
-  // The last answer of the turn that just ended, sent with its idle report (agent.read final),
-  // and the error that turn stopped on, if it didn't finish (an API error, an abort).
+  // The last answer is still published only when the run settles idle.
   let final: string | undefined;
+  // omp can attach an empty-reply error after message_end, before agent_end.
+  let pendingStopAt: string | undefined;
   let failure: string | undefined;
+  let reportCapability = { legacy: false };
+  let outcomeReport: Promise<void> | undefined;
+  let reportGeneration = 0;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
-  function publish(): void {
-    if (!reporting) return;
+  function publish(turnOutcome?: "success" | "error" | "aborted", error?: string, endedAt?: string): void {
+    if (!reporting || (turnOutcome && reportCapability.legacy)) return;
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
-    const send = () =>
-      report(client, {
+    const send = () => {
+      const generation = reportGeneration;
+      const legacyError = settled ? failure : undefined;
+      const params: Parameters<typeof report>[1] = {
         tile: tile!,
         kind: "omp",
         state,
@@ -109,13 +118,46 @@ export default function canvas(pi: ExtensionAPI): void {
         seq: ++seq,
         source: SOURCE,
         final: settled ? final : undefined,
-        error: settled ? failure : undefined,
-        protocol: PROTOCOL,
+        error,
+        turnOutcome,
+        turnEndedAt: turnOutcome ? endedAt ?? new Date().toISOString() : undefined,
+        protocol: REPORT_PROTOCOL,
         draft,
         pid: process.pid,
-      });
+      };
+      const deliver = async () => {
+        if (generation !== reportGeneration) return;
+        const capability = reportCapability;
+        if (capability.legacy) {
+          if (turnOutcome) return;
+          delete params.turnOutcome;
+          delete params.turnEndedAt;
+          params.error = legacyError;
+          params.protocol = PROTOCOL;
+        }
+        return report(client, params, async () => {
+          try {
+            return await client.api.agent.report(params);
+          } catch (error) {
+            if (generation !== reportGeneration || !params.turnOutcome || !(error instanceof CanvasError) || error.code !== "invalid_params" || !/^unknown (?:param (?:turnEndedAt|turnOutcome)|params turnEndedAt, turnOutcome); agent\.report takes /.test(error.message)) throw error;
+            capability.legacy = true;
+            delete params.turnOutcome;
+            delete params.turnEndedAt;
+            return client.api.agent.report(params);
+          }
+        });
+      };
+      const sent = outcomeReport ? outcomeReport.then(deliver) : deliver();
+      if (turnOutcome) {
+        outcomeReport = sent;
+        void sent.then(() => {
+          if (outcomeReport === sent) outcomeReport = undefined;
+        });
+      }
+      return sent;
+    };
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
-    if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
+    if (state === "idle" && !turnOutcome) idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
   }
 
@@ -123,6 +165,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // `working`) until we report again: say where we are as soon as it is back, and what the agent
   // runs, which it may never have taken.
   watchCanvasReturn(client.socketPath, () => {
+    reportCapability = { legacy: false };
     publish();
     if (sessionCtx) void reportSession(sessionCtx);
   });
@@ -279,32 +322,29 @@ export default function canvas(pi: ExtensionAPI): void {
     return change;
   }
 
-  // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
-  // Its tool_approval_requested event comes only from its registered-tool wrapper: eval preludes
-  // (the `browser` and `computer` globals inside eval) prompt without any event.
-  // So the tile's UI context is watched instead: each approval dialog blocks the tile until the
-  // user answers it (approve, deny, or interrupt). `ctx.ui` is a per-handler proxy (trapping only
-  // `get`) over the one UI context omp's tools and preludes prompt with, so property descriptors
-  // read and defined through it are that object's. A reload rewraps omp's own select, so only the
-  // live extension instance reports.
+  // Eval preludes prompt without tool_approval_requested, so watch the shared UI behind ctx.ui.
+  // Reloads replace our wrappers rather than reporting through an obsolete extension instance.
   function watchApprovals(ui: object): void {
-    const current = Object.getOwnPropertyDescriptor(ui, "select");
-    if (typeof current?.value !== "function") return;
-    const base: Select = current.value[OMP_SELECT] ?? current.value;
-    const select = async function (this: unknown, title: unknown, ...rest: unknown[]): Promise<unknown> {
-      const tool = typeof title === "string" ? /^Allow tool: (.+)$/.exec(title.split("\n", 1)[0])?.[1] : undefined;
-      if (!tool) return base.call(this, title, ...rest);
-      const key = `approval:${++approvals}`;
-      blockers.set(key, `approve ${tool}?`);
-      publish();
-      try {
-        return await base.call(this, title, ...rest);
-      } finally {
-        blockers.delete(key);
+    for (const [name, marker] of APPROVAL_DIALOGS) {
+      const current = Object.getOwnPropertyDescriptor(ui, name);
+      if (typeof current?.value !== "function") continue;
+      const base: ApprovalDialog = current.value[marker] ?? current.value;
+      const dialog = async function (this: unknown, prompt: unknown, ...rest: unknown[]): Promise<unknown> {
+        const title = name === "approve" ? (prompt as { full?: unknown } | undefined)?.full : prompt;
+        const tool = typeof title === "string" ? /^Allow tool: (.+)$/.exec(title.split("\n", 1)[0])?.[1] : undefined;
+        if (!tool) return base.call(this, prompt, ...rest);
+        const key = `approval:${++approvals}`;
+        blockers.set(key, `approve ${tool}?`);
         publish();
-      }
-    };
-    Object.defineProperty(ui, "select", { ...current, value: Object.assign(select, { [OMP_SELECT]: base }) });
+        try {
+          return await base.call(this, prompt, ...rest);
+        } finally {
+          blockers.delete(key);
+          publish();
+        }
+      };
+      Object.defineProperty(ui, name, { ...current, value: Object.assign(dialog, { [marker]: base }) });
+    }
   }
 
   // A hangup (the terminal's session killed: its host rebooting, easld or zmx stopped) or a
@@ -330,6 +370,7 @@ export default function canvas(pi: ExtensionAPI): void {
     active = !ctx.isIdle();
     final = undefined;
     failure = undefined;
+    pendingStopAt = undefined;
     blockers.clear();
     staged = [];
     if (reporting) watchApprovals(ctx.ui);
@@ -347,6 +388,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("session_switch", async (_event, ctx) => {
     // A new or switched-to session starts settled; the old one's pending continuation is gone.
     active = !ctx.isIdle();
+    pendingStopAt = undefined;
     if (reporting) launch.switched = true;
     watchSession(ctx);
     const reported = reportSession(ctx);
@@ -368,7 +410,10 @@ export default function canvas(pi: ExtensionAPI): void {
     stopWatchingSession();
     clearTimeout(idleTimer);
     // Hung up or terminated, the tile keeps its agent for the session that resumes it (`hungUp`).
-    if (reporting && !hungUp) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    if (reporting && !hungUp) {
+      reportGeneration++;
+      void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    }
     // Nothing reports for the tile again (an easl coming back) until a session starts.
     reporting = false;
     // Ends the long poll; what this session never recorded bounces with a release, else stays
@@ -380,6 +425,7 @@ export default function canvas(pi: ExtensionAPI): void {
     active = true;
     final = undefined;
     failure = undefined;
+    pendingStopAt = undefined;
     staged = staged.filter((entry) => !entry.committed);
     publish();
     // Messages over their senders' wake bound ride this turn, without interrupting it.
@@ -391,10 +437,30 @@ export default function canvas(pi: ExtensionAPI): void {
   // willContinue: omp already scheduled the next run (retry, compaction, todo or session_stop
   // continuation, or background jobs whose results will resume it), so this is not a settle.
   pi.on("agent_end", (event) => {
+    const endedAt = pendingStopAt;
+    pendingStopAt = undefined;
+    if (endedAt) {
+      const last = event.messages.findLast((message) => message.role === "assistant");
+      const error = last?.role === "assistant" && typeof last.errorMessage === "string" && last.errorMessage.trim() ? turnError(last) : undefined;
+      publish(error ? "error" : "success", error, endedAt);
+    }
     active = event.willContinue === true;
     if (!active) {
       final = lastAnswer(event.messages);
-      failure = turnError(event.messages);
+      const last = event.messages.findLast((message) => message.role === "assistant");
+      switch (last?.stopReason) {
+        case "error":
+          failure = typeof last.errorMessage === "string" && last.errorMessage.trim() ? last.errorMessage.trim() : "the model request failed";
+          break;
+        case "aborted":
+          failure = "interrupted";
+          break;
+        case "length":
+          failure = "stopped at the output token limit";
+          break;
+        default:
+          failure = undefined;
+      }
       // The next turn is prepared only if omp prepares it; it reads the standing orders afresh.
       prepared = false;
       policy = undefined;
@@ -680,6 +746,25 @@ export default function canvas(pi: ExtensionAPI): void {
   // omp offered them again acks them), then easl gets the ack.
   pi.on("message_end", (event) => {
     recordReceipts(recordedKeys(event.message));
+    if (event.message.role !== "assistant") return;
+    const endedAt = pendingStopAt;
+    pendingStopAt = undefined;
+    if (endedAt) publish("success", undefined, endedAt);
+    switch (event.message.stopReason) {
+      case "error":
+      case "length":
+        publish("error", turnError(event.message));
+        break;
+      case "stop":
+        pendingStopAt = new Date().toISOString();
+        break;
+      case "toolUse":
+        publish("success");
+        break;
+      case "aborted":
+        publish("aborted");
+        break;
+    }
   });
 
   function recordReceipts(candidates: readonly string[]): void {
@@ -957,17 +1042,13 @@ function lastAnswer(messages: readonly { role?: unknown; content?: unknown }[]):
   return text.trim() ? text : undefined;
 }
 
-/** Why the run's last assistant message stopped short: omp's `stopReason` error (with its message), an abort, or the output limit; none for a finished answer. */
-function turnError(messages: readonly { role?: unknown; stopReason?: unknown; errorMessage?: unknown }[]): string | undefined {
-  const last = messages.findLast((message) => message.role === "assistant");
-  switch (last?.stopReason) {
-    case "error":
-      return typeof last.errorMessage === "string" && last.errorMessage.trim() ? last.errorMessage.trim() : "the model request failed";
-    case "aborted":
-      return "interrupted";
-    case "length":
-      return "stopped at the output token limit";
-    default:
-      return undefined;
-  }
+function turnError(message: { stopReason?: unknown; errorMessage?: unknown }): string {
+  if (message.stopReason === "length") return "stopped at the output token limit";
+  return boundedError(typeof message.errorMessage === "string" && message.errorMessage.trim() ? message.errorMessage.trim() : "the model request failed");
+}
+
+function boundedError(error: string): string {
+  const diagnostic = error.split("\nraw-http-request=", 1)[0];
+  const characters = Array.from(diagnostic);
+  return characters.length > 500 ? characters.slice(0, 499).join("") + "…" : diagnostic;
 }

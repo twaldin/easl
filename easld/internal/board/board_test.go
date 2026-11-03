@@ -432,7 +432,7 @@ func TestARestartKeepsATurnThatEndedOnAnErrorUntilANewTurn(t *testing.T) {
 	for _, seen := range []bool{false, true} {
 		report("working", nil)
 		report("idle", &failure)
-		failed := map[string]any{"state": "idle", "seen": false, "message": failure, "error": failure}
+		failed := map[string]any{"state": "idle", "seen": false, "message": failure, "error": failure, "errorCount": 1.0, "errorSince": lifecycle(b, term.ID)["errorSince"]}
 		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, failed) {
 			t.Errorf("seen %v: the failed turn %v, want %v", seen, lc, failed)
 		}
@@ -444,7 +444,7 @@ func TestARestartKeepsATurnThatEndedOnAnErrorUntilANewTurn(t *testing.T) {
 			t.Errorf("seen %v: restarted to %v, want %v", seen, lc, failed)
 		}
 		report("idle", nil)
-		relaunched := map[string]any{"state": "idle", "seen": seen, "message": failure, "error": failure}
+		relaunched := map[string]any{"state": "idle", "seen": seen, "message": failure, "error": failure, "errorCount": 1.0, "errorSince": failed["errorSince"]}
 		if lc := lifecycle(b, term.ID); !reflect.DeepEqual(lc, relaunched) {
 			t.Errorf("seen %v: the relaunched agent's idle left %v, want %v", seen, lc, relaunched)
 		}

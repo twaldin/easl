@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "6d33a2d579c5e710"
+    static let schemaHash = "4e049ddf5464b785"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
@@ -48,7 +48,7 @@ enum ApiParams {
         "tray.unstage": (["id"], ["id"]),
         "tray.drain": (["board", "caller", "peek", "prompt"], []),
         "tray.commit": (["board", "ids"], ["ids"]),
-        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "protocol", "draft", "pid"], ["tile", "kind", "state"]),
+        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final", "serial", "error", "turnOutcome", "turnEndedAt", "protocol", "draft", "pid"], ["tile", "kind", "state"]),
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath", "model", "thinking"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),

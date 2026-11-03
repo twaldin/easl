@@ -195,6 +195,12 @@ final class CanvasTerminalView: TerminalView {
     private var inputIndex = 0
     private var activeInput: ActiveInput?
     private var pasteKeyUp: UInt16?
+    struct InputRefusal {
+        var requiresClick = false
+        var keyUps: Set<UInt16> = []
+    }
+
+    var inputRefusal = InputRefusal()
     private static var imageUploads: [String: [UUID: Task<Void, Never>]] = [:]
 
     private static let imageDragTypes: [NSPasteboard.PasteboardType] = {
@@ -256,11 +262,17 @@ final class CanvasTerminalView: TerminalView {
 
     private func acceptsKey(_ event: NSEvent, on attachment: TerminalSurface?) -> Bool {
         guard let attachment, surface === attachment else { return false }
-        return attachment.isProcessRunning || keyIsBinding(event, on: attachment)
+        return (!inputRefusal.requiresClick && attachment.isProcessRunning) || keyIsBinding(event, on: attachment)
     }
 
-    private func refuseInput(on attachment: TerminalSurface?) {
-        onImageProblem?("Input not sent: the terminal attachment is unavailable. Inspect the terminal before typing again.")
+    func refuseKey(_ event: NSEvent) {
+        inputRefusal.requiresClick = true
+        inputRefusal.keyUps.insert(event.keyCode)
+    }
+
+    private func refuseInput(_ event: NSEvent, on attachment: TerminalSurface?) {
+        refuseKey(event)
+        onImageProblem?("Input not sent: click the terminal before typing again.")
         if let attachment, surface === attachment, !attachment.isProcessRunning {
             attachment.requestClose()
         }
@@ -383,14 +395,16 @@ final class CanvasTerminalView: TerminalView {
             switch input {
             case .key(let event, let attachment):
                 guard let attachment, surface === attachment else {
-                    if event.type == .keyDown { refuseInput(on: attachment) }
+                    if event.type == .keyDown { refuseInput(event, on: attachment) }
                     continue
                 }
                 switch event.type {
                 case .keyDown:
-                    guard acceptsKey(event, on: attachment) else { refuseInput(on: attachment); continue }
+                    guard acceptsKey(event, on: attachment) else { refuseInput(event, on: attachment); continue }
+                    inputRefusal.keyUps.remove(event.keyCode)
                     super.keyDown(with: event)
-                case .keyUp: super.keyUp(with: event)
+                case .keyUp:
+                    if inputRefusal.keyUps.remove(event.keyCode) == nil { super.keyUp(with: event) }
                 case .flagsChanged: super.flagsChanged(with: event)
                 default: break
                 }
@@ -508,6 +522,7 @@ final class CanvasTerminalView: TerminalView {
     private(set) var forcingDefaultBrowser = false
 
     override func mouseDown(with event: NSEvent) {
+        inputRefusal.requiresClick = false
         onClick?()
         let flags = event.modifierFlags
         let point = convert(event.locationInWindow, from: nil)
@@ -601,7 +616,7 @@ final class CanvasTerminalView: TerminalView {
     /// nothing at all.
     override func keyDown(with event: NSEvent) {
         onUserInput?()
-        guard acceptsKey(event, on: surface) else { refuseInput(on: surface); return }
+        guard acceptsKey(event, on: surface) else { refuseInput(event, on: surface); return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if event.charactersIgnoringModifiers?.lowercased() == "v" {
             if !event.isARepeat { pasteKeyUp = nil }
@@ -623,6 +638,7 @@ final class CanvasTerminalView: TerminalView {
         }
         let waited = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
         let start = Metrics.now()
+        inputRefusal.keyUps.remove(event.keyCode)
         DevTerminalEcho.key(self, event: event)
         super.keyDown(with: event)
         let handled = (Metrics.now() - start) * 1000
@@ -634,7 +650,11 @@ final class CanvasTerminalView: TerminalView {
             pasteKeyUp = nil
             return
         }
-        if activeInput != nil { enqueue(.key(event, surface)) } else { super.keyUp(with: event) }
+        if activeInput != nil {
+            enqueue(.key(event, surface))
+        } else if inputRefusal.keyUps.remove(event.keyCode) == nil {
+            super.keyUp(with: event)
+        }
     }
 
     override func flagsChanged(with event: NSEvent) {

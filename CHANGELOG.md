@@ -7,16 +7,50 @@ Each version's section is its GitHub release's notes.
 - Replace Mermaid.js with Pele 1.9.1 as the only Mermaid renderer for HTML tiles and note fences. Thanks to @afowic for the original note integration. Declared direction is preserved. HTML diagrams keep natural size with overflow scrolling and a labelled, keyboard-reachable Fit/100% control; scriptless exports remain visible and scrollable without removing authored content. Wide diagrams keep their full height when macOS shows scroll bars. Note images stay static, centred, and natural-size, shrinking only for note width and existing raster caps. Source admission, preparation and active deadlines, process termination, single infrastructure retry, cancellation, pool limits, and source fallback remain unchanged.
 - No Markdown, HTML, or board-data migration is needed. Pages that called the undocumented `window.mermaid` global must use `<pre class="mermaid">`, a fenced `mermaid` block inside `<pre>`, `pre > code.language-mermaid`, or `canvasKit.renderMermaid()`. Sampled `classDef` colours and stroke widths are supported. This does not promise full Mermaid.js syntax parity.
 
+- Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
+
+### Known limits
+
+- Pele accepts `%%{init}%%` directives but ignores `themeVariables`, so directive colours such as `primaryColor` are not applied. The app palette comes from CSS.
+- `zenuml` renders in neither the replaced Mermaid.js 11.17.2 bundle nor Pele 1.9.1.
+
+## 0.3.4
+
+easl 0.3.4 makes new HTML exports inert, so saving or opening a new export cannot run an agent's scripts outside the tile's network limits. This safety and reliability release also keeps agent errors visible until success, marks pending approvals blocked, and stops new-terminal typing from reaching the board or running only a command's tail.
+
+### easld, the app, and the omp extension
+
+Errors shown on the tile while an agent works need the 0.3.4 app and the new omp extension, and on remote boards also easld 0.3.4. The 0.3.3 app does not show agent errors on tiles.
+
+An old extension on a new easld keeps the idle-only error behavior. A new extension on easld 0.3.3 falls back to idle-only errors after one live report is rejected, resends without the new outcome fields, and preserves final answers. Reports spooled before that rejection are not converted, so a 0.3.3 easld may still show that failed turn as done.
+
+Blocked tool approvals work with easld 0.3.3. Terminal input and HTML export fixes run in the app and do not need a new easld. Updating the app does not replace the extension already loaded in a running omp session. Sessions load the new extension only after they restart.
+
+### Board format
+
+The board format is unchanged, still format 3.
+
+### Known limits
+
+- A remote terminal refuses typing in its first moments until you click it. Local terminals can also refuse early typing. Refused keys are not queued or replayed.
+- Approval detection depends on omp's `Allow tool:` dialog title.
+- An omp error raised before any request is sent, including the `-p` path, does not show on the tile.
+- CI's native tests now run on macOS 27. The runtime release checks ran on macOS 26.6.
+- Save as HTML and Open in Browser remain unavailable on remote boards.
+- Updating easl does not make older HTML export files safe. Export them again with 0.3.4.
+
+### Changes
+
+- After a terminal refuses a raw key because it is not ready, exited, or reattached, raw keys stay refused until you click the terminal. A new attachment or remote host ID cannot accept only the tail of that command. Nothing is replayed, and Copy and other Ghostty bindings remain available on exited terminals.
+- omp tiles now show `blocked` during real tool approval dialogs on omp 18.12.3 and 18.15.0, then resume when the dialog is answered or interrupted. The extension watches `ui.approve` as well as the older `ui.select` path.
+- After a live outcome-field rejection, the omp extension keeps v0.3.3 easld's idle-with-error behavior instead of showing a failed turn as done. It retries the report without those fields, preserves final answers, and checks outcome support again when easld reconnects. Reports saved before that rejection are not converted, so offline replay on v0.3.3 can still show a failed turn as done. Outcome-aware daemons keep the current behavior.
+- On outcome-aware hosts, failed omp model requests remain visible in `agent.list` and terminal lifecycle props while background work keeps the agent working. `error`, `errorCount`, and `errorSince` persist through starts, heartbeats, aborts, seeing the tile, and agent or daemon restarts while omp sends protocol 4 on every lifecycle report. Delayed spooled reports retain the first failed response's ending timestamp. A successful dispatched model response, including a tool request, clears the run. Normal stops are confirmed before the next assistant response or at `agent_end` to catch late diagnostics without affecting later responses. Outcomes remain separate from the debounced idle/final report. Errors are bounded to 500 Unicode characters. Pre-dispatch throws without an assistant response event are excluded; provider-layer errors emitted as assistant responses are covered. Each report independently selects outcome-aware behavior with protocol 4 or an explicit outcome. Legacy integrations keep idle-only errors that clear on their next working report, even when replacing omp in the same tile.
 - Pin macOS CI and release builds to Xcode 27.0 with Swift 6.4. Fail before building if the runner no longer provides the selected Xcode build or Swift minor version.
 - Before a remote terminal receives its host ID, Escape, paste, and drawing shortcuts now show the same visible refusal as typing. Close, undo, navigation, and window commands keep their existing routing, including configured Control app shortcuts. Option-only input is refused. Refused input is never queued or replayed.
 - Drain queued Ghostty exit messages after freeing a terminal attachment, before allocating its replacement. A stale exit can no longer mark a new local attachment exited and swallow its first key or Enter.
 - Report typed prompt delivery only after the full text and Enter are accepted by the same live attachment. When no target accepts the complete submission, the composer keeps its draft. A refused or partial submission warns that text may already be present. The app does not replay it automatically.
 - New remote terminals keep keyboard focus when the host assigns their final ID, without taking it back from the composer, another tile, or another window. Typing before that confirmation is visibly refused rather than queued.
 
-### Known limits
-
-- Pele accepts `%%{init}%%` directives but ignores `themeVariables`; the comparison's init-directive colour is lost. The app palette comes from CSS.
-- `zenuml` renders in neither the replaced Mermaid.js 11.17.2 bundle nor Pele 1.9.1.
 ### Security
 
 - HTML exports now block scripts and network resources with an export-only content security policy and remove active page content, including attribution-reporting URLs. Save as HTML and Open in Browser keep rendered diagrams, math, code, links, and inlined images without retaining page behaviour.

@@ -20,7 +20,7 @@ final class TileFrameView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
     private let authorLabel = NSTextField(labelWithString: "")
-    /// A terminal's last command when it failed or ran long (`exit 1 · 42 s`), right-aligned.
+    /// An unresolved agent error, else the terminal's last failed or long command, right-aligned.
     private let statusLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
     private let closeButton = TileCloseButton()
@@ -32,6 +32,8 @@ final class TileFrameView: NSView {
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
     private var lifecycleState: String?
+    private var lifecycleError: String?
+    private var commandStatus: (text: String?, failed: Bool, detail: String?) = (nil, false, nil)
 
     /// Called with the new canvas-space frame when a resize ends.
     var onFrameCommit: ((NSRect) -> Void)?
@@ -162,8 +164,10 @@ final class TileFrameView: NSView {
         func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
         switch object.type {
         case .terminal:
-            guard let state = props["lifecycle"]?["state"]?.string, CanvasBasics.lifecycle(state) != nil else { return nil }
-            return state == "blocked" ? nonEmpty(props["lifecycle"]?["message"]).map { "blocked: \($0)" } ?? state : state
+            let error = nonEmpty(props["lifecycle"]?["error"])
+            guard let state = props["lifecycle"]?["state"]?.string, CanvasBasics.lifecycle(state) != nil else { return error.map { "error: \($0)" } }
+            let detail = state == "blocked" ? nonEmpty(props["lifecycle"]?["message"]).map { "blocked: \($0)" } ?? state : state
+            return error.map { "\(detail), error: \($0)" } ?? detail
         case .code:
             var parts: [String] = []
             if let start = props["range"]?["start"]?.int {
@@ -271,6 +275,11 @@ final class TileFrameView: NSView {
         }
         accessibilityDetail = Self.accessibilityDetail(for: object)
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
+        let error = object.type == .terminal ? object.props["lifecycle"]?["error"]?.string : nil
+        if error != lifecycleError {
+            lifecycleError = error
+            updateStatus()
+        }
         badge.isHidden = object.type != .terminal
         if state != lifecycleState {
             lifecycleState = state
@@ -311,9 +320,16 @@ final class TileFrameView: NSView {
     /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
     /// secondary text, red only for a failure; `detail` is its tooltip.
     func setStatus(_ status: String?, failed: Bool, detail: String?) {
+        commandStatus = (status, failed, detail)
+        updateStatus()
+    }
+
+    private func updateStatus() {
+        let status = lifecycleError == nil ? commandStatus.text : "error"
         statusLabel.stringValue = status ?? ""
-        statusLabel.textColor = failed ? .systemRed : .secondaryLabelColor
-        statusLabel.toolTip = detail
+        statusLabel.textColor = lifecycleError != nil || commandStatus.failed ? .systemRed : .secondaryLabelColor
+        statusLabel.toolTip = lifecycleError ?? commandStatus.detail
+        statusLabel.setAccessibilityLabel(lifecycleError.map { "Agent error: \($0)" } ?? status)
         statusLabel.isHidden = status == nil
         layoutTitle()
     }

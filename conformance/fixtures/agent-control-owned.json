@@ -1674,6 +1674,8 @@
               "cwd": "<root>",
               "lifecycle": {
                 "error": "400 invalid_request_error: compaction block must be sent first",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "400 invalid_request_error: compaction block must be sent first",
                 "seen": false,
                 "state": "idle"
@@ -1696,6 +1698,8 @@
           "data": {
             "lifecycle": {
               "error": "400 invalid_request_error: compaction block must be sent first",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "400 invalid_request_error: compaction block must be sent first",
               "seen": false,
               "state": "idle"
@@ -1724,6 +1728,8 @@
             "kind": "omp",
             "lifecycle": {
               "error": "400 invalid_request_error: compaction block must be sent first",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "400 invalid_request_error: compaction block must be sent first",
               "seen": false,
               "state": "idle"
@@ -1780,6 +1786,8 @@
               "cwd": "<root>",
               "lifecycle": {
                 "error": "400 invalid_request_error: compaction block must be sent first",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "400 invalid_request_error: compaction block must be sent first",
                 "seen": false,
                 "state": "idle"
@@ -1802,6 +1810,8 @@
           "data": {
             "lifecycle": {
               "error": "400 invalid_request_error: compaction block must be sent first",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "400 invalid_request_error: compaction block must be sent first",
               "seen": false,
               "state": "idle"
@@ -1861,6 +1871,8 @@
               "cwd": "<root>",
               "lifecycle": {
                 "error": "400 invalid_request_error: compaction block must be sent first",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "400 invalid_request_error: compaction block must be sent first",
                 "seen": false,
                 "state": "idle"
@@ -1883,6 +1895,8 @@
           "data": {
             "lifecycle": {
               "error": "400 invalid_request_error: compaction block must be sent first",
+              "errorCount": 1,
+              "errorSince": "<time:iso>",
               "message": "400 invalid_request_error: compaction block must be sent first",
               "seen": false,
               "state": "idle"
@@ -1910,6 +1924,8 @@
               "kind": "omp",
               "lifecycle": {
                 "error": "400 invalid_request_error: compaction block must be sent first",
+                "errorCount": 1,
+                "errorSince": "<time:iso>",
                 "message": "400 invalid_request_error: compaction block must be sent first",
                 "seen": false,
                 "state": "idle"

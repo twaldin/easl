@@ -6,7 +6,7 @@
 // something (`until`), so the extension's coalescing, retry, record and reconcile checks run
 // without real waits.
 import { afterEach, beforeEach, expect, test, vi } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -80,6 +80,9 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
     preNoticeInbox: false,
     unsupportedNoticeAck: false,
     refusesInbox: undefined as { code: string; message: string } | undefined,
+    legacyReports: false,
+    outcomeReported: undefined as Promise<void> | undefined,
+    reports: [] as Params[],
     send(queued: AgentMessage): void {
       easl.queue.push(queued);
       for (let index = 0; index < waiters.length; index++) {
@@ -135,6 +138,17 @@ function fakeEasl(batchLimit = Number.POSITIVE_INFINITY) {
   async function handle(connection: number, socket: Wire, line: string): Promise<void> {
     const { id, method, params } = JSON.parse(line) as { id: string; method: string; params: Params };
     easl.calls.push({ connection, method, params });
+    if (method === "agent.report") {
+      if (params.turnOutcome) await easl.outcomeReported;
+      const unknown = ["turnEndedAt", "turnOutcome"].filter((key) => key in params);
+      if (easl.legacyReports && unknown.length > 0) {
+        return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "invalid_params", message: `unknown param${unknown.length === 1 ? "" : "s"} ${unknown.join(", ")}; agent.report takes tile (required), kind (required), state (required), message, seq, source, call, final, serial, error, protocol, draft, pid` } })}\n`);
+      }
+      if (easl.legacyReports && params.error !== undefined && params.state !== "idle") {
+        return void socket.write(`${JSON.stringify({ id, ok: false, error: { code: "invalid_params", message: "error comes only with state idle: what the turn that just ended stopped on" } })}\n`);
+      }
+      easl.reports.push(params);
+    }
     if (method === "agent.report_session") {
       await easl.sessionReported;
       // Another session took the tile: what the old one never took bounces.
@@ -313,6 +327,72 @@ function fakeOmp(easl: { socketPath: string }, entries: Params[] = [], sessionId
   cleanups.push(() => omp.emit("session_shutdown"));
   return omp;
 }
+
+for (const method of ["approve", "select"] as const) {
+  for (const rejected of [false, true]) {
+    test(`a tool ${method} dialog blocks until it ${rejected ? "rejects" : "answers"}`, async () => {
+      const easl = fakeEasl();
+      const omp = fakeOmp(easl);
+      const answer = Promise.withResolvers<unknown>();
+      const ui = Object.assign(omp.ctx.ui, { [method]: (_prompt: unknown) => answer.promise }) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      await omp.emit("session_start");
+      await omp.emit("agent_start");
+      await until(() => easl.reports.at(-1)?.state === "working");
+
+      const title = "Allow tool: bash\nCommand: echo approved";
+      const pending = ui[method](method === "approve" ? { full: title, compact: "Allow tool: bash" } : title);
+      const result = pending.catch((error) => error);
+      await until(() => easl.reports.at(-1)?.state === "blocked");
+      expect(easl.reports.at(-1)).toMatchObject({ state: "blocked", message: "approve bash?" });
+
+      const error = new Error("dialog interrupted");
+      if (rejected) answer.reject(error);
+      else answer.resolve("once");
+      expect(await result).toBe(rejected ? error : "once");
+      await until(() => easl.reports.at(-1)?.state === "working");
+      expect(easl.reports.at(-1)?.message).toBeUndefined();
+    });
+  }
+}
+
+test("answering one tool approval leaves another approval blocked", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const bash = Promise.withResolvers<unknown>();
+  const write = Promise.withResolvers<unknown>();
+  const ui = Object.assign(omp.ctx.ui, {
+    approve: (prompt: { full: string }) => prompt.full.endsWith("bash") ? bash.promise : write.promise,
+  });
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await until(() => easl.reports.at(-1)?.state === "working");
+  const first = ui.approve({ full: "Allow tool: bash" });
+  const second = ui.approve({ full: "Allow tool: write" });
+  await until(() => easl.reports.at(-1)?.state === "blocked");
+  bash.resolve("once");
+  await first;
+  await until(() => easl.reports.at(-1)?.message === "approve write?");
+  expect(easl.reports.at(-1)?.state).toBe("blocked");
+  write.resolve("deny");
+  await second;
+  await until(() => easl.reports.at(-1)?.state === "working");
+});
+
+test("a non-tool approval dialog does not block the agent", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  const answer = Promise.withResolvers<unknown>();
+  const ui = Object.assign(omp.ctx.ui, { approve: (_prompt: { full: string; compact: string }) => answer.promise });
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await until(() => easl.reports.at(-1)?.state === "working");
+  const pending = ui.approve({ full: "Change setting: theme", compact: "Change setting: theme" });
+  answer.resolve("once");
+  await pending;
+  await omp.emit("agent_end", { messages: [] });
+  await until(() => easl.reports.at(-1)?.state === "idle");
+  expect(easl.reports.some((report) => report.state === "blocked")).toBe(false);
+});
 
 test("a message is acked once omp records it, over the inbox connection; a restarted omp acks one offered again", async () => {
   const easl = fakeEasl();
@@ -1003,7 +1083,7 @@ test("every extension inbox request opts into protocol 3 and wakeOnly, including
   await until(() => omp.delivered.length === 1);
   await omp.record(omp.delivered[0].message);
   await until(() => easl.queue.length === 0 && easl.acks.length > 0);
-  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.protocol === 3));
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.protocol === 4));
   const inbox = easl.calls.filter((call) => call.method === "agent.inbox");
   expect(inbox.every((call) => call.params.protocol === 3 && call.params.wakeOnly === true)).toBe(true);
   expect(inbox.some((call) => call.params.waitMs > 0)).toBe(true);
@@ -1641,3 +1721,218 @@ for (const held of ["ordinary", "notice"] as const) {
     expect(easl.acks[1].started).toBe(true);
   });
 }
+
+test("a 0.3.3 daemon gets a failed turn's error with idle and keeps successful final answers", async () => {
+  const easl = fakeEasl();
+  easl.legacyReports = true;
+  const rejection = Promise.withResolvers<void>();
+  easl.outcomeReported = rejection.promise;
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
+  await omp.emit("message_end", { message: failed });
+  await omp.emit("agent_end", { messages: [failed] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && "turnOutcome" in call.params));
+  vi.advanceTimersByTime(250);
+  await turn();
+  rejection.resolve();
+  await until(() => easl.reports.at(-1)?.state === "idle");
+  expect(easl.reports.at(-1)).toMatchObject({ state: "idle", error: "provider refused" });
+  expect(easl.calls.filter((call) => call.method === "agent.report" && "turnOutcome" in call.params)).toHaveLength(1);
+  const probe = easl.calls.find((call) => call.method === "agent.report" && "turnOutcome" in call.params)!;
+  expect(easl.calls.filter((call) => call.method === "agent.report" && call.params.seq === probe.params.seq).map((call) => "turnOutcome" in call.params)).toEqual([true, false]);
+
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] };
+  await omp.emit("message_end", { message: stopped });
+  await omp.emit("agent_end", { messages: [stopped] });
+  await until(() => easl.reports.at(-1)?.final === "Recovered.");
+  expect(easl.reports.at(-1)).toMatchObject({ state: "idle", final: "Recovered." });
+  expect(easl.reports.at(-1)?.error).toBeUndefined();
+  expect(easl.calls.filter((call) => call.method === "agent.report" && "turnOutcome" in call.params)).toHaveLength(1);
+
+  easl.stop();
+  const upgraded = fakeEasl();
+  renameSync(upgraded.socketPath, easl.socketPath);
+  await until(() => upgraded.reports.some((params) => params.state === "idle"));
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: failed });
+  await omp.emit("agent_end", { messages: [failed] });
+  await until(() => upgraded.reports.some((params) => params.turnOutcome === "error"));
+  expect(upgraded.reports.find((params) => params.turnOutcome === "error")).toMatchObject({ protocol: 4, error: "provider refused" });
+});
+
+for (const legacy of [false, true]) {
+  test(`shutdown cancels lifecycle reports waiting on a ${legacy ? "legacy" : "modern"} outcome reply`, async () => {
+    const easl = fakeEasl();
+    easl.legacyReports = legacy;
+    const response = Promise.withResolvers<void>();
+    easl.outcomeReported = response.promise;
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
+    await omp.emit("message_end", { message: failed });
+    await omp.emit("agent_end", { messages: [failed] });
+    await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+    vi.advanceTimersByTime(250);
+    await turn();
+    await omp.emit("session_shutdown");
+    await until(() => easl.calls.some((call) => call.method === "agent.release"));
+    const released = easl.calls.findIndex((call) => call.method === "agent.release");
+    response.resolve();
+    await settle(500);
+    expect(easl.calls.slice(released + 1).filter((call) => call.method === "agent.report")).toEqual([]);
+  });
+}
+
+for (const legacy of [false, true]) {
+  test(`session switches preserve pending ${legacy ? "legacy errors" : "modern outcomes"}`, async () => {
+    const easl = fakeEasl();
+    easl.legacyReports = legacy;
+    const response = Promise.withResolvers<void>();
+    easl.outcomeReported = response.promise;
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    await omp.emit("message_end", { message: { role: "assistant", stopReason: "toolUse" } });
+    await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+    const failed = { role: "assistant", stopReason: "error", errorMessage: "provider refused" };
+    await omp.emit("message_end", { message: failed });
+    await omp.emit("agent_end", { messages: [failed] });
+    omp.state.sessionId = "ses_2";
+    await omp.emit("session_switch");
+    response.resolve();
+    await until(() => easl.reports.at(-1)?.state === "idle");
+    if (legacy) expect(easl.reports.at(-1)).toMatchObject({ state: "idle", error: "provider refused" });
+    else expect(easl.reports.filter((params) => params.turnOutcome).map((params) => params.turnOutcome)).toEqual(["success", "error"]);
+  });
+}
+
+test("a hangup preserves a settled final waiting for its outcome reply", async () => {
+  const easl = fakeEasl();
+  const response = Promise.withResolvers<void>();
+  easl.outcomeReported = response.promise;
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Keep this answer." }] };
+  await omp.emit("message_end", { message: stopped });
+  await omp.emit("agent_end", { messages: [stopped] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome));
+  vi.advanceTimersByTime(250);
+  await turn();
+  process.emit("SIGHUP");
+  await omp.emit("session_shutdown");
+  response.resolve();
+  await settle(500);
+  expect(easl.reports.at(-1)).toMatchObject({ state: "idle", final: "Keep this answer." });
+  expect(easl.calls.filter((call) => call.method === "agent.release")).toEqual([]);
+});
+
+test("a failed response remains reportable while background work keeps the run working, until a successful response", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const failed = { role: "assistant", stopReason: "error", errorMessage: "compaction_block_misplaced" };
+  const endedAt = new Date().toISOString();
+  await omp.emit("message_end", { message: failed });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [failed] });
+  const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+  await until(() => outcomes().length === 1);
+  expect(outcomes()[0]).toMatchObject({ state: "working", turnOutcome: "error", error: "compaction_block_misplaced", turnEndedAt: endedAt, protocol: 4 });
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "aborted" } });
+  await omp.emit("agent_end", { willContinue: true, messages: [] });
+  await until(() => outcomes().length === 2);
+  expect(outcomes()[1]).toMatchObject({ turnOutcome: "aborted" });
+  expect(outcomes()[1].error).toBeUndefined();
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", name: "bash" }] } });
+  await until(() => outcomes().length === 3);
+  expect(outcomes()[2]).toMatchObject({ state: "working", turnOutcome: "success" });
+  expect(outcomes()[2].error).toBeUndefined();
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] } });
+  await omp.emit("agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "Recovered." }] }] });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.final === "Recovered."));
+  expect(outcomes().map((params) => params.turnOutcome)).toEqual(["error", "aborted", "success", "success"]);
+  expect(easl.calls.findLast((call) => call.method === "agent.report")?.params).toMatchObject({ state: "idle", final: "Recovered." });
+});
+
+test("a stop diagnosed as an error at agent_end never reports a premature success", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [] };
+  await omp.emit("message_end", { message: stopped });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [{ ...stopped, errorMessage: "Assistant returned an empty stop after retry cap" }] });
+  const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+  await until(() => outcomes().length >= 1);
+  expect(outcomes()).toEqual([expect.objectContaining({ state: "working", turnOutcome: "error", error: "Assistant returned an empty stop after retry cap" })]);
+  const recovered = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Recovered." }] };
+  await omp.emit("message_end", { message: recovered });
+  await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [recovered] });
+  await until(() => outcomes().length === 2);
+  expect(outcomes()[1]).toMatchObject({ state: "working", turnOutcome: "success" });
+});
+
+for (const [stopReason, outcome, errorMessage] of [
+  ["error", "error", "provider refused"],
+  ["length", "error", undefined],
+  ["aborted", "aborted", "Interrupted by user"],
+] as const) {
+  test(`a later ${stopReason} response cannot reuse an earlier stop`, async () => {
+    const easl = fakeEasl();
+    const omp = fakeOmp(easl);
+    await omp.emit("session_start");
+    await omp.emit("agent_start");
+    const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "First answer." }] };
+    const endedAt = new Date().toISOString();
+    await omp.emit("message_end", { message: stopped });
+    const resumed = { role: "assistant", stopReason, errorMessage };
+    await omp.emit("message_end", { message: resumed });
+    await omp.emit("agent_end", { willContinue: true, awaitingAsyncWork: true, messages: [stopped, resumed] });
+    const outcomes = () => easl.calls.filter((call) => call.method === "agent.report" && call.params.turnOutcome).map((call) => call.params);
+    await until(() => outcomes().length >= 2);
+    expect(outcomes().map((params) => params.turnOutcome)).toEqual(["success", outcome]);
+    expect(outcomes()[0]).toMatchObject({ state: "working", turnEndedAt: endedAt });
+    if (outcome === "aborted") expect(outcomes()[1].error).toBeUndefined();
+    else expect(outcomes()[1].error).toBe(stopReason === "length" ? "stopped at the output token limit" : errorMessage);
+  });
+}
+
+test("a normal stop reports its outcome separately from the debounced idle final", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  const stopped = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Final answer." }] };
+  await omp.emit("message_end", { message: stopped });
+  const finishedAt = Date.now();
+  await omp.emit("agent_end", { messages: [stopped] });
+  const reports = () => easl.calls.filter((call) => call.method === "agent.report").map((call) => call.params);
+  await until(() => reports().some((params) => params.turnOutcome === "success"));
+  expect(reports().find((params) => params.turnOutcome === "success")).toMatchObject({ state: "working" });
+  vi.advanceTimersByTime(249 - (Date.now() - finishedAt));
+  await turn();
+  expect(reports().filter((params) => params.state === "idle")).toEqual([]);
+  vi.advanceTimersByTime(1);
+  await until(() => reports().some((params) => params.state === "idle"));
+  const settled = reports().find((params) => params.state === "idle")!;
+  expect(settled.final).toBe("Final answer.");
+  expect(settled.turnOutcome).toBeUndefined();
+  expect(settled.turnEndedAt).toBeUndefined();
+});
+
+test("response errors omit request dumps and cap Unicode diagnostics without truncating surrogate pairs", async () => {
+  const easl = fakeEasl();
+  const omp = fakeOmp(easl);
+  await omp.emit("session_start");
+  await omp.emit("agent_start");
+  await omp.emit("message_end", { message: { role: "assistant", stopReason: "error", errorMessage: "😀".repeat(501) + "\nraw-http-request=/private/request.json" } });
+  await until(() => easl.calls.some((call) => call.method === "agent.report" && call.params.turnOutcome === "error"));
+  const report = easl.calls.find((call) => call.method === "agent.report" && call.params.turnOutcome === "error")!;
+  expect(report.params.error).toBe("😀".repeat(499) + "…");
+});
