@@ -7,11 +7,13 @@ import WebKit
 @MainActor
 private final class Probe: NSObject, WKScriptMessageHandler {
     var events: [String] = []
+    var onEntered: (() -> Void)?
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if let event = message.body as? String {
             events.append(event)
             print("probe=\(event)")
+            if event == "entered" { onEntered?() }
         }
     }
 }
@@ -65,6 +67,8 @@ private enum BrowserWait {
         let app = NSApplication.shared
         _ = app.setActivationPolicy(.accessory)
         app.finishLaunching()
+        let armer = URLSession(configuration: .ephemeral)
+        defer { armer.invalidateAndCancel() }
         let root = URL(fileURLWithPath: home).appendingPathComponent("board")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = Board(id: "browser-wait", root: root)
@@ -91,6 +95,9 @@ private enum BrowserWait {
             }
             _ = try await browser.perform(.wait(.loadState(.complete), timeoutMs: 5000), driver: nil)
             let probe = Probe()
+            probe.onEntered = {
+                armer.dataTask(with: URL(string: origin + "/armed/" + name)!).resume()
+            }
             let webView = browser.ensureWebView()
             webView.configuration.userContentController.add(probe, contentWorld: BrowserScripts.world, name: "waitProbe")
             _ = try await webView.callAsyncJavaScript("""
@@ -98,11 +105,10 @@ private enum BrowserWait {
                 const waitFor = window.__canvasCmux.waitFor;
                 window.__canvasCmux.waitFor = (selector, timeout) => {
                     post('entered');
-                    fetch('/armed/' + name);
                     return waitFor(selector, timeout).finally(() => post('settled'));
                 };
                 addEventListener('pagehide', () => post('pagehide'), { once: true });
-                """, arguments: ["name": name], in: nil, contentWorld: BrowserScripts.world)
+                """, arguments: [:], in: nil, contentWorld: BrowserScripts.world)
             _ = try await browser.perform(.fill(selector: "#username", text: "dummy@example.invalid"), driver: nil)
             _ = try await browser.perform(.fill(selector: "#password", text: "dummy-only"), driver: nil)
             _ = try await browser.perform(.element(.click, selector: "#signin"), driver: nil)
