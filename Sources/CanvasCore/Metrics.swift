@@ -225,7 +225,7 @@ public final class Metrics: @unchecked Sendable {
         scheduleStallSampling()
     }
 
-    private func scheduleStallSampling() {
+    private func scheduleStallSampling(rearm: Bool = false) {
         guard let stallSampler else { return }
         let deadline: Double?
         if let turnStart, let pending = stallPending,
@@ -234,7 +234,8 @@ public final class Metrics: @unchecked Sendable {
         } else {
             deadline = stallPending == nil ? stallPolicy.deadline(turnStart: turnStart) : nil
         }
-        guard deadline != stallDeadline else { return }
+        if !rearm, let deadline, let armed = stallDeadline, deadline >= armed { return }
+        guard rearm || deadline != stallDeadline else { return }
         stallDeadline = deadline
         stallSampler.schedule(at: deadline)
     }
@@ -242,7 +243,7 @@ public final class Metrics: @unchecked Sendable {
     func claimStall(at now: Double, sampler: StallSampler) -> Double? {
         lock.lock()
         defer {
-            scheduleStallSampling()
+            scheduleStallSampling(rearm: true)
             lock.unlock()
         }
         guard stallPending == nil,
@@ -258,7 +259,7 @@ public final class Metrics: @unchecked Sendable {
     func prepareStall(_ turn: Double, at now: Double) -> StallRetention {
         lock.lock()
         defer {
-            scheduleStallSampling()
+            scheduleStallSampling(rearm: true)
             lock.unlock()
         }
         guard let pending = stallPending, pending.turn == turn else { return .discard }

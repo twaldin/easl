@@ -112,8 +112,11 @@ final class StallSampler: @unchecked Sendable {
 
     func tick() {
         guard let metrics else { return }
-        if pending != nil { finishPending() }
-        guard pending == nil, let turn = metrics.claimStall(at: now(), sampler: self) else { return }
+        if pending != nil {
+            finishPending()
+            return
+        }
+        guard let turn = metrics.claimStall(at: now(), sampler: self) else { return }
         var record = EaslStallRecord()
         if sample == nil {
             guard let capture, easl_stall_capture(capture, turn.bitPattern, &record) else {
