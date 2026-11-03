@@ -12,18 +12,28 @@ func stallBusyLoop(milliseconds: Int) {
     }
 }
 
+@inline(never)
+func stallBlockedWait(milliseconds: Int) {
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(milliseconds)) {
+        semaphore.signal()
+    }
+    semaphore.wait()
+}
+
 @MainActor
 private enum StallSamplerRegression {
     private static func rejectsRetiredTurns() {
         let capture = easl_stall_create()!
         defer { easl_stall_destroy(capture) }
         easl_stall_publish(capture, 2)
-        let result = OSAllocatedUnfairLock(initialState: (capture: capture, accepted: true, error: Int32(0)))
+        let address = UInt(bitPattern: capture)
+        let result = OSAllocatedUnfairLock(initialState: (accepted: true, error: Int32(0)))
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .userInitiated).async {
             result.withLock { state in
                 var record = EaslStallRecord()
-                state.accepted = easl_stall_capture(state.capture, 1, &record)
+                state.accepted = easl_stall_capture(OpaquePointer(bitPattern: address), 1, &record)
                 state.error = record.error
             }
             done.signal()
@@ -52,11 +62,7 @@ private enum StallSamplerRegression {
             if kind.hasSuffix("busy") {
                 stallBusyLoop(milliseconds: milliseconds)
             } else {
-                let semaphore = DispatchSemaphore(value: 0)
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(milliseconds)) {
-                    semaphore.signal()
-                }
-                semaphore.wait()
+                stallBlockedWait(milliseconds: milliseconds)
             }
         }
         if kind.hasPrefix("late-") {

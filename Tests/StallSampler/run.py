@@ -51,6 +51,9 @@ def validate(home, kind):
     expected = r"stallBusyLoop" if kind.endswith("busy") else r"(?:semaphore_wait(?:_trap)?|dispatch_semaphore_wait|DispatchSemaphore\.wait)"
     if not re.search(expected, frames):
         raise ValueError(f"main-thread stack does not contain actual {kind} work; idle-only stacks are not sufficient")
+    walked = "\n".join(line for line in frames.splitlines() if "[LR candidate;" not in line)
+    if kind.endswith("blocked") and "stallBlockedWait" not in walked:
+        raise ValueError("main-thread walk must identify the function blocked in the wait")
     state = "on-CPU" if kind.endswith("busy") else "blocked in a wait"
     if f"State: {state}" not in text:
         raise ValueError(f"saved record does not classify the main thread as {state}")

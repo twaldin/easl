@@ -206,7 +206,10 @@ bool easl_stall_capture(EaslStallCapture *capture, uint64_t expected, EaslStallR
         goto resume_main;
     }
     out->frames[out->frame_count++] = pc;
-    if (lr && lr != pc) out->frames[out->frame_count++] = lr;
+    if (lr && lr != pc) {
+        out->frames[out->frame_count++] = lr;
+        out->has_link_register = true;
+    }
     accepted = true;
     if (sp < capture->stack_low || sp >= capture->stack_high) {
         out->walk_status = EASL_STALL_WALK_STACK_RANGE;

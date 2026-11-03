@@ -118,10 +118,9 @@ final class StallSampler: @unchecked Sendable {
 
     private func write(_ record: EaslStallRecord, into file: URL, turn: Double) -> Bool {
         let count = Int(record.frame_count)
-        let addresses = withUnsafeBytes(of: record.frames) { bytes in
-            bytes.bindMemory(to: UInt.self).prefix(count).map { UnsafeMutableRawPointer(bitPattern: $0) }
-        }
-        guard let symbols = addresses.withUnsafeBufferPointer({ backtrace_symbols($0.baseAddress, Int32(count)) }) else { return false }
+        guard let symbols = withUnsafeBytes(of: record.frames, { bytes in
+            backtrace_symbols(bytes.bindMemory(to: UnsafeMutableRawPointer?.self).baseAddress, Int32(count))
+        }) else { return false }
         defer { free(symbols) }
         let state = Self.state(runState: record.run_state, suspendCount: record.suspend_count, cpuNs: record.cpu_ns)
         let latency = (Double(record.captured_ns) / 1e9 - turn) * 1000
@@ -136,7 +135,9 @@ final class StallSampler: @unchecked Sendable {
 
         """
         for index in 0..<count {
-            text += String(cString: symbols[index]!) + "\n"
+            text += String(cString: symbols[index]!)
+            if record.has_link_register && index == 1 { text += " [LR candidate; may be stale]" }
+            text += "\n"
         }
         do {
             try text.write(to: file, atomically: true, encoding: .utf8)

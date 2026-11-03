@@ -45,6 +45,7 @@ typedef struct {
     int suspend_count;
     int error;
     uint32_t frame_count;
+    bool has_link_register;
     uintptr_t frames[EASL_STALL_FRAME_CAPACITY];
     uint64_t suspend_ns;
     int walk_status;
