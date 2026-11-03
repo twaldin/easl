@@ -70,7 +70,7 @@ final class BrowserTile: NSView, TileContent {
     /// until then the current document's ready state says nothing about the destination.
     var uncommittedNavigations: [WKNavigation] = []
     /// Automation waits parked until the page changes (navigation, DOM activity) or time runs out.
-    private var changeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var changeWaiters: [UUID: (continuation: CheckedContinuation<Void, Never>, timer: Timer)] = [:]
     var scriptCalls: [UUID: ScriptCall] = [:]
 
     /// Who the page's URL changes and the tiles it opens are credited to.
@@ -573,8 +573,7 @@ final class BrowserTile: NSView, TileContent {
     /// (another Space or a covered window hides the page too), and while the tile can't show the
     /// page (offscreen, its window minimized or in a background tab, the app hidden) the web view
     /// waits in `WebStage`. `drivenIdle` after the last command the normal hide/release policy
-    /// resumes. Document commands supply their deadline so the initial reveal belongs to the
-    /// committed document, not WebKit's placeholder.
+    /// resumes.
     @discardableResult
     func markDriven(deadline: Date? = nil) async -> Result<Void, Error> {
         let webView = ensureWebView()
@@ -621,7 +620,6 @@ final class BrowserTile: NSView, TileContent {
         }))
     }
 
-    /// Initial command reveal waits for its document within the command's own deadline.
     @discardableResult
     private func presented(_ webView: WKWebView, within limit: TimeInterval, deadline: Date? = nil) async -> Result<Void, Error> {
         let initialDocument = commitsSinceRelease == 0
@@ -881,17 +879,21 @@ final class BrowserTile: NSView, TileContent {
     func signalChange() {
         let waiters = changeWaiters.values
         changeWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        for waiter in waiters {
+            waiter.timer.invalidate()
+            waiter.continuation.resume()
+        }
     }
 
     /// Parks until the page changes or `deadline` passes.
     func nextChange(before deadline: Date) async {
         let id = UUID()
         await withCheckedContinuation { continuation in
-            changeWaiters[id] = continuation
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline.timeIntervalSinceNow)) { [weak self] in
-                MainActor.assumeIsolated { self?.changeWaiters.removeValue(forKey: id)?.resume() }
+            let timer = Timer(timeInterval: max(0, deadline.timeIntervalSinceNow), repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.changeWaiters.removeValue(forKey: id)?.continuation.resume() }
             }
+            changeWaiters[id] = (continuation, timer)
+            RunLoop.main.add(timer, forMode: .common)
         }
     }
 

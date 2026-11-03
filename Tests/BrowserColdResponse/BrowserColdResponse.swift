@@ -28,11 +28,14 @@ private enum BrowserColdResponse {
     @MainActor
     private final class Command {
         let started = ProcessInfo.processInfo.systemUptime
+        let startedWall = Date()
         var reply: Reply?
         var onReply: ((Reply) -> Void)?
 
         init(_ browser: BrowserTile, _ command: CmuxBrowserCommand, name: String) {
             Task { @MainActor in
+                let entered = ProcessInfo.processInfo.systemUptime
+                log("entered case=\(name) queue_elapsed=\(entered - started) uptime=\(entered) wall=\(Date().timeIntervalSince1970)")
                 let code: String
                 let value: JSONValue?
                 do {
@@ -48,7 +51,7 @@ private enum BrowserColdResponse {
                 let result = Reply(code: code, value: value,
                                    elapsed: ProcessInfo.processInfo.systemUptime - started)
                 reply = result
-                log("reply case=\(name) code=\(code) elapsed=\(result.elapsed) value=\(String(describing: value))")
+                log("reply case=\(name) code=\(code) elapsed=\(result.elapsed) wall_elapsed=\(Date().timeIntervalSince(startedWall)) value=\(String(describing: value))")
                 onReply?(result)
                 onReply = nil
             }
