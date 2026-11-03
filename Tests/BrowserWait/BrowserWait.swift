@@ -86,8 +86,11 @@ private enum BrowserWait {
             window.close()
         }
 
-        for present in [true, false] {
-            let name = present ? "present" : "absent"
+        for (name, present, destinationOrigin) in [
+            ("present", true, origin),
+            ("absent", false, origin),
+            ("cross", true, origin.replacingOccurrences(of: "127.0.0.1", with: "localhost"))
+        ] {
             let object = board.create(type: .browser, props: .object(["url": .string(origin + "/" + name)]),
                                       frame: Frame(x: 0, y: 0, w: 850, h: 550))
             guard let browser = canvas.tiles[object.id]?.content as? BrowserTile else {
@@ -120,7 +123,7 @@ private enum BrowserWait {
             require(reply.elapsed < .milliseconds(present ? 1500 : 2500), "\(name): wait meets its own deadline")
             if !present { require(reply.elapsed >= .milliseconds(1900), "a missing selector must not time out early") }
             let value = try await browser.perform(.eval(script: "({url: location.href, authenticated: !!document.querySelector('#authenticated')})"), driver: nil)
-            require(value["value"]?["url"]?.string == origin + "/account/" + name, "the destination loaded")
+            require(value["value"]?["url"]?.string == destinationOrigin + "/account/" + name, "the destination loaded")
             require(value["value"]?["authenticated"]?.bool == present, "the destination has the requested selector only in the positive case")
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "waitProbe", contentWorld: BrowserScripts.world)
             try board.delete(object.id)
@@ -129,6 +132,9 @@ private enum BrowserWait {
                                   frame: Frame(x: 0, y: 0, w: 850, h: 550))
         guard let browser = canvas.tiles[object.id]?.content as? BrowserTile else { fatalError("browser tile missing") }
         _ = try await browser.perform(.wait(.loadState(.complete), timeoutMs: 5000), driver: nil)
+        let undefined = try await browser.perform(.eval(script: "void 0"), driver: nil)
+        print("case=undefined value=\(undefined)")
+        require(undefined["value"] == .null, "JavaScript undefined remains JSON null")
         for (name, command, expected) in [
             ("zero", CmuxBrowserCommand.wait(.selector("#authenticated"), timeoutMs: 0), "success"),
             ("invalid", .wait(.selector("["), timeoutMs: 2000), "invalid_params"),
@@ -139,11 +145,18 @@ private enum BrowserWait {
             require(reply.code == expected, "\(name): expected \(expected), got \(reply.code)")
             require(reply.elapsed < .milliseconds(1500), "\(name): prompt answer")
         }
-        for condition in [CmuxWaitCondition.urlContains("/account/present"), .loadState(.interactive), .loadState(.complete)] {
-            _ = try await browser.perform(.navigate(url: origin + "/account/present"), driver: nil)
+        for (condition, suffix) in [
+            (CmuxWaitCondition.urlContains("?wait=url"), "?wait=url"),
+            (.loadState(.interactive), "?wait=interactive"),
+            (.loadState(.complete), "?wait=complete")
+        ] {
+            let destination = origin + "/account/present" + suffix
+            _ = try await browser.perform(.navigate(url: destination), driver: nil)
             let reply = await bounded(browser, command: .wait(condition, timeoutMs: 2000), timeout: 2000)
             print("case=navigation-\(condition) code=\(reply.code) elapsed=\(reply.elapsed)")
             require(reply.code == "success" && reply.elapsed < .milliseconds(1500), "URL and load waits find the destination")
+            let location = try await browser.perform(.urlGet, driver: nil)
+            require(location["url"]?.string == destination, "the wait reaches a different destination URL")
         }
         let interrupted = await bounded(browser, command: .eval(script: "new Promise(() => { setTimeout(() => location.href = '/account/present', 20); })"), timeout: 2000)
         print("case=eval-navigation code=\(interrupted.code) elapsed=\(interrupted.elapsed)")

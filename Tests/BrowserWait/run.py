@@ -47,7 +47,7 @@ def main():
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-Xlinker", "-e", "-Xlinker", "_EaslBrowserWaitMain", "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    gates = {name: threading.Event() for name in ("present", "absent")}
+    gates = {name: threading.Event() for name in ("present", "absent", "cross")}
     requests = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -74,8 +74,8 @@ def main():
                 gates[name].set()
                 return self.respond(200, b"armed")
             if self.path.startswith("/account/"):
-                name = self.path.rsplit("/", 1)[1]
-                marker = ' id="authenticated"' if name == "present" else ""
+                name = urllib.parse.urlsplit(self.path).path.rsplit("/", 1)[1]
+                marker = ' id="authenticated"' if name != "absent" else ""
                 return self.respond(200, ('<!doctype html><h1' + marker + '>Dummy account</h1>').encode())
             name = self.path.strip("/")
             if name not in gates:
@@ -94,7 +94,10 @@ def main():
                 return self.respond(403, b"invalid dummy credentials")
             if not gates[name].wait(5):
                 return self.respond(504, b"old document never entered selector wait")
-            self.respond(303, b"", Location="/account/" + name)
+            destination = "/account/" + name
+            if name == "cross":
+                destination = f"http://localhost:{self.server.server_port}" + destination
+            self.respond(303, b"", Location=destination)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)

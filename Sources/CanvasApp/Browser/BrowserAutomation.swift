@@ -132,9 +132,7 @@ extension BrowserTile {
             let ready: String?
             do {
                 ready = try await call("return document.readyState", [:], in: webView, deadline: deadline).string
-            } catch ScriptError.documentChanged {
-                throw ScriptError.documentChanged
-            } catch {
+            } catch is CmuxError {
                 return false
             }
             return state == .complete ? ready == "complete" : ready == "interactive" || ready == "complete"
@@ -143,11 +141,7 @@ extension BrowserTile {
             do {
                 return try await call("return await window.__canvasCmux.waitFor(selector, timeout)",
                                       ["selector": selector, "timeout": remaining], in: webView, deadline: deadline) == .bool(true)
-            } catch ScriptError.documentChanged {
-                throw ScriptError.documentChanged
-            } catch let error as CmuxError where error.code == "invalid_params" {
-                throw error
-            } catch {
+            } catch let error as CmuxError where error.code != "invalid_params" {
                 return false
             }
         }
@@ -267,6 +261,8 @@ extension BrowserTile {
         case let date as Date: return .number(date.timeIntervalSince1970 * 1000)
         case let array as [Any]: return .array(array.map { json($0) })
         case let object as [String: Any]: return .object(object.mapValues { json($0) })
+        // WebKit's callback overlay boxes undefined as Optional<Any>.none inside Any.
+        case let value? where (value as AnyObject) is NSNull: return .null
         default: return .string(String(describing: value!))
         }
     }
