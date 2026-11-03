@@ -189,6 +189,7 @@ extension BrowserTile {
     struct ScriptCall {
         let continuation: CheckedContinuation<JSONValue, Error>
         let timer: Timer
+        let recheckOnCommit: Bool
     }
 
     private func javascript(deadline: Date? = nil, start: (@escaping @MainActor (Result<Any?, Error>) -> Void) -> Void) async throws -> JSONValue {
@@ -202,7 +203,7 @@ extension BrowserTile {
                         self?.finishJavaScript(id, with: .failure(CmuxError("timeout", "timed out waiting for page JavaScript")))
                     }
                 }
-                scriptCalls[id] = ScriptCall(continuation: continuation, timer: timer)
+                scriptCalls[id] = ScriptCall(continuation: continuation, timer: timer, recheckOnCommit: deadline != nil)
                 RunLoop.main.add(timer, forMode: .common)
                 start { [weak self] result in
                     switch result {
@@ -212,7 +213,7 @@ extension BrowserTile {
                 }
             }
         } catch ScriptError.documentChanged where deadline == nil {
-            throw CmuxError("js_error", "the page navigated before JavaScript returned")
+            throw CmuxError("js_error", "the page became unavailable before JavaScript returned")
         }
     }
 
@@ -220,6 +221,13 @@ extension BrowserTile {
         guard let call = scriptCalls.removeValue(forKey: id) else { return }
         call.timer.invalidate()
         call.continuation.resume(with: result)
+    }
+
+    func invalidateJavaScriptWaits() {
+        let ids = scriptCalls.compactMap { $0.value.recheckOnCommit ? $0.key : nil }
+        for id in ids {
+            finishJavaScript(id, with: .failure(ScriptError.documentChanged))
+        }
     }
 
     func invalidateJavaScript() {

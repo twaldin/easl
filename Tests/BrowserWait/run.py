@@ -108,7 +108,7 @@ def main():
                            "XDG_CONFIG_HOME": temporary, "EASL_NO_ACTIVATE": "1", "EASL_BROWSER_PROFILE": "own",
                            "BROWSER_WAIT_ORIGIN": f"http://127.0.0.1:{server.server_port}"}
             environment.pop("EASL_ROOT", None)
-            result = subprocess.run([str(executable)], cwd=root, env=environment, timeout=60)
+            result = subprocess.run([str(executable)], cwd=root, env=environment, timeout=90)
             for name in gates:
                 assert ("POST", "/login/" + name, 303) in requests, requests
                 assert ("GET", "/account/" + name, 200) in requests, requests

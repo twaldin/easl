@@ -158,9 +158,15 @@ private enum BrowserWait {
             let location = try await browser.perform(.urlGet, driver: nil)
             require(location["url"]?.string == destination, "the wait reaches a different destination URL")
         }
-        let interrupted = await bounded(browser, command: .eval(script: "new Promise(() => { setTimeout(() => location.href = '/account/present', 20); })"), timeout: 2000)
-        print("case=eval-navigation code=\(interrupted.code) elapsed=\(interrupted.elapsed)")
-        require(interrupted.code == "js_error" && interrupted.elapsed < .milliseconds(1500), "navigation answers an abandoned eval without replaying it")
+        let interrupted = await bounded(browser, command: .eval(script: "window.browserWaitNavigation = new Promise(() => { setTimeout(() => location.href = '/account/present?eval=navigation', 20); })"), timeout: 30000)
+        print("case=eval-navigation code=\(interrupted.code) elapsed=\(interrupted.elapsed) bound_ms=30000")
+        require(interrupted.code == "js_error" || interrupted.code == "timeout", "an abandoned eval completes through WebKit or its native deadline")
+        require(interrupted.elapsed < .milliseconds(30500), "navigation cannot strand an eval beyond its 30-second native bound")
+        if interrupted.code == "timeout" {
+            require(interrupted.elapsed >= .milliseconds(29900), "commit does not shorten a command's native deadline")
+        }
+        let interruptedLocation = try await browser.perform(.urlGet, driver: nil)
+        require(interruptedLocation["url"]?.string == origin + "/account/present?eval=navigation", "the eval really replaced its document")
         _ = try await browser.perform(.wait(.loadState(.complete), timeoutMs: 5000), driver: nil)
         let unresolved = await bounded(browser, command: .eval(script: "window.browserWaitPromise = new Promise(() => {})"), timeout: 30000)
         print("case=eval-unresolved code=\(unresolved.code) elapsed=\(unresolved.elapsed)")

@@ -1362,7 +1362,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        invalidateJavaScript()
+        invalidateJavaScriptWaits()
         uncommittedNavigations.removeAll { $0 === navigation }
         loadedFileVersion = requestedFileVersion
         clearLoadFailure()

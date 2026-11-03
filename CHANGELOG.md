@@ -4,7 +4,7 @@ Each version's section is its GitHub release's notes.
 
 ## Unreleased
 
-- Browser automation waits now answer within their timeout across document replacement. JavaScript commands have a native deadline and return an error rather than hanging when navigation abandons their result.
+- Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands keep a 30-second native deadline and their own callback across navigation, so a cold page's first command is not falsely cancelled at commit. Commands are never replayed.
 - Clear Browsing Data now clears every saved browser profile of this app on this Mac, including profiles used only on remote or closed boards. The sheet names known profiles and warns that extensions' page storage is also cleared, as before.
 - Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
 - Capture main-thread stacks once near 150 ms and retain records only for turns reaching 250 ms, including late window-commit work. Disarm sampling while the main loop sleeps. A Mach timer port arms and cancels deadlines without per-turn libdispatch timer configuration. Records report CPU or wait state and keep their metrics linkage, five-minute rate limit, and twenty-file retention; discarded short-turn captures do not spend the interval.

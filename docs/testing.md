@@ -339,17 +339,25 @@ Run `scripts/dev.sh stop` when the test is done, not at the end of the session: 
 ### Browser automation deadlines
 
 ```sh
-	swift build --build-system native -j 2 --product Easl
-	python3 Tests/BrowserWait/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+swift build --build-system native -j 2 --product Easl
+python3 Tests/BrowserWait/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+python3 Tests/BrowserColdCommands/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 ```
 
 The native regression links the production app and serves a dummy sign-in form on loopback.
 It holds each POST's 303 until the old document enters its selector wait, then requires success
 on a matching destination or an on-time timeout on a destination without the selector.
 It also checks zero-timeout and invalid selectors, URL and load-state waits, an eval interrupted
-by navigation, and the native deadline for a promise that never resolves.
-The runner supplies a disposable home and never builds the app or uses a real site.
+by navigation, and the native deadline for a promise that never resolves. Each eval keeps its
+30-second command bound; the runner allows 90 seconds for the two sequential deadline cases.
 
+The cold-command regression starts 20 new tiles each for eval, click, and wait, plus one for
+each other page-JavaScript command. Eval and wait overlap live initial admission; actions and
+snapshot first create an offscreen page through the normal driven presentation path.
+No preparatory browser command runs. The test checks returned values and DOM effects, including
+exactly one click, and records raw monotonic timestamps in `results.json` under `--output`
+(default: the build directory's `browser-cold-commands-evidence`).
+Both runners supply disposable homes and never build the app or use a real site.
 
 ### Mixed drawing and tile stacking
 
