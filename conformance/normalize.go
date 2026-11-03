@@ -72,7 +72,7 @@ var (
 // two in step), and the id references the app sends that the schema leaves untyped.
 var idKeys = map[string]bool{
 	// Typed in the schema.
-	"ack": true, "arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true,
+	"ack": true, "arrow": true, "arrows": true, "board": true, "boards": true, "caller": true, "changed": true, "cleared": true, "client": true, "createdBy": true,
 	"crosses": true, "deleted": true, "enteredGroup": true, "exclude": true, "focused": true, "followOf": true, "html": true, "id": true, "identity": true, "ids": true, "kept": true, "lines": true,
 	"members": true, "merged": true, "message": true, "near": true, "object": true, "objects": true, "overlaps": true, "parent": true,
 	"promptTarget": true, "receipt": true, "region": true, "regions": true, "selection": true, "target": true, "tile": true,
@@ -94,7 +94,7 @@ var revisionKeys = map[string]string{
 
 // Keys whose value is a moment (schema date-time fields, and the app's API dates).
 var timeKeys = map[string]bool{
-	"at": true, "computedAt": true, "createdAt": true, "errorSince": true, "expires": true, "finishedAt": true, "queuedAt": true, "raisedAt": true,
+	"at": true, "computedAt": true, "contentUpdatedAt": true, "createdAt": true, "errorSince": true, "expires": true, "finishedAt": true, "queuedAt": true, "raisedAt": true,
 	"releasedAt": true, "stagedAt": true, "submittedAt": true, "time": true, "turnEndedAt": true, "updatedAt": true,
 }
 

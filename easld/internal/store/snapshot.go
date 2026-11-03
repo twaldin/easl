@@ -605,6 +605,11 @@ func decodeObject(v any) (model.Object, error) {
 			return model.Object{}, fmt.Errorf("%s is not an ISO 8601 date", k)
 		}
 	}
+	if value, present := m["contentUpdatedAt"]; present && value != nil {
+		if _, ok := decodeTime(value); !ok {
+			return model.Object{}, fmt.Errorf("contentUpdatedAt is not an ISO 8601 date")
+		}
+	}
 	if _, present := m["props"]; !present {
 		return model.Object{}, fmt.Errorf("missing props")
 	}

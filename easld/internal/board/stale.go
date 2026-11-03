@@ -20,7 +20,7 @@ func (b *Board) Stale(now time.Time, olderThan time.Duration, exited map[string]
 		if o.Expires != nil && !o.Expires.After(now) {
 			reasons = append(reasons, "expired")
 		}
-		if o.UpdatedAt.Before(cutoff) {
+		if o.ContentTime().Before(cutoff) {
 			reasons = append(reasons, "untouched")
 		}
 		if o.Type == model.Terminal && exited[id] {

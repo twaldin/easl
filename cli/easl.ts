@@ -106,7 +106,7 @@ function usage(help = false): never {
       "An array param takes one item, a JSON array, comma-separated strings, or a repeated flag (--until working,blocked).",
       "object.create/update print prop values over 1 KB elided; --full prints them whole.",
       "object.create/update/upsert --expires 2h sets a host-resolved deletion deadline; RFC3339 sets it absolutely; null clears it.",
-      "`easl board.stale [--older-than 7d]` lists cleanup candidates without changing the board.",
+      "`easl board.stale [--older-than 7d] [--mine]` lists cleanup candidates by content age, not layout activity; --mine uses EASL_TILE_ID.",
       "`easl browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
       "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
@@ -212,6 +212,12 @@ function parseArgs(args: string[], params?: Schema, method?: string): Record<str
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith("--")) usage();
+    if (method === "board.stale" && arg === "--mine") {
+      const tile = process.env.EASL_TILE_ID;
+      if (!tile) throw new Error("--mine requires EASL_TILE_ID; use --createdBy <tile id> outside a terminal tile");
+      result.createdBy = tile;
+      continue;
+    }
     const value = args[i + 1];
     if (value === undefined || value.startsWith("--")) {
       if (arg === "--json") usage();

@@ -209,18 +209,19 @@ func DefaultSize(t ObjectType) (w, h float64) {
 
 // Object is a CanvasObject.
 type Object struct {
-	ID        ObjectID
-	Type      ObjectType
-	Frame     Frame
-	Z         float64
-	Rev       int
-	Parent    ObjectID // "" for none
-	CreatedBy Actor
-	UpdatedBy *Actor
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Expires   *time.Time
-	Props     map[string]any
+	ID               ObjectID
+	Type             ObjectType
+	Frame            Frame
+	Z                float64
+	Rev              int
+	Parent           ObjectID // "" for none
+	CreatedBy        Actor
+	UpdatedBy        *Actor
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ContentUpdatedAt time.Time
+	Expires          *time.Time
+	Props            map[string]any
 	// Unknown is a stored object's keys easld doesn't know (written by a newer app); FileJSON
 	// writes them back, the API doesn't report them. Never changed, so copies share it.
 	Unknown map[string]any
@@ -234,7 +235,7 @@ func (o Object) Hidden() bool {
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
-	"updatedBy": true, "createdAt": true, "updatedAt": true, "expires": true, "props": true,
+	"updatedBy": true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "expires": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -253,6 +254,14 @@ func (o Object) Clone() Object {
 		c.Expires = &at
 	}
 	return c
+}
+
+// ContentTime falls back to the last write for objects saved before content age was tracked.
+func (o Object) ContentTime() time.Time {
+	if !o.ContentUpdatedAt.IsZero() {
+		return o.ContentUpdatedAt
+	}
+	return o.UpdatedAt
 }
 
 // referenceDate is Foundation's reference date: the API encodes dates as seconds since it
@@ -294,6 +303,9 @@ func (o Object) encode(timeOf func(time.Time) any) map[string]any {
 	}
 	if o.UpdatedBy != nil {
 		m["updatedBy"] = o.UpdatedBy.JSON()
+	}
+	if !o.ContentUpdatedAt.IsZero() {
+		m["contentUpdatedAt"] = timeOf(o.ContentUpdatedAt)
 	}
 	if o.Expires != nil {
 		m["expires"] = o.Expires.UTC().Format(time.RFC3339Nano)
@@ -343,6 +355,9 @@ func ObjectFromJSON(v any) (Object, error) {
 	}
 	o.CreatedAt = parseFileTime(m["createdAt"])
 	o.UpdatedAt = parseFileTime(m["updatedAt"])
+	if value, present := m["contentUpdatedAt"]; present && value != nil {
+		o.ContentUpdatedAt = parseFileTime(value)
+	}
 	if value, present := m["expires"]; present && value != nil {
 		text, ok := value.(string)
 		if !ok {

@@ -2,6 +2,16 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+### Fixed
+
+- `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist an optional `contentUpdatedAt` field without changing board format 3; older objects fall back to `updatedAt`.
+
+### Added
+
+- `board.stale` accepts `createdBy: "<tile id>"` to list only one agent's cleanup candidates. The CLI's `--mine` fills it from `EASL_TILE_ID`.
+
 ## 0.3.5
 
 easl 0.3.5 is a reliability release that captures the main thread early enough for stall records to show what blocked it. Clear Browsing Data now covers every saved browser profile, including profiles used only on remote boards or closed boards.

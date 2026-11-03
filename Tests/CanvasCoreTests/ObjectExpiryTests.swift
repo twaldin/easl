@@ -33,6 +33,30 @@ final class ObjectExpiryTests {
         return try await client.next()
     }
 
+    @Test func staleCreatorFilterMatchesCreatorTileEvenAfterItIsGone() async throws {
+        let creator = board.create(type: .terminal, props: .object([:]))
+        let mine = board.create(type: .note, props: .object(["markdown": "mine"]), caller: creator.id)
+        let other = board.create(type: .note, props: .object(["markdown": "other"]), caller: "obj_other_gone")
+        let human = board.create(type: .note, props: .object(["markdown": "human"]))
+        let live = try await call("board.stale", ["board": .string(board.id), "createdBy": .string(creator.id)])
+        #expect(live["result"]?["objects"] == .array([]))
+        try board.delete(creator.id)
+        let filtered = try await call("board.stale", ["board": .string(board.id), "createdBy": .string(creator.id)])
+        #expect(filtered["result"]?["objects"]?.array?.map { $0["id"] } == [.string(mine.id)])
+        #expect(filtered["result"]?["objects"]?.array?.first?["reasons"] == .array(["creator-gone"]))
+        let others = try await call("board.stale", ["board": .string(board.id), "createdBy": "obj_other_gone"])
+        #expect(others["result"]?["objects"]?.array?.map { $0["id"] } == [.string(other.id)])
+        let all = try await call("board.stale", ["board": .string(board.id)])
+        #expect(Set((all["result"]?["objects"]?.array ?? []).compactMap { $0["id"]?.string }) == [mine.id, other.id])
+        #expect(board.objects[human.id] == human)
+        let missing = try await call("board.stale", ["board": .string(board.id), "createdBy": "obj_unknown"])
+        #expect(missing["result"]?["objects"] == .array([]))
+        for value in [JSONValue.null, .bool(true), .number(1), .array([]), .object([:])] {
+            let invalid = try await call("board.stale", ["board": .string(board.id), "createdBy": value])
+            #expect(invalid["error"]?["code"] == "invalid_params")
+        }
+    }
+
     func create(_ expiry: [String: JSONValue] = [:]) async throws -> CanvasObject {
         var params: [String: JSONValue] = ["board": .string(board.id), "type": "note", "props": .object(["markdown": "temporary"])]
         params.merge(expiry) { _, new in new }
@@ -170,6 +194,7 @@ final class ObjectExpiryTests {
         for index in snapshot.objects.indices where snapshot.objects[index].id == all.id {
             snapshot.objects[index].expires = ObjectExpiry(now.addingTimeInterval(-1))
             snapshot.objects[index].updatedAt = now.addingTimeInterval(-8 * 86400)
+            snapshot.objects[index].contentUpdatedAt = nil
         }
         let loaded = Board(snapshot: snapshot)
         var events = 0

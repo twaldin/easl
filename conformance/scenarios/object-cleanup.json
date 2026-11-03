@@ -1,5 +1,5 @@
 {
-  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports leftovers without writing.",
+  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports content age after layout moves with an optional creator filter without writing.",
   "ignore": { "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked." },
   "steps": [
     { "call": "events.subscribe", "conn": "second", "params": { "board": "{{board}}" } },
@@ -11,6 +11,13 @@
     { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "command": ["/bin/cat"], "name": "cleanup-author" }, "frame": { "x": 10000, "y": 10000, "w": 300, "h": 180 } }, "save": "creator" },
     { "call": "object.upsert", "params": { "board": "{{board}}", "type": "note", "key": "cleanup-leftover", "caller": "{{creator.object.id}}", "props": { "title": "Leftover", "markdown": "Task scratch" }, "frame": { "x": 400, "y": 0, "w": 300, "h": 180 } }, "save": "leftover" },
     { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects": [], "eventCount": 0 } },
+    { "sleepMs": 2500 },
+    { "call": "object.update", "params": { "id": "{{leftover.object.id}}", "frame": { "x": 800, "y": 200, "w": 400, "h": 240 }, "z": 10 }, "save": "moved" },
+    { "call": "board.stale", "params": { "board": "{{board}}", "olderThan": "2s", "createdBy": "{{creator.object.id}}" }, "expect": { "response.result.objects.0.id": "{{leftover.object.id}}", "response.result.objects.0.updatedAt": "{{moved.object.updatedAt}}", "response.result.objects.0.reasons": ["untouched"], "eventCount": 0 }, "expectShape": { "response.result.objects.0": "StaleObject" } },
+    { "call": "board.stale", "params": { "board": "{{board}}", "olderThan": "0s", "createdBy": "obj_nobody" }, "expect": { "response.result.objects": [], "eventCount": 0 } },
+    { "call": "board.stale", "params": { "board": "{{board}}", "createdBy": null }, "expect": { "response.error.code": "invalid_params", "eventCount": 0 } },
+    { "call": "object.update", "params": { "id": "{{leftover.object.id}}", "props": { "markdown": "Refreshed task scratch" } }, "save": "leftover" },
+    { "call": "board.stale", "params": { "board": "{{board}}", "olderThan": "2s", "createdBy": "{{creator.object.id}}" }, "expect": { "response.result.objects": [], "eventCount": 0 } },
     { "call": "object.delete", "params": { "id": "{{creator.object.id}}" } },
     { "call": "board.get", "params": { "board": "{{board}}" }, "save": "before" },
     { "call": "board.stale", "params": { "board": "{{board}}" }, "expect": { "response.result.objects.0.id": "{{leftover.object.id}}", "response.result.objects.0.type": "note", "response.result.objects.0.key": "cleanup-leftover", "response.result.objects.0.title": "Leftover", "response.result.objects.0.createdBy": { "kind": "agent", "tile": "{{creator.object.id}}" }, "response.result.objects.0.updatedAt": "{{leftover.object.updatedAt}}", "response.result.objects.0.reasons": ["creator-gone"], "eventCount": 0 }, "expectShape": { "response.result.objects.0": "StaleObject" } },

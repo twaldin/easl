@@ -535,7 +535,7 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		props = b.stampingWorktree(props)
 	}
 	now := time.Now()
-	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, Props: props}
+	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, ContentUpdatedAt: now, Props: props}
 	if len(expiry) > 0 && expiry[0].At != nil {
 		at := *expiry[0].At
 		o.Expires = &at
@@ -707,6 +707,10 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	}
 	o.Rev++
 	o.UpdatedAt = time.Now()
+	o.ContentUpdatedAt = before.ContentTime()
+	if props != nil && !sameAuthoredContent(before, o) {
+		o.ContentUpdatedAt = o.UpdatedAt
+	}
 	updatedBy := model.ActorFor(caller)
 	o.UpdatedBy = &updatedBy
 	if o.Type == model.Browser && !observedURL {

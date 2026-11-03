@@ -42,7 +42,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
 - Give task-owned tiles a stable `props.key` and use `object.upsert` on repeat runs. Do not create duplicates.
 - Give transient status tiles, scratch renders, and one-off answers an expiry. `easl object.update --id obj_… --expires 2h` sets a host deletion deadline. The API takes `expiresIn: "2h"` or an absolute RFC3339 `expires`; `expires: null` clears it.
 - Delete your task-owned tiles with `object.delete` when the task ends, unless the user wants to keep them.
-- Run `easl board.stale --older-than 7d` to list cleanup candidates without changing the board. Inspect the reasons and `createdBy`. Delete only your own tiles unless the user asks for broader cleanup.
+- Run `easl board.stale --older-than 7d --mine` to list only your cleanup candidates without changing the board. `untouched` measures content age, so moving or resizing tiles does not refresh it. `--mine` uses `EASL_TILE_ID`; the API filter is `createdBy: "<tile id>"`. Omit the filter to inspect the whole board. Inspect the reasons and `createdBy`. Delete only your own tiles unless the user asks for broader cleanup.
 - `easl ask --expires` still closes an unanswered question. It does not set the tile's deletion deadline.
 
 ## Pick a client

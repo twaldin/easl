@@ -128,6 +128,7 @@ public struct CanvasObject: Codable, Equatable, Sendable {
     public var updatedBy: Actor?
     public var createdAt: Date
     public var updatedAt: Date
+    public var contentUpdatedAt: Date? = nil
     public var expires: ObjectExpiry? = nil
     public var props: JSONValue
 
@@ -146,6 +147,7 @@ public struct CanvasObject: Codable, Equatable, Sendable {
         self.updatedBy = nil
         self.createdAt = createdAt
         self.updatedAt = createdAt
+        self.contentUpdatedAt = createdAt
         self.props = props
     }
 }

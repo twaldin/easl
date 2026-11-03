@@ -56,6 +56,26 @@ final class BoardMirrorTests {
         host.create(type: .note, props: .object(["markdown": .string(markdown)]), frame: Frame(x: x, y: 0, w: 280, h: 200))
     }
 
+
+    @Test func contentTimestampSurvivesManifestEventsAndRemoteEdits() async throws {
+        let note = self.note("initial")
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        #expect(view.objects[note.id]?.contentUpdatedAt == note.createdAt)
+        let moved = try host.update(note.id, frame: Frame(x: 600, y: 400, w: 400, h: 300))
+        try await eventually { view.objects[note.id]?.rev == moved.rev }
+        #expect(view.objects[note.id]?.contentUpdatedAt == note.createdAt)
+        #expect(view.objects[note.id]?.updatedAt == moved.updatedAt)
+        _ = try view.update(note.id, props: .object(["markdown": "remote edit"]))
+        try await eventually { self.host.objects[note.id]?.props["markdown"] == "remote edit" }
+        try await eventually { view.objects[note.id] == self.host.objects[note.id] }
+        let edited = try host.object(note.id)
+        #expect(edited.contentUpdatedAt == edited.updatedAt)
+        #expect(edited.contentUpdatedAt != note.contentUpdatedAt)
+        let (second, reloaded) = try await self.mirror()
+        defer { second.close() }
+        #expect(reloaded.objects[note.id] == edited)
+    }
     @Test func terminalReferencesReaimTheHostPreviewAfterCanonicalCreate() async throws {
         let terminal = host.create(type: .terminal, props: .object([:]))
         let (_, view) = try await mirror()
