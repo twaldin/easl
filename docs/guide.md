@@ -86,6 +86,8 @@ File › Open Remote… lists the Macs on your tailnet that are online (from Tai
 
 A browser tile is Safari's engine on the board: sign-in popups, downloads (to ~/Downloads, shown in the address bar), uploads, logins, camera and microphone prompts, ⌘F to find in the page, File › Print Page…, and fullscreen video work as in Safari. Right-click a tile for **Profile** (a second set of cookies and logins, e.g. a work account; tiles with the same profile name share it) and, for a page served from your Mac, **Reload When Files Change**. ⌥-click a link to open it in your default browser instead.
 
+easl › Clear Browsing Data… clears cookies, logins, storage, and caches from the default profile and every saved named profile of this app on this Mac. It includes remote boards drawn here and profiles on no open board. Extensions' own page storage is also cleared, as before; their `browser.storage.local` data stays. The sheet names known profiles and says when other saved profiles will be cleared too.
+
 ## Password managers and other Safari extensions
 
 On macOS 15.4 or later, browser tiles run Safari web extensions, so your password manager can unlock and fill in them.
