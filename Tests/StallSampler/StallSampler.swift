@@ -1,0 +1,111 @@
+import CoreFoundation
+import Darwin
+import Foundation
+import CanvasCore
+import os
+import StallCapture
+
+private struct StallWindow: Encodable {
+    let startedNs: UInt64
+    let endedNs: UInt64
+    let sampledBeforeTurnEnd: Int
+}
+
+@inline(never)
+func stallBusyLoop(milliseconds: Int) {
+    let end = ProcessInfo.processInfo.systemUptime + Double(milliseconds) / 1000
+    while ProcessInfo.processInfo.systemUptime < end {
+    }
+}
+
+@inline(never)
+func stallBlockedWait(milliseconds: Int) {
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(milliseconds)) {
+        semaphore.signal()
+    }
+    semaphore.wait()
+}
+
+@MainActor
+private enum StallSamplerRegression {
+    private static func rejectsRetiredTurns() {
+        let capture = easl_stall_create()!
+        defer { easl_stall_destroy(capture) }
+        easl_stall_publish(capture, 2)
+        let address = UInt(bitPattern: capture)
+        let result = OSAllocatedUnfairLock(initialState: (accepted: true, error: Int32(0)))
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            result.withLock { state in
+                var record = EaslStallRecord()
+                state.accepted = easl_stall_capture(OpaquePointer(bitPattern: address), 1, &record)
+                state.error = record.error
+            }
+            done.signal()
+        }
+        precondition(done.wait(timeout: .now() + 5) == .success)
+        precondition(result.withLock { !$0.accepted && $0.error == EASL_STALL_ERROR_TURN_CHANGED })
+        print("PASS retired turn returns cancellation, not a capture failure")
+    }
+
+    static func main() throws {
+        guard CommandLine.arguments.count == 3,
+              let milliseconds = Int(CommandLine.arguments[2]),
+              [300, 600, 1500].contains(milliseconds),
+              ["busy", "blocked", "late-busy", "late-blocked"].contains(CommandLine.arguments[1]),
+              let home = ProcessInfo.processInfo.environment["EASL_HOME"] else {
+            fatalError("run.py must supply a scenario, duration and isolated home")
+        }
+        let kind = CommandLine.arguments[1]
+        if kind == "busy" && milliseconds == 600 { rejectsRetiredTurns() }
+        let directory = URL(fileURLWithPath: home, isDirectory: true)
+        let metrics = Metrics.shared
+        metrics.monitorMainThread()
+        metrics.sampleStalls(into: directory.appendingPathComponent("stalls", isDirectory: true))
+        let stall = { @Sendable in
+            precondition(Thread.isMainThread)
+            let started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            if kind.hasSuffix("busy") {
+                stallBusyLoop(milliseconds: milliseconds)
+            } else {
+                stallBlockedWait(milliseconds: milliseconds)
+            }
+            let ended = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+            do {
+                let window = StallWindow(startedNs: started, endedNs: ended,
+                                         sampledBeforeTurnEnd: metrics.snapshot()["stalls"]?["sampled"]?.int ?? -1)
+                try JSONEncoder().encode(window)
+                    .write(to: directory.appendingPathComponent("stall-window.json"), options: .atomic)
+            } catch {
+                fatalError("cannot retain stall interval: \(error)")
+            }
+        }
+        if kind.hasPrefix("late-") {
+            let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, 2_000_000) { _, _ in stall() }
+            CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        } else {
+            RunLoop.main.add(Timer(timeInterval: 0.1, repeats: false) { _ in stall() }, forMode: .default)
+        }
+        let deadline = Date(timeIntervalSinceNow: Double(milliseconds) / 1000 + 8)
+        while Date() < deadline {
+            _ = RunLoop.main.run(mode: .default, before: min(deadline, Date(timeIntervalSinceNow: 0.05)))
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(metrics.snapshot()).write(to: directory.appendingPathComponent("metrics.json"), options: .atomic)
+        print("FINISHED \(kind)-\(milliseconds)")
+    }
+}
+
+@MainActor
+@_cdecl("EaslStallRegressionMain")
+func easlStallRegressionMain(_ argc: Int32, _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Int32 {
+    do {
+        try StallSamplerRegression.main()
+        return 0
+    } catch {
+        FileHandle.standardError.write(Data("FAIL \(error)\n".utf8))
+        return 1
+    }
+}

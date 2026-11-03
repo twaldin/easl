@@ -1246,7 +1246,7 @@ export type AppMetricsResult = {
     cause: string;
     agoS: number;
   };
-  /** main-thread stalls (a turn of a second or more) the app `sample`d itself through, into `stalls/` in its home (the Mac app only; easld has no main thread) */
+  /** main-thread stalls (turns of at least 250 ms) captured in process into `stalls/` in the app's home (the Mac app only; easld has no main thread) */
   stalls?: {
     /** since launch */
     sampled: number;

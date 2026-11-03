@@ -5,6 +5,8 @@ Each version's section is its GitHub release's notes.
 ## Unreleased
 
 - Keep note Mermaid functional checks in CI while reporting its upper timing bounds; enforce the unchanged 50 ms, 2.25 s, and 750 ms limits in the GUI guest at release checks and on note-display or diagram-rendering PRs.
+- Capture main-thread stacks once near 150 ms and retain records only for turns reaching 250 ms, including late window-commit work. Disarm sampling while the main loop sleeps. A Mach timer port arms and cancels deadlines without per-turn libdispatch timer configuration. Records report CPU or wait state and keep their metrics linkage, five-minute rate limit, and twenty-file retention; discarded short-turn captures do not spend the interval.
+- Main-thread busy time, stretch counts, and the longest stretch now include window-commit observers and autorelease-pool drains. Higher reported totals can reflect this wider timing boundary rather than slower work.
 
 ## 0.3.4
 

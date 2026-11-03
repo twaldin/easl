@@ -105,11 +105,17 @@ public final class Metrics: @unchecked Sendable {
     private var turnStart: Double?
     private var stallSampler: StallSampler?
     private var stallPolicy = StallSampling()
-    /// The one sample in flight, from the watchdog's claim until its file arrives or it fails:
-    /// its turn, its file once `sample` has finished, and once the turn has ended first, that
-    /// turn's line (all of it) and when it ended. A late file gets a tagged line and names the
-    /// window's `longest` if that turn still is it.
-    private var stallPending: (turn: Double, file: String?, ended: Stretch?)?
+    private var stallDeadline: Double?
+    private struct PendingStall {
+        enum Phase {
+            case capturing, captured, writing, written(String)
+        }
+        let turn: Double
+        let sampler: StallSampler
+        var phase = Phase.capturing
+        var ended: Stretch?
+    }
+    private var stallPending: PendingStall?
     private var stallsSampled = 0
     private var stallNewest: String?
     /// Where a long stretch's line goes: `app.log` (NSLog), or a test's list.
@@ -207,75 +213,102 @@ public final class Metrics: @unchecked Sendable {
         MainMonitor.install(self)
     }
 
-    /// Samples the process (`/usr/bin/sample`, into `directory`) while the main thread has been in
-    /// one turn for `StallSampling.threshold` seconds, at most every `StallSampling.minInterval`;
-    /// the stretch's cause then names the file. Not for measured runs: `sample` suspends the
-    /// task's threads briefly while it walks their stacks.
+    /// Captures near 150 ms and retains turns reaching 250 ms, at most once every five minutes.
     public func sampleStalls(into directory: URL) {
         lock.lock()
         defer { lock.unlock() }
         guard stallSampler == nil else { return }
-        let sampler = StallSampler(directory: directory, metrics: self)
-        sampler.start()
+        guard let sampler = StallSampler(directory: directory, metrics: self), sampler.start() else { return }
         stallSampler = sampler
+        sampler.publish(turn: turnStart)
+        scheduleStallSampling()
     }
 
-    /// The stall watchdog, awake at `now`: the main thread's turn in progress, when the policy
-    /// samples it now, becomes the sample in flight. Nil once that turn has ended: it isn't
-    /// sampled, and the policy doesn't count it.
-    func claimStall(at now: Double) -> Double? {
+    private func scheduleStallSampling(rearm: Bool = false) {
+        guard let stallSampler else { return }
+        let deadline: Double?
+        if let turnStart, let pending = stallPending,
+           pending.turn == turnStart, case .captured = pending.phase {
+            deadline = turnStart + StallSampling.threshold
+        } else {
+            deadline = stallPending == nil ? stallPolicy.deadline(turnStart: turnStart) : nil
+        }
+        if !rearm, let deadline, let armed = stallDeadline, deadline >= armed { return }
+        guard rearm || deadline != stallDeadline else { return }
+        stallDeadline = deadline
+        stallSampler.schedule(at: deadline)
+    }
+
+    func claimStall(at now: Double, sampler: StallSampler) -> Double? {
         lock.lock()
-        defer { lock.unlock() }
-        guard stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
-        stallPending = (turnStart, nil, nil)
+        defer {
+            scheduleStallSampling(rearm: true)
+            lock.unlock()
+        }
+        guard stallPending == nil,
+              stallPolicy.shouldSample(turnStart: turnStart, now: now), let turnStart else { return nil }
+        stallPending = PendingStall(turn: turnStart, sampler: sampler)
         return turnStart
     }
 
-    /// The sample of the turn that started at `turn` is in `file`.
-    func stallSampled(_ turn: Double, file: String) {
+    enum StallRetention {
+        case discard, wait, write
+    }
+
+    func prepareStall(_ turn: Double, at now: Double) -> StallRetention {
+        lock.lock()
+        defer {
+            scheduleStallSampling(rearm: true)
+            lock.unlock()
+        }
+        guard let pending = stallPending, pending.turn == turn else { return .discard }
+        switch pending.phase {
+        case .capturing, .captured:
+            if pending.ended != nil || turnStart == turn && StallSampling.qualifies(turnStart: turn, at: now) {
+                stallPending?.phase = .writing
+                return .write
+            }
+            stallPending?.phase = .captured
+            return .wait
+        case .writing, .written: return .discard
+        }
+    }
+
+    func stallSampled(file: String) {
         var line: Stretch?
         lock.lock()
+        let pending = stallPending!
         stallsSampled += 1
         stallNewest = file
-        if let pending = stallPending, pending.turn == turn {
-            if var ended = pending.ended {
-                ended.cause = "\(file); \(ended.cause)"
-                line = ended
-                if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
-                stallPending = nil
-            } else {
-                stallPending?.file = file
-            }
+        if var ended = pending.ended {
+            ended.cause = "\(file); \(ended.cause)"
+            line = ended
+            if let stretch = longest, stretch.at == ended.at { longest?.cause = "\(file); \(stretch.cause)" }
+            stallPending = nil
+        } else {
+            stallPending?.phase = .written(file)
         }
+        scheduleStallSampling()
         lock.unlock()
         if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
 
-    /// The sample of the turn that started at `turn` left no file: the claim is released (a turn
-    /// that already ended has had its line, untagged).
-    func stallFailed(_ turn: Double) {
+    func stallFailed(_ turn: Double, cancelled: Bool = false) {
         lock.lock()
-        if stallPending?.turn == turn { stallPending = nil }
+        if stallPending?.turn == turn {
+            stallPending = nil
+            if cancelled { stallPolicy.cancelled(turn: turn) }
+            scheduleStallSampling()
+        }
         lock.unlock()
     }
 
-    /// A main run-loop activity at `now`: the turn that started at `ended.start` is over and
-    /// `next` begins (nil: the loop sleeps). `ended.ms` is the part of the turn the window counts,
-    /// from the last reset if one came during it, and `cause` what it ran. A turn a reset cut has
-    /// no cause of its own in the new window (its spans were dropped at its end, the first activity
-    /// after the reset: "untagged work"); `wholeCause` is then what it ran, for its sample's line.
-    ///
-    /// Publishing `next` and settling the ended turn's sample are one critical section on the
-    /// lock the watchdog claims with, so no claim lands between them: the ended turn's claim,
-    /// if any, is still its own, and the next turn can't be claimed before it is published. The
-    /// caller formats `cause` beforehand for a turn of `hitchStretch` or more; a shorter one's is
-    /// formatted here only if the watchdog claimed it (the observer timed its end before the
-    /// claim and published it after), which is rare. Lines are formatted and logged after.
     fileprivate func mainTurn(ended: (start: Double, ms: Double)?, next: Double?, at now: Double,
                               cause: @autoclosure () -> String, wholeCause: String?) {
         var line: (ms: Double, cause: String)?
         lock.lock()
         turnStart = next
+        stallSampler?.publish(turn: next)
         if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
             let ms = ended.ms
             let text = cause()
@@ -286,20 +319,30 @@ public final class Metrics: @unchecked Sendable {
                 series["main.stretch250", default: Series()].add(tally, at: now)
                 line = (ms: ms, cause: text)
             }
-            if stallPending?.turn == ended.start {
-                // The sampled turn's line is all of it, though a reset may have cut what the
-                // window counts.
+            if let pending = stallPending, pending.turn == ended.start {
                 let whole = Stretch(ms: (now - ended.start) * 1000, cause: wholeCause ?? text, at: now)
-                if let file = stallPending?.file {
-                    tag = "\(file); "
-                    stallPending = nil
-                } else {
-                    stallPending?.ended = whole
+                let qualified: Bool
+                switch pending.phase {
+                case .writing, .written: qualified = true
+                case .capturing, .captured: qualified = StallSampling.qualifies(turnStart: ended.start, at: now)
                 }
-                line = (ms: whole.ms, cause: tag + whole.cause)
+                if qualified {
+                    if case .written(let file) = pending.phase {
+                        tag = "\(file); "
+                        stallPending = nil
+                    } else {
+                        stallPending?.ended = whole
+                    }
+                    line = (ms: whole.ms, cause: tag + whole.cause)
+                } else {
+                    stallPolicy.cancelled(turn: pending.turn)
+                    stallPending = nil
+                }
+                if case .captured = pending.phase { pending.sampler.finish(pending.turn) }
             }
             if ms >= Self.hitchStretch && ms > (longest?.ms ?? 0) { longest = Stretch(ms: ms, cause: tag + text, at: now) }
         }
+        scheduleStallSampling()
         lock.unlock()
         if let line { log(Self.busyLine(line.ms, line.cause)) }
     }
@@ -435,10 +478,14 @@ final class MainMonitor {
     fileprivate static func install(_ metrics: Metrics) {
         guard observer == nil else { return }
         let monitor = MainMonitor(metrics, at: Metrics.now())
-        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue | CFRunLoopActivity.beforeWaiting.rawValue
-        let observer = CFRunLoopObserverCreateWithHandler(nil, activities, true, 0) { _, activity in
-            monitor.loop(sleeping: activity == .beforeWaiting, at: Metrics.now())
+        let activities = CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue
+        let awake = CFRunLoopObserverCreateWithHandler(nil, activities, true, CFIndex.min) { _, _ in
+            monitor.loop(sleeping: false, at: Metrics.now())
         }
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, true, CFIndex.max) { _, _ in
+            monitor.loop(sleeping: true, at: Metrics.now())
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), awake, .commonModes)
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
         installed = monitor

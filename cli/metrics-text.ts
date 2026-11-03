@@ -22,7 +22,6 @@ export function metricsText(m: Metrics): string {
     `main     busy ${ms((c("main.busy").ms ?? 0) / 600)}%  stretches ≥50 ms ${c("main.stretch50").n} (total ${c("main.stretch50", "total").n})  ≥250 ms ${c("main.stretch250").n} (total ${c("main.stretch250", "total").n})`,
   ];
   if (m.longest) lines.push(`         longest ${Math.round(m.longest.ms)} ms, ${Math.round(m.longest.agoS)} s ago: ${m.longest.cause}`);
-  // Main-thread stalls of a second or more that the app `sample`d itself through (<home>/stalls/, newest 20 kept).
   if (m.stalls?.sampled) lines.push(`stalls   ${m.stalls.sampled} sampled since launch, newest ${m.stalls.newest}`);
   lines.push(`process  cpu ${p.cpuPercent ?? 0}%  wakeups ${p.interruptWakeupsPerS ?? 0}/s  memory ${m.process.footprintMB ?? 0} MB (peak ${m.process.peakFootprintMB ?? 0})`);
   const keys = c("key.wait"), keysTotal = c("key.wait", "total");

@@ -1,47 +1,99 @@
+import Darwin
 import Foundation
 import os
 import Testing
 @testable import CanvasCore
 
-/// A main-thread turn a second old gets one sample, at most one every five minutes, and the
-/// stalls directory keeps the newest twenty files. No live `sample` here: the policy alone, and
-/// below, the watchdog and the main-thread monitor around it with a stand-in child; the real
-/// child is exercised by a development instance (docs/testing.md).
 struct StallSamplingTests {
-    @Test func samplesATurnAtTheThresholdNotBeforeAndNotWhileTheLoopSleeps() {
+    @Test func capturesAt150msNotBeforeAndNotWhileTheLoopSleeps() {
         var policy = StallSampling()
-        let early = policy.shouldSample(turnStart: 100, now: 100 + StallSampling.threshold - 0.05)
+        let early = policy.shouldSample(turnStart: 100, now: 100.149)
         let asleep = policy.shouldSample(turnStart: nil, now: 200)
-        let at = policy.shouldSample(turnStart: 100, now: 100 + StallSampling.threshold)
-        #expect(!early && !asleep && at)
+        let at = policy.shouldSample(turnStart: 100, now: 100.150)
+        #expect(!early)
+        #expect(!asleep)
+        #expect(at)
+    }
+
+    @Test func retentionRequires250msOfTheWholeTurn() {
+        #expect(!StallSampling.qualifies(turnStart: 100, at: 100.249))
+        #expect(StallSampling.qualifies(turnStart: 100, at: 100.250))
     }
 
     @Test func aTurnIsSampledOnceHoweverLongItLasts() {
         var policy = StallSampling()
-        let first = policy.shouldSample(turnStart: 100, now: 101.2)
-        let again = policy.shouldSample(turnStart: 100, now: 102.2)
-        let muchLater = policy.shouldSample(turnStart: 100, now: 100 + StallSampling.minInterval + 10)
+        let first = policy.shouldSample(turnStart: 100, now: 100.15)
+        let again = policy.shouldSample(turnStart: 100, now: 100.50)
+        let atInterval = policy.shouldSample(turnStart: 100, now: 400.15)
+        let afterInterval = policy.shouldSample(turnStart: 100, now: 400.50)
         #expect(first && !again)
-        #expect(!muchLater, "the same turn, after the rate limit")
+        #expect(!atInterval && !afterInterval, "the same turn, at and after the rate limit")
     }
 
     @Test func aLaterStallWaitsOutTheMinimumIntervalSinceTheLastSample() {
         var policy = StallSampling()
-        let first = policy.shouldSample(turnStart: 100, now: 101.5)
-        let soon = 101.5 + StallSampling.minInterval - 1
-        let tooSoon = policy.shouldSample(turnStart: soon - 2, now: soon)
-        let later = 101.5 + StallSampling.minInterval
-        let inTime = policy.shouldSample(turnStart: later - 2, now: later)
-        #expect(first && !tooSoon && inTime)
+        let first = policy.shouldSample(turnStart: 0, now: 0.15)
+        let tooSoon = policy.shouldSample(turnStart: 299.999, now: 300.149)
+        let inTime = policy.shouldSample(turnStart: 300, now: 300.15)
+        #expect(first)
+        #expect(!tooSoon, "299.999 seconds since the last capture")
+        #expect(inTime, "300 seconds since the last capture")
     }
 
     @Test func aStallRefusedByTheRateLimitDoesNotPushTheLimitOut() {
         var policy = StallSampling()
-        let first = policy.shouldSample(turnStart: 0, now: 1)
-        let refused = policy.shouldSample(turnStart: 200, now: 201)
-        let next = policy.shouldSample(turnStart: 300, now: 1 + StallSampling.minInterval)
+        let first = policy.shouldSample(turnStart: 0, now: 0.15)
+        let refused = policy.shouldSample(turnStart: 200, now: 200.15)
+        let next = policy.shouldSample(turnStart: 200, now: 300.15)
         #expect(first && !refused)
-        #expect(next, "measured from the sample taken, not the one refused")
+        #expect(next, "the refused turn remains eligible, measured from the capture taken")
+    }
+
+    @Test func theDeadlineTracksActiveTurnsAndTheCaptureInterval() {
+        var policy = StallSampling()
+        #expect(policy.deadline(turnStart: nil) == nil)
+        #expect(policy.deadline(turnStart: 100) == 100.15)
+        let sampled = policy.shouldSample(turnStart: 100, now: 100.15)
+        #expect(sampled)
+        #expect(policy.deadline(turnStart: 100) == nil)
+        #expect(policy.deadline(turnStart: 101) == 400.15)
+        #expect(policy.deadline(turnStart: 500) == 500.15)
+    }
+
+    @Test func aTurnThatEndsBeforeCaptureDoesNotSpendTheCaptureInterval() {
+        var policy = StallSampling()
+        let first = policy.shouldSample(turnStart: 100, now: 100.15)
+        #expect(first)
+        policy.cancelled(turn: 100)
+        let same = policy.shouldSample(turnStart: 100, now: 101)
+        let next = policy.shouldSample(turnStart: 101, now: 101.15)
+        let limited = policy.shouldSample(turnStart: 102, now: 102.15)
+        let later = policy.shouldSample(turnStart: 401, now: 401.15)
+        #expect(!same && next && !limited && later)
+    }
+
+    @Test func discardingAnEarlyCaptureRestoresThePreviousSamplesRateBoundary() {
+        var policy = StallSampling()
+        let first = policy.shouldSample(turnStart: 0, now: 0.15)
+        let discarded = policy.shouldSample(turnStart: 300, now: 300.15)
+        #expect(first && discarded)
+        policy.cancelled(turn: 300)
+        let same = policy.shouldSample(turnStart: 300, now: 301)
+        let next = policy.shouldSample(turnStart: 301, now: 301.15)
+        #expect(!same && next, "discarded turns are not retried or charged against the interval")
+        policy.cancelled(turn: 300)
+        let limited = policy.shouldSample(turnStart: 302, now: 302.15)
+        let later = policy.shouldSample(turnStart: 601, now: 601.15)
+        #expect(!limited && later, "late cancellation cannot refund another turn")
+    }
+
+    @Test func mainThreadStatesDistinguishCPUWaitsAndNotRunning() {
+        #expect(StallSampler.state(runState: TH_STATE_RUNNING, suspendCount: 0, cpuNs: 5_000_000) == "on-CPU")
+        #expect(StallSampler.state(runState: TH_STATE_RUNNING, suspendCount: 0, cpuNs: 0) == "not running")
+        #expect(StallSampler.state(runState: TH_STATE_RUNNING, suspendCount: 1, cpuNs: 5_000_000) == "not running")
+        #expect(StallSampler.state(runState: TH_STATE_WAITING, suspendCount: 0, cpuNs: 0) == "blocked in a wait")
+        #expect(StallSampler.state(runState: TH_STATE_UNINTERRUPTIBLE, suspendCount: 0, cpuNs: 0) == "blocked in a wait")
+        #expect(StallSampler.state(runState: TH_STATE_STOPPED, suspendCount: 0, cpuNs: 0) == "not running")
     }
 
     @Test func staleKeepsTheNewestFilesByModificationTime() {
@@ -61,25 +113,20 @@ struct StallSamplingTests {
     }
 }
 
-/// What the stand-in for `/usr/bin/sample` does: finishes with a call graph, is killed partway
-/// through its file, or finishes having written nothing.
-enum StandInChild: Sendable {
-    case samples, isKilled, writesNothing
+enum StandInCapture: Sendable {
+    case samples, fails, writesNothing
 }
 
-/// One `Metrics` with its main-thread monitor and stall watchdog run by hand: run-loop
-/// activities and watchdog wakeups at chosen times, `sample` a stand-in, the log lines kept.
-/// A reset stamps the real clock, so the times are on `Metrics.now()`'s.
 private final class StallRig: @unchecked Sendable {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("easl-stalls-\(UUID().uuidString)", isDirectory: true)
     let lines: OSAllocatedUnfairLock<[String]>
     let metrics: Metrics
     let monitor: MainMonitor
     private var sampler: StallSampler?
-    private var clock = 0.0
-    private var child = StandInChild.samples
+    private var watchdogTime = 0.0
+    private var capture = StandInCapture.samples
     private var whileSampling: () -> Void = {}
-    /// How many times `sample` ran.
+    private var whileCapturing: () -> Void = {}
     private(set) var samples = 0
 
     init(at now: Double) {
@@ -87,16 +134,20 @@ private final class StallRig: @unchecked Sendable {
         self.lines = lines
         metrics = Metrics(log: { line in lines.withLock { $0.append(line) } })
         monitor = MainMonitor(metrics, at: now)
-        sampler = StallSampler(directory: directory, metrics: metrics, now: { [unowned self] in clock }, sample: { [unowned self] file in
-            samples += 1
+        sampler = StallSampler(directory: directory, metrics: metrics, now: { [unowned self] in watchdogTime }, sample: { [unowned self] file in
             let main = whileSampling
             whileSampling = {}
             main()
-            switch child {
-            case .samples: return FileManager.default.createFile(atPath: file.path, contents: Data("Call graph:\n".utf8))
-            case .isKilled: FileManager.default.createFile(atPath: file.path, contents: Data("Call gr".utf8)); return false
+            switch capture {
+            case .samples: return FileManager.default.createFile(atPath: file.path, contents: Data("Main thread stack:\n".utf8))
+            case .fails: FileManager.default.createFile(atPath: file.path, contents: Data("Main thread sta".utf8)); return false
             case .writesNothing: return FileManager.default.createFile(atPath: file.path, contents: nil)
             }
+        }, captured: { [unowned self] in
+            samples += 1
+            let main = whileCapturing
+            whileCapturing = {}
+            main()
         })
     }
 
@@ -115,13 +166,19 @@ private final class StallRig: @unchecked Sendable {
         monitor.loop(sleeping: !intoNext, at: end)
     }
 
-    /// The watchdog wakes at `now`; if it samples, `child` is how `sample` goes, and
-    /// `whileSampling` is what the main thread does meanwhile.
-    func wake(at now: Double, child: StandInChild = .samples, whileSampling: @escaping () -> Void = {}) {
-        clock = now
-        self.child = child
-        self.whileSampling = whileSampling
-        sampler?.tick()
+    func wake(at now: Double, capture: StandInCapture = .samples,
+              whileCapturing: @escaping () -> Void = {}, whileSampling: @escaping () -> Void = {}) {
+        sampler?.queue.sync {
+            watchdogTime = now
+            self.capture = capture
+            self.whileCapturing = whileCapturing
+            self.whileSampling = whileSampling
+            sampler?.tick()
+        }
+    }
+
+    func settle() {
+        sampler?.queue.sync {}
     }
 
     /// The stalls directory's file names.
@@ -171,22 +228,87 @@ struct StallSamplingCorrelationTests {
         #expect(rig.longest?.cause == "\(file); dev.stall 3000 ms")
     }
 
-    /// The observer reads the clock as a turn ends and publishes the end a moment later; its
-    /// thread can be descheduled in between, long enough for the watchdog to claim the turn that
-    /// is still published, however short it measured. Its end, published after the claim, still
-    /// settles the claim and names the file, whether `sample` finished first or not.
-    @Test(arguments: [false, true]) func aShortTurnClaimedBeforeItsEndWasPublishedStillGetsItsFile(sampleOutlastsTurn: Bool) throws {
+    @Test func anEarlyCaptureWritesOnlyOnceThePublishedTurnReaches250ms() throws {
         let t = Metrics.now()
         let rig = StallRig(at: t)
         rig.begin(at: t)
-        // Timed 30 ms in, published after the watchdog's claim 1.5 s in.
-        let end = { rig.end(at: t + 0.03, stall: 30) }
-        rig.wake(at: t + 1.5, whileSampling: sampleOutlastsTurn ? end : {})
-        if !sampleOutlastsTurn { end() }
+        rig.wake(at: t + 0.15)
+        #expect(rig.samples == 1)
+        #expect(rig.files.isEmpty && rig.newest == nil && rig.sampled == 0)
+        rig.wake(at: t + 0.249)
+        #expect(rig.files.isEmpty)
+        rig.wake(at: t + 0.25)
+        let file = try #require(rig.newest)
+        #expect(rig.files.count == 1 && rig.sampled == 1, "persisted during the ongoing stall")
+        rig.wake(at: t + 0.26)
+        rig.end(at: t + 0.3, stall: 300)
+        rig.wake(at: t + 301)
+        #expect(rig.samples == 1 && rig.sampled == 1)
+        #expect(rig.busy(naming: file).map(\.ms) == [300])
+    }
+
+    @Test(arguments: [false, true]) func aCaptureWhoseTurnEndsBefore250msLeavesNoFileAndRefundsTheInterval(endBeforeCaptureCompletes: Bool) throws {
+        let t = Metrics.now()
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        let end = { rig.end(at: t + 0.2, stall: 200) }
+        rig.wake(at: t + 0.15, whileCapturing: endBeforeCaptureCompletes ? end : {})
+        if !endBeforeCaptureCompletes { end() }
+        rig.settle()
+        #expect(rig.samples == 1)
+        #expect(rig.files.isEmpty && rig.newest == nil && rig.sampled == 0)
+        rig.begin(at: t + 1)
+        rig.wake(at: t + 1.15)
+        rig.end(at: t + 1.3, stall: 300)
+        rig.settle()
+        let file = try #require(rig.newest)
+        #expect(rig.samples == 2 && rig.sampled == 1, "the discarded capture did not spend five minutes")
+        #expect(rig.busy(naming: file).map(\.ms) == [300])
+    }
+
+    @Test func aQualifyingTurnEndingBeforeItsEarlyCaptureCompletesStillGetsItsFile() throws {
+        let t = Metrics.now()
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        rig.wake(at: t + 0.15, whileCapturing: { rig.end(at: t + 0.3, stall: 300) })
+        let file = try #require(rig.newest)
+        #expect(rig.sampled == 1)
+        #expect(rig.busy(naming: file).map(\.ms) == [300])
+    }
+
+    @Test func anEarlyCaptureKeepsItsWholeTurnWhenResetBeforeQualification() throws {
+        let t = Metrics.now() - 10
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        rig.wake(at: t + 0.15)
+        #expect(rig.newest == nil)
+        let reset = Metrics.now()
+        rig.metrics.reset()
+        let end = Metrics.now() + 0.001
+        rig.end(at: end, stall: 3000)
+        rig.settle()
         let file = try #require(rig.newest)
         let lines = rig.busy(naming: file)
-        #expect(lines.map(\.ms) == [30])
-        #expect(lines.first?.cause == "dev.stall 30 ms")
+        #expect(lines.count == 1)
+        #expect((lines.first?.ms ?? 0) >= 10_000)
+        #expect(lines.first?.cause == "dev.stall 3000 ms")
+        #expect((rig.longest?.ms ?? 0) <= (end - reset) * 1000 + 1, "the new window counts only the post-reset part")
+        #expect(rig.sampled == 1)
+    }
+
+    @Test func aLateFileKeepsItsOwnTurnWithoutTaggingANewerLongestStretch() throws {
+        let t = Metrics.now()
+        let rig = StallRig(at: t)
+        rig.begin(at: t)
+        rig.wake(at: t + 0.15)
+        rig.wake(at: t + 0.25, whileSampling: {
+            rig.end(at: t + 0.3, stall: 300, intoNext: true)
+            rig.end(at: t + 0.9, stall: 600)
+        })
+        let file = try #require(rig.newest)
+        #expect(rig.busy(naming: file).map(\.ms) == [300])
+        #expect(rig.longest?.cause == "dev.stall 600 ms")
+        #expect(rig.sampled == 1)
     }
 
     /// A sampled turn whose file is in ends straight into the next, which the watchdog claims
@@ -263,7 +385,6 @@ struct StallSamplingCorrelationTests {
         let t = Metrics.now() - 10
         let rig = StallRig(at: t)
         rig.begin(at: t)
-        // `sample` outlasts the turn, and the window is reset before it finishes.
         rig.wake(at: t + 1.5, whileSampling: { rig.end(at: t + 3, stall: 3000); rig.metrics.reset() })
         let file = try #require(rig.newest)
         #expect(rig.busy(naming: file).map(\.ms) == [3000], "the late, tagged line")
@@ -271,20 +392,18 @@ struct StallSamplingCorrelationTests {
         #expect(rig.sampled == 1, "the launch total survives a reset")
     }
 
-    /// `sample` killed partway or finishing with nothing: its file is deleted and the stretch
-    /// names nothing. The directory is pruned all the same.
-    @Test(arguments: [StandInChild.isKilled, .writesNothing]) func aSampleThatLeavesNoUsableFileIsDeletedAndNamesNothing(child: StandInChild) throws {
+    @Test(arguments: [StandInCapture.fails, .writesNothing]) func aSampleThatLeavesNoUsableFileIsDeletedAndNamesNothing(capture: StandInCapture) throws {
         let t = Metrics.now()
         let rig = StallRig(at: t)
         // More than twenty older files: one too many, as an attempt that never pruned left them.
         try FileManager.default.createDirectory(at: rig.directory, withIntermediateDirectories: true)
         for i in 0...StallSampling.keep {
             let path = rig.directory.appendingPathComponent("old-\(i).txt").path
-            FileManager.default.createFile(atPath: path, contents: Data("Call graph:\n".utf8))
+            FileManager.default.createFile(atPath: path, contents: Data("Main thread stack:\n".utf8))
             try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: Double(i - 3600))], ofItemAtPath: path)
         }
         rig.begin(at: t)
-        rig.wake(at: t + 1.5, child: child)
+        rig.wake(at: t + 1.5, capture: capture)
         rig.end(at: t + 3, stall: 3000)
         #expect(rig.samples == 1)
         #expect(Set(rig.files) == Set((1...StallSampling.keep).map { "old-\($0).txt" }), "the newest twenty, none of them the attempt's")
