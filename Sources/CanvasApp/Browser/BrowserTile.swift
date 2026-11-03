@@ -71,6 +71,7 @@ final class BrowserTile: NSView, TileContent {
     var uncommittedNavigations: [WKNavigation] = []
     /// Automation waits parked until the page changes (navigation, DOM activity) or time runs out.
     private var changeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    var scriptCalls: [UUID: ScriptCall] = [:]
 
     /// Who the page's URL changes and the tiles it opens are credited to.
     var credit = NavigationCredit()
@@ -515,6 +516,7 @@ final class BrowserTile: NSView, TileContent {
         retryTask?.cancel()
         retryTask = nil
         guard let webView else { return }
+        invalidateJavaScript()
         let failure = documentFailure
         let releasedAt = Date()
         commitsSinceRelease = 0
@@ -1360,6 +1362,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        invalidateJavaScriptWaits()
         uncommittedNavigations.removeAll { $0 === navigation }
         loadedFileVersion = requestedFileVersion
         clearLoadFailure()
@@ -1396,6 +1399,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        invalidateJavaScript()
         pendingNavigations = []
         uncommittedNavigations = []
         track(webView.reload())

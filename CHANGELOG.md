@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## Unreleased
+
+- Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands now return `timeout` after 30 seconds, plus 100 ms for result delivery. Eval, actions, and snapshot keep their callbacks across commits, so a cold page's first command is not falsely cancelled. Commands are never replayed.
+
 ## 0.3.5
 
 easl 0.3.5 is a reliability release that captures the main thread early enough for stall records to show what blocked it. Clear Browsing Data now covers every saved browser profile, including profiles used only on remote boards or closed boards.
