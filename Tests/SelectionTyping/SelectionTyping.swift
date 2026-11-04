@@ -1305,7 +1305,7 @@ private enum SelectionTyping {
         layout.ensureLayout(for: content.documentRange)
         var down: NSPoint?
         layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, rect, _, _ in
-            down = text.convert(NSPoint(x: rect.minX + text.textContainerOrigin.x + min(1, rect.width / 10),
+            down = text.convert(NSPoint(x: rect.minX + text.textContainerOrigin.x + rect.width / 4,
                 y: rect.midY + text.textContainerOrigin.y), to: nil)
             return false
         }
@@ -1313,17 +1313,29 @@ private enum SelectionTyping {
         _ = try f.checked(down, target: tile, label: "first prose drag anchor")
         f.window.makeFirstResponder(f.canvas.document)
         f.canvas.setSelection([])
+        var receivedInsertion: Int?
+        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { event in
+            MainActor.assumeIsolated {
+                if event.windowNumber == f.window.windowNumber {
+                    receivedInsertion = text.characterIndexForInsertion(at: text.convert(event.locationInWindow, from: nil))
+                }
+            }
+            return event
+        }) else { throw Failure("first prose press monitor could not be installed") }
+        defer { NSEvent.removeMonitor(monitor) }
         try await post([mouse(.leftMouseDown, down, in: f.window)])
         guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
             throw Failure("the first single prose press must open the native editor before dragging")
         }
-        print("CARET rendered=\(reversed ? 15 : 6) selected=\(editor.selectedRange()) point=\(down)")
+        print("CARET rendered=\(reversed ? 15 : 6) received=\(String(describing: receivedInsertion)) selected=\(editor.selectedRange()) point=\(down)")
         fflush(nil)
+        try require(receivedInsertion == (reversed ? 15 : 6),
+            "the dispatched prose press must hit its intended rendered insertion; actual=\(String(describing: receivedInsertion))")
         try require(editor.selectedRange() == NSRange(location: reversed ? 15 : 6, length: 0),
             "rendered offset \(reversed ? 15 : 6) must map to the same raw-source caret; actual=\(editor.selectedRange())")
         let rect = editor.firstRect(forCharacterRange: NSRange(location: reversed ? 6 : 15, length: 1), actualRange: nil)
         try require(rect.width > 0 && rect.height > 0, "native drag destination must have editor character geometry")
-        let up = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + min(1, rect.width / 10), y: rect.midY))
+        let up = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + rect.width / 4, y: rect.midY))
         _ = try f.checked(up, target: editor, label: "first prose drag destination")
         var events: [NSEvent] = []
         for step in 1...8 {
