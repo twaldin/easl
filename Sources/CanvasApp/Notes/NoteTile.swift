@@ -693,6 +693,7 @@ final class NoteTile: NSView, TileContent {
         enteredByKeyboard = false
         let text = markdown
         editor.string = text
+        editor.undoManager?.removeAllActions()
         editor.setSelectedRange(NSRange(location: point.map { caretOffset(at: $0, in: text) } ?? (text as NSString).length, length: 0))
         displayScroll.isHidden = true
         editorScroll.isHidden = false
