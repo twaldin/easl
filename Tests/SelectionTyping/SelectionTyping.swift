@@ -393,7 +393,13 @@ private enum SelectionTyping {
         func diagnostic(_ point: NSPoint? = nil) -> String {
             let hit = point.flatMap { self.hit($0) }
             let objects = board.objects.values.sorted { $0.id < $1.id }.map { "\($0.id):\($0.type.rawValue)" }
-            return "board=\(board.id) objects=\(objects) selection=\(canvas.selection) focused=\(String(describing: canvas.focusedTile)) responder=\(String(describing: window.firstResponder)) point=\(String(describing: point)) hit=\(String(describing: hit)) viewport=\(canvas.viewport)"
+            let mouseDispatch = Mirror(reflecting: window).children
+                .filter { $0.label == "dispatchingSelectionMouse" || $0.label == "boardSelectionSerial" }
+                .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
+            let selectionDispatch = Mirror(reflecting: canvas).children
+                .filter { $0.label == "selectionSerial" || $0.label == "move" }
+                .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
+            return "board=\(board.id) objects=\(objects) selection=\(canvas.selection) focused=\(String(describing: canvas.focusedTile)) responder=\(String(describing: window.firstResponder)) point=\(String(describing: point)) hit=\(String(describing: hit)) viewport=\(canvas.viewport) dispatch=\(mouseDispatch + selectionDispatch)"
         }
 
         func ready(_ id: ObjectID) async throws {
