@@ -20,7 +20,7 @@ extension ApiRouterTests {
         }
         _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["startTime": .number(2.5), "title": "Edited"])])
         let store = BoardStore(directory: dir.appendingPathComponent("video-store"))
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let restored = try await store.load(root: board.root)
         let object = try restored.object(id)
         #expect(object.type == .video)

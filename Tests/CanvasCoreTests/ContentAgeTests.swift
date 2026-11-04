@@ -43,7 +43,7 @@ struct ContentAgeTests {
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let reloaded = try await store.load(root: root)
         #expect(reloaded.snapshot.format == 3)
         #expect(untouched(reloaded) == [note.id])

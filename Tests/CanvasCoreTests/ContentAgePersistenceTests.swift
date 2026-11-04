@@ -53,7 +53,7 @@ struct ContentAgePersistenceTests {
         #expect(untouched(board) == expected)
         _ = try board.update(id, frame: Frame(x: 800, y: 500, w: 300, h: 200))
         #expect(untouched(board) == expected)
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let reloaded = try await store.load(root: root)
         #expect(reloaded.snapshot.format == 3)
         #expect(untouched(reloaded) == expected)
@@ -76,7 +76,7 @@ struct ContentAgePersistenceTests {
         try board.delete(id)
         #expect(board.undo())
         #expect(untouched(board) == expected)
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let reloaded = try await store.load(root: root)
         #expect(untouched(reloaded) == expected)
     }
@@ -88,7 +88,7 @@ struct ContentAgePersistenceTests {
         let revision = try board.object(id).rev
         try board.writeBookkeeping(id, props: .object(["title": "reported title"]))
         #expect(try board.object(id).rev == revision)
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let reloaded = try await store.load(root: root)
         #expect(untouched(reloaded) == [id])
         let value: JSONValue = prop == "command" ? .array(["/bin/sh"]) : "authored"

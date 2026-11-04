@@ -40,10 +40,11 @@ final class CodeNavigation: NSObject {
 
     /// Closes every service, including one still finding its server, then waits for its processes.
     /// Always defers quit so closing admission never blocks the main thread on a spawn.
-    static func terminateServers() -> NSApplication.TerminateReply {
+    static func terminateServers(saving save: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void) -> NSApplication.TerminateReply {
         let services = [languages] + RemoteSource.languageServices
         Task.detached {
             await withTaskGroup(of: Void.self) { group in
+                group.addTask { await ClientFiles.flush() }
                 for service in services {
                     group.addTask { await service.terminateAll(grace: .seconds(2)) }
                 }
@@ -51,7 +52,7 @@ final class CodeNavigation: NSObject {
             // While termination is deferred the main run loop runs only in the modal-panel mode,
             // which doesn't service the main queue (so not MainActor jobs either).
             RunLoop.main.perform(inModes: [.modalPanel, .default]) {
-                MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+                MainActor.assumeIsolated { save { NSApp.reply(toApplicationShouldTerminate: true) } }
             }
             CFRunLoopWakeUp(CFRunLoopGetMain())
         }

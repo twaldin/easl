@@ -432,7 +432,7 @@ final class AgentMessageTests {
         let client = try connect()
         _ = try await sent(client, ["target": "reviewer", "text": "Check the key.", "caller": .string(lead), "mentions": [.object(["object": .string(note)])]])
         _ = try await sent(client, ["target": "reviewer", "text": "Nightly failed.", "from": "machine-watch", "when": "next-turn"])
-        registry.store.save(board)
+        await registry.store.save(board)
 
         let reloaded = try await registry.store.load(root: dir.appendingPathComponent("root"))
         let saved = try #require(board.messages[reviewer]), loaded = try #require(reloaded.messages[reviewer])
@@ -442,7 +442,7 @@ final class AgentMessageTests {
             #expect(abs(now.queuedAt.timeIntervalSince(was.queuedAt)) < 1, "ISO 8601 to the second")
         }
         let exported = dir.appendingPathComponent("export.json")
-        try BoardStore.export(board, to: exported)
+        try await registry.store.export(board, to: exported)
         #expect(!(try String(contentsOf: exported, encoding: .utf8)).contains("Nightly failed."))
     }
 
@@ -522,7 +522,7 @@ final class AgentMessageTests {
         let reply = try await HtmlChannel.handle(.send(payload: .string("retained-page")), tile: page.id, board: board)
         let pageId = try #require(reply["message"]?.string)
         _ = try await call(try connect(), "agent.prompt", ["target": .string(host), "text": "ordinary-user"])
-        registry.store.save(board)
+        await registry.store.save(board)
 
         let restoredRegistry = BoardRegistry(store: registry.store)
         let restored = try await restoredRegistry.open(root: board.root)
@@ -671,7 +671,7 @@ final class AgentMessageTests {
         var snapshot = board.snapshot
         snapshot.messages = [host: [old, small]]
         let store = BoardStore(directory: dir.appendingPathComponent("legacy-bounce-boards"))
-        store.save(Board(snapshot: snapshot))
+        await store.save(Board(snapshot: snapshot))
         let restoredRegistry = BoardRegistry(store: store)
         let restored = try await restoredRegistry.open(root: board.root)
         let restoredRouter = ApiRouter(registry: restoredRegistry)
@@ -707,7 +707,7 @@ final class AgentMessageTests {
         snapshot.messages = [host: [oldOrdinary, small]]
         snapshot.htmlMessages = [host: [oldPage]]
         let store = BoardStore(directory: dir.appendingPathComponent("legacy-boards"))
-        store.save(Board(snapshot: snapshot))
+        await store.save(Board(snapshot: snapshot))
         let restoredRegistry = BoardRegistry(store: store)
         let restored = try await restoredRegistry.open(root: board.root)
         #expect(restored.htmlMessages[host] == nil)
@@ -981,7 +981,7 @@ final class AgentMessageTests {
         let authorized = AgentMessage(text: "\"true permission\"", from: nil, html: page.id, label: nil, when: .now, mentions: [], mayStartTurn: true)
         var snapshot = board.snapshot
         snapshot.htmlMessages = [host: [absent, inert, authorized]]
-        registry.store.save(Board(snapshot: snapshot))
+        await registry.store.save(Board(snapshot: snapshot))
         let restoredRegistry = BoardRegistry(store: registry.store)
         let restored = try await restoredRegistry.open(root: board.root)
         let restoredRouter = ApiRouter(registry: restoredRegistry)
@@ -1090,7 +1090,7 @@ final class AgentMessageTests {
         #expect(HtmlSendBudget.retainedBytes(stored) <= before)
         let final = try await call(client, "agent.read", ["target": .string(host), "final": .bool(true)])
         #expect(final["result"]?["text"] == "Existing final.")
-        registry.store.save(board)
+        await registry.store.save(board)
         let restoredRegistry = BoardRegistry(store: registry.store)
         let restored = try await restoredRegistry.open(root: board.root)
         #expect(restored.htmlMessages[host]?.first?.noticeAcknowledged == true)
@@ -1191,7 +1191,7 @@ final class AgentMessageTests {
         var snapshot = board.snapshot
         snapshot.messages = [host: [oversized, following]]
         let store = BoardStore(directory: dir.appendingPathComponent("overflow-history"))
-        store.save(Board(snapshot: snapshot))
+        await store.save(Board(snapshot: snapshot))
         let restoredRegistry = BoardRegistry(store: store)
         let restored = try await restoredRegistry.open(root: board.root)
         let restoredRouter = ApiRouter(registry: restoredRegistry)

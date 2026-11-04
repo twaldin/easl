@@ -273,7 +273,7 @@ struct HtmlSendBudgetTests {
         #expect(dropped.htmlMessages[host]?.map(\.text) == ["kept-after-huge"])
 
         let exported = root.appendingPathComponent("export.json")
-        try BoardStore.export(board, to: exported)
+        try await BoardStore(directory: root).export(board, to: exported)
         let export = try String(contentsOf: exported, encoding: .utf8)
         #expect(!export.contains("page-secret"))
     }

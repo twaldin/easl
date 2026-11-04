@@ -32,7 +32,7 @@ struct RepoBoardTests {
     func legacyBoard(_ root: URL, _ build: (Board) throws -> Void) async throws -> Board {
         let board = Board(id: try await legacyID(root), root: root)
         try build(board)
-        BoardStore(directory: boards).save(board)
+        await BoardStore(directory: boards).save(board)
         return board
     }
 
@@ -353,7 +353,7 @@ struct RepoBoardTests {
         let store = BoardStore(directory: boards)
         let board = try await store.load(root: plain)
         board.create(type: .note, props: .object(["markdown": .string("kept")]))
-        store.save(board)
+        await store.save(board)
         let file = boards.appendingPathComponent("\(board.id).json")
         let bytes = try Data(contentsOf: file)
 
@@ -370,7 +370,7 @@ struct RepoBoardTests {
         let store = BoardStore(directory: boards)
         let old = Board(id: BoardStore.pathID(repo.root), root: repo.root)
         let note = old.create(type: .note, props: .object(["markdown": .string("before the first commit")]))
-        store.save(old)
+        await store.save(old)
 
         let report = try #require(await BoardStore(directory: boards).migrateToRepoBoards())
         #expect(report.nonGit.isEmpty)
@@ -389,7 +389,7 @@ struct RepoBoardTests {
         let board = try await store.load(root: folder)
         board.create(type: .note, props: .object(["markdown": .string("made before git init")]), frame: Frame(x: 40, y: 60, w: 300, h: 200))
         board.create(type: .code, props: .object(["path": .string("src/a.txt")]), frame: Frame(x: 400, y: -80, w: 500, h: 300))
-        store.save(board)
+        await store.save(board)
         #expect(board.id == BoardStore.pathID(folder))
         #expect(try #require(await store.migrateToRepoBoards()).nonGit == [board.id])
         return (folder, board)
@@ -447,7 +447,7 @@ struct RepoBoardTests {
         let commonDir = try await makeRepository(folder)
         let empty = Board(id: BoardStore.repoID(commonDir: commonDir), root: folder)
         empty.repo = RepoRecord(commonDir: commonDir)
-        BoardStore(directory: boards).save(empty)
+        await BoardStore(directory: boards).save(empty)
 
         let store = BoardStore(directory: boards)
         #expect(await store.migrateToRepoBoards() == nil)
@@ -504,7 +504,7 @@ struct RepoBoardTests {
         let store = BoardStore(directory: boards)
         let secondOld = try await store.load(root: second)
         secondOld.create(type: .note, props: .object(["markdown": .string("the other folder")]))
-        store.save(secondOld)
+        await store.save(secondOld)
         _ = try await conflictingRepositoryBoard(first, firstOld)
         _ = try await conflictingRepositoryBoard(second, secondOld)
 
@@ -530,7 +530,7 @@ struct RepoBoardTests {
         let store = BoardStore(directory: boards)
         let old = try await store.load(root: app)
         try build(old)
-        store.save(old)
+        await store.save(old)
         #expect(await store.migrateToRepoBoards()?.nonGit == [old.id])
         for arguments in [["init", "-q", "--template=", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]] {
             try await TempRepo.run(arguments, in: project)
@@ -573,8 +573,8 @@ struct RepoBoardTests {
         target.relaunchedAgents.insert(ours.id)
         old.relaunchedAgents.insert(theirs.id)
         let store = BoardStore(directory: boards)
-        store.save(target)
-        store.save(old)
+        await store.save(target)
+        await store.save(old)
         for _ in 0..<3 {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
             let board = try await registry.open(root: worktree)
@@ -585,7 +585,7 @@ struct RepoBoardTests {
                 try board.releaseAgent(tile: tile)
                 #expect(board.objects[tile]?.props["agent"] == agent, "a killed agent's late release cannot clear an adopted pending relaunch")
             }
-            registry.store.save(board)
+            await registry.store.save(board)
         }
     }
 
@@ -669,7 +669,7 @@ struct RepoBoardTests {
         let diagram = old.create(type: .diagram, props: diagramProps(path, external: external))
         let arrow = old.create(type: .arrow, props: .object(["from": .object(["object": .string(diagram.id), "node": .string(path + "#run")]),
                                                             "to": .object(["object": .string(diagram.id), "node": .string(external + "#helper")])]))
-        BoardStore(directory: boards).save(old)
+        await BoardStore(directory: boards).save(old)
         let board = try await BoardRegistry(store: BoardStore(directory: boards)).open(root: source)
         #expect(real(board.root.path) == real(repo.root.path))
         #expect(board.repo?.merged == [old.id])
@@ -689,7 +689,7 @@ struct RepoBoardTests {
         let terminal = old.create(type: .terminal, props: .object(["cwd": .string(worktree.path)]), frame: Frame(x: 500, y: 200, w: 300, h: 200))
         #expect(terminal.props["worktree"] == nil && terminal.props["branch"] == nil, "the folder board's terminal was not stamped")
         let store = BoardStore(directory: boards)
-        store.save(old)
+        await store.save(old)
         var region: ObjectID?
         var runs: Int?
         for _ in 0..<3 {
@@ -723,7 +723,7 @@ struct RepoBoardTests {
             #expect(board.objects[code.id]?.props["ref"] == nil)
             #expect(board.objects[note.id]?.props["root"] == .string(worktree.path))
             #expect(board.objects[note.id]?.props["ref"] == nil)
-            registry.store.save(board)
+            await registry.store.save(board)
             let count = try ledgerRuns()
             #expect(runs == nil || runs == count)
             runs = count
@@ -744,7 +744,7 @@ struct RepoBoardTests {
             WorktreeRecord(path: path, branch: "old", region: historical.id),
         ])
         let store = BoardStore(directory: boards)
-        store.save(board)
+        await store.save(board)
         for _ in 0..<3 {
             let registry = BoardRegistry(store: BoardStore(directory: boards))
             let router = ApiRouter(registry: registry)

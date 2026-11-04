@@ -92,7 +92,7 @@ extension ApiRouterTests {
         let blocked = dir.appendingPathComponent("open-boards.json")
         try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: true)
         do {
-            try registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
+            try await registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
             Issue.record("close accepted a failed reopen-list write")
         } catch let failure as ApiRouter.Failure {
             #expect(failure.code == "unavailable")
@@ -101,7 +101,7 @@ extension ApiRouterTests {
         #expect(!board.isClosed)
         #expect(board.objects[note.id]?.props["markdown"] == "saved before eviction")
         try FileManager.default.removeItem(at: blocked)
-        try registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
+        try await registry.close(board.id) { try Data("[]".utf8).write(to: blocked, options: .atomic) }
         #expect(try String(contentsOf: blocked, encoding: .utf8) == "[]")
         #expect(try await registry.open(root: board.root).objects[note.id]?.props["markdown"] == "saved before eviction")
     }
@@ -113,10 +113,10 @@ extension ApiRouterTests {
         _ = try await call(client, "board.open", ["root": .string(board.root.path)])
         let reopened = try #require(registry.boards[board.id])
         _ = try reopened.update(note.id, props: .object(["markdown": "new board owns this file"]))
-        try registry.store.saveChecked(reopened)
+        try await registry.store.saveChecked(reopened)
         _ = try board.update(note.id, props: .object(["markdown": "stale board"]))
         registry.store.scheduleSave(board)
-        registry.store.save(board)
+        await registry.store.save(board)
         try await Task.sleep(for: .milliseconds(650))
         let data = try Data(contentsOf: registry.store.url(for: board.id))
         let snapshot = try JSONDecoder().decode(JSONValue.self, from: data)
@@ -306,7 +306,7 @@ extension AgentControlTests {
             let duplicate = try await call("board.close", ["board": .string(id)])
             #expect(duplicate["error"]?["code"] == "conflict")
             let result = BoardCloseResult(board: board)
-            try registry.close(id)
+            try await registry.close(id)
             return result
         }
         #expect(try await call("board.close", ["board": .string(board.id)])["result"]?["kept"] == .array([.object(["id": .string(worker), "name": "worker"])]))

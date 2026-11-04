@@ -241,8 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), on: host, lines: lines, columns: columns, screen: screen) }
         }
         let router = router
-        let server = SocketServer(path: AppPaths.apiSocket) { [weak self] request, connection in
+        let server = SocketServer(path: AppPaths.apiSocket) { @MainActor [weak self] request, connection in
             await self?.localRestore?.value
+            guard self?.terminating != true else { return nil }
             return await router.handle(request, connection: connection)
         }
         do {
@@ -258,8 +259,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await tile.perform(command, driver: driver)
         }
         let cmux = cmux
-        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { [weak self] request, connection in
+        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { @MainActor [weak self] request, connection in
             await self?.localRestore?.value
+            guard self?.terminating != true else { return nil }
             return await cmux.handle(request, connection: connection)
         }
         do {
@@ -373,11 +375,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pasteMaintenance?.stop()
         updateRestoration?.cancel()
         pasteMaintenance = nil
-        for controller in controllers.values { controller.canvas.saveViewport() }
-        registry.store.flush(Array(registry.boards.values))
-        for controller in controllers.values { controller.saveComposer() }
-        server?.stop()
-        cmuxServer?.stop()
         // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
         // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
         // Every remote board's attachment ends with its links; the reopen list stays for the next launch.
@@ -398,7 +395,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         localRestore?.cancel()
         updateRestoration?.cancel()
         for opening in openingWindows.values { opening.shown.cancel() }
-        return CodeNavigation.terminateServers()
+        return CodeNavigation.terminateServers { [self] completion in
+            server?.stop()
+            cmuxServer?.stop()
+            for controller in controllers.values {
+                controller.canvas.saveViewport()
+                controller.saveComposer()
+            }
+            registry.store.beginFlush(Array(registry.boards.values), completion: completion)
+        }
     }
 
     private var terminating = false
@@ -664,6 +669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             throw ApiRouter.Failure("unavailable", message)
                         }
                         ended.append(terminal)
+                        guard registry.boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(board.id) closed while ending sessions") }
                         if board.objects[terminal.id] != nil {
                             let callback = registry.onTerminalsEnded
                             registry.onTerminalsEnded = nil
@@ -683,7 +689,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller?.canvas.saveViewport()
                 controller?.saveComposer()
                 result = BoardCloseResult(board: board, ended: ended)
-                try registry.close(board.id) {
+                try await registry.close(board.id) {
+                    try refuseLastBoard()
+                    guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
                     do {
                         try writeOpenBoards(openLocalBoards(excluding: controller?.window))
                     } catch {

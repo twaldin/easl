@@ -12,6 +12,7 @@ public final class BoardRegistry {
     /// Boards loading for `open`: an open of one still loading waits for it.
     private var loading: [BoardID: Task<Board, Error>] = [:]
     private var closedComposerReceipts: [BoardID: [ComposerNotice]] = [:]
+    private var closing: Set<BoardID> = []
     /// App-level observer for every board's events (UI reconciliation). Socket subscribers are fed separately.
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
@@ -141,10 +142,13 @@ public final class BoardRegistry {
 
     public func windowIsOpen(_ id: BoardID) -> Bool { !closedWindows.contains(id) }
 
-    public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) throws {
+    public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) async throws {
         guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
+        guard closing.insert(board.id).inserted else { throw ApiRouter.Failure("conflict", "board \(board.id) is already closing") }
+        defer { closing.remove(board.id) }
         do {
-            try store.saveChecked(board)
+            try await store.saveChecked(board)
+            guard boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(id)") }
             try beforeEviction()
         } catch let failure as ApiRouter.Failure {
             throw failure
@@ -476,6 +480,16 @@ public final class ApiRouter {
                 return nil
             case "board.open_remote": return Self.ok(id, try await openRemote(params))
             case "board.close": return Self.ok(id, try await close(params))
+            case "board.export":
+                let board = try board(params)
+                let url = board.absoluteURL(params["path"]?.string ?? ".easl/board.json").standardizedFileURL
+                let objectCount = board.objects.count
+                do {
+                    try await registry.store.export(board, to: url)
+                } catch {
+                    throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
+                }
+                return Self.ok(id, .object(["path": .string(url.path), "objects": .number(Double(objectCount))]))
             case "board.stale": return Self.ok(id, try await stale(params))
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
@@ -833,7 +847,7 @@ public final class ApiRouter {
         guard let board = registry.boards[id] else { throw Failure("not_found", "board \(id)") }
         if endSessions == true { throw Failure("unsupported", "ending sessions needs the app UI") }
         let result = BoardCloseResult(board: board)
-        try registry.close(board.id)
+        try await registry.close(board.id)
         return result.json
     }
 
@@ -1825,16 +1839,6 @@ public final class ApiRouter {
             }
             let remote = remoteTabs?().compactMap { $0.isOpen ? $0.info.listJSON : nil } ?? []
             return .object(["boards": .array(boards + remote)])
-
-        case "board.export":
-            let board = try board(p)
-            let url = board.absoluteURL(p["path"]?.string ?? ".easl/board.json").standardizedFileURL
-            do {
-                try BoardStore.export(board, to: url)
-            } catch {
-                throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
-            }
-            return .object(["path": .string(url.path), "objects": .number(Double(board.objects.count))])
 
         case "object.get":
             let id = try string(p, "id")

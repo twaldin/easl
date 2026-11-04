@@ -48,7 +48,7 @@ struct BoardTests {
         let board = try await store.load(root: root)
         let note = board.create(type: .note, props: .object(["markdown": .string("keep me staged")]))
         let mention = try board.stage(.object(note.id))
-        store.save(board)
+        await store.save(board)
 
         let reloaded = try await store.load(root: root)
         #expect(reloaded.tray.map(\.id) == [mention.id])
@@ -69,7 +69,7 @@ struct BoardTests {
         try board.delete(gone.id)
         try board.reportLifecycle(tile: agent.id, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp")
         try board.reportLifecycle(tile: agent.id, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp")
-        store.save(board)
+        await store.save(board)
 
         let reloaded = try await store.load(root: root)
         #expect(Array(reloaded.attention.keys) == [old.id], "seen and deleted objects' markers are gone")
@@ -242,7 +242,7 @@ struct BoardTests {
             tiles.append(tile)
             try board.reportLifecycle(tile: tile, kind: "omp", state: state, message: nil, seq: 10, source: "canvas-omp", error: "provider unavailable", turnOutcome: .error, protocol: 4)
         }
-        store.save(board)
+        await store.save(board)
         let restored = try await store.load(root: root)
         for tile in tiles {
             let failed = try #require(board.objects[tile]?.props["lifecycle"])

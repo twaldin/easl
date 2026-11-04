@@ -51,7 +51,7 @@ struct BoardStackingMigrationTests {
             reordered.objects.reverse()
             #expect(Board(snapshot: reordered).objects == board.objects)
 
-            try store.saveChecked(board)
+            try await store.saveChecked(board)
             let onDisk = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: board.id)))
             #expect(onDisk.format == 3 && onDisk.objects == saved.objects)
             let reopened = try await BoardStore(directory: store.directory).load(root: root, id: board.id)
@@ -70,7 +70,7 @@ struct BoardStackingMigrationTests {
 
         try board.update("obj_tile_low", z: -100)
         let store = BoardStore(directory: directory.appendingPathComponent("boards"))
-        try store.saveChecked(board)
+        try await store.saveChecked(board)
         let reopened = try await BoardStore(directory: store.directory).load(root: directory, id: board.id)
         #expect(reopened.snapshot.objects.map(\.z) == [-100, -40, -40, -10, 5, 500, 500, 700, 900])
         #expect(reopened.snapshot.objects.map(\.id) == ["obj_tile_low", "obj_ink_a", "obj_shape_b", "obj_arrow", "obj_text", "obj_tile_a", "obj_tile_z", "obj_group_a", "obj_group_z"])

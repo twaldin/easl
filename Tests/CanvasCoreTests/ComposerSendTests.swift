@@ -499,7 +499,7 @@ final class ComposerSendTests {
         let subscriber = try LineClient(path: dir.appendingPathComponent("s").path)
         subscriber.send(#"{"id":"sub","method":"events.subscribe","params":{"board":"\#(board.id)","events":["composer.returned","board.closed"]}}"#)
         #expect(try await subscriber.next()["ok"] == .bool(true))
-        try registry.close(board.id)
+        try await registry.close(board.id)
         let returned = try await subscriber.next()
         let closed = try await subscriber.next()
         #expect(returned["event"]?.string == "composer.returned")
