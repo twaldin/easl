@@ -1267,8 +1267,10 @@ private enum SelectionTyping {
         guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
             throw Failure("the first single prose press must open the native editor before dragging")
         }
+        print("CARET rendered=\(reversed ? 15 : 6) selected=\(editor.selectedRange()) point=\(down)")
+        fflush(nil)
         try require(editor.selectedRange() == NSRange(location: reversed ? 15 : 6, length: 0),
-            "the initial rendered prose press must map to its exact raw-source caret")
+            "rendered offset \(reversed ? 15 : 6) must map to the same raw-source caret; actual=\(editor.selectedRange())")
         let rect = editor.firstRect(forCharacterRange: NSRange(location: reversed ? 6 : 15, length: 1), actualRange: nil)
         try require(rect.width > 0 && rect.height > 0, "native drag destination must have editor character geometry")
         let up = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + min(1, rect.width / 10), y: rect.midY))
