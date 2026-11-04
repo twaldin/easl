@@ -1916,9 +1916,11 @@ final class CanvasView: NSScrollView {
     /// Writes the view now unless the file holds it already: when the board's tab closes and the
     /// app quits. A write that failed is tried again at the next of those.
     func saveViewport() {
-        viewportSave?.cancel()
-        guard viewPlaced else { return }
-        viewportRecorder?.record(currentViewport)
+        Metrics.shared.span("save", "save.viewport", detail: board.id) {
+            viewportSave?.cancel()
+            guard viewPlaced else { return }
+            viewportRecorder?.record(currentViewport)
+        }
     }
 
     private func scroll(to origin: NSPoint) {

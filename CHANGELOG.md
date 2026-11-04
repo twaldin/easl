@@ -2,10 +2,11 @@
 
 Each version's section is its GitHub release's notes.
 
-## Unreleased
+## 0.3.7 (unreleased)
 
 ### Fixed
 
+- Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
 - Selecting one tile by click, Tab, or a chosen Go to result now gives it typing. Note prose edits after one click at the clicked source position, and every HTML body click moves typing synchronously before later keys. Marquee, multi-selection, group selection, and noninteractive tiles keep keys on the board.
 - Programmatic navigation preserves the current keyboard owner while changing selection. Existing solid and dashed rings distinguish typing from selection. Command-Escape returns typing to the board without changing selection; plain Escape keeps each tile's behavior, including terminal programs.
 - Undo and redo in browser and HTML text fields use the page's text history, never the board's object history. Note editors keep their own undo history so a hidden note cannot consume a page's undo.

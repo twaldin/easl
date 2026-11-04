@@ -698,8 +698,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
                     }
                 }
-                controllers.removeValue(forKey: board.id)
-                openedOrder.removeAll { $0 == board.id }
+                Metrics.shared.span("save", "save.complete", detail: board.id) {
+                    controllers.removeValue(forKey: board.id)
+                    openedOrder.removeAll { $0 == board.id }
+                }
             } catch {
                 let failure = (error as? ApiRouter.Failure) ?? ApiRouter.Failure("unavailable", error.localizedDescription)
                 guard !ended.isEmpty else { throw failure }
@@ -721,7 +723,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let controller = target.controller {
             let privateWindow = openingWindows[ObjectIdentifier(controller.board)]?.controller === controller
-            retire(controller, savingFrame: !privateWindow)
+            if case .local = target {
+                Metrics.shared.span("save", "save.complete", detail: id) {
+                    retire(controller, savingFrame: !privateWindow)
+                }
+            } else {
+                retire(controller, savingFrame: !privateWindow)
+            }
         }
         return result
     }

@@ -7,6 +7,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Local board basics](local-board.md) covers creation, selection, title-bar movement, undo, and drawing.
 - [Move tool](move-tool.md) covers body drags, groups, cancellation, and input isolation.
 - [Unreadable boards](unreadable-boards.md) covers refusal, recovery copies, restore, and migration.
+- [Board saves](board-saves.md) covers main-thread save attribution, delayed worker writes, default and modal completion, and idle-cost comparisons.
 - [Terminals](terminals.md) covers native creation, typing, persistent sessions, and remote ownership.
 - [Composer](composer.md) covers focus, targets, sending, mentions, text editing, history, and delivery receipts.
 - [Prompt delivery](prompt-delivery.md) covers lost replies, non-delivery, reconciliation, and unsupported hosts.
