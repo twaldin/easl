@@ -276,9 +276,15 @@ private enum SelectionTyping {
                     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
                     process.arguments = arguments
                     process.currentDirectoryURL = root
-                    try process.run()
-                    process.waitUntilExit()
-                    guard process.terminationStatus == 0 else { throw Failure("git fixture setup failed") }
+                    let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+                        process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                        do { try process.run() }
+                        catch {
+                            process.terminationHandler = nil
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                    guard status == 0 else { throw Failure("git fixture setup failed") }
                 }
                 try Data("let changed = true\n".utf8).write(to: source)
             }
@@ -1255,7 +1261,7 @@ private enum SelectionTyping {
             descendants(tile).compactMap { $0 as? NSTextView }.first {
                 guard !$0.isEditable, !$0.isHiddenOrHasHiddenAncestor, let storage = $0.textStorage, storage.length > 0 else { return false }
                 return whitespace
-                    ? storage.attribute(.noteSourcePosition, at: 0, effectiveRange: nil) == nil
+                    ? storage.attribute(NSAttributedString.Key("canvas.note.sourcePosition"), at: 0, effectiveRange: nil) == nil
                         && storage.attribute(.noteMarkdownLine, at: 0, effectiveRange: nil) == nil
                     : $0.string.contains("Before.") && $0.string.contains(" \n")
             }
