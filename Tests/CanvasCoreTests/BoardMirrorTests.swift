@@ -971,10 +971,11 @@ final class BoardMirrorTests {
 
     /// Runs `body` once, on the main actor (a test's host changes, from a server's handler).
     @MainActor final class Once {
-        var body: (() -> Void)?
-        func run() {
-            body?()
-            body = nil
+        var body: (() async -> Void)?
+        func run() async {
+            let body = body
+            self.body = nil
+            await body?()
         }
     }
 
@@ -1098,7 +1099,7 @@ final class BoardMirrorTests {
         }
         var redraws = 0
         mirror.onRedraw = { redraws += 1 }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         #expect(closedObjects?.count == 2)
         #expect(shows(closedObjects?[edited.id], edited))
@@ -1168,7 +1169,7 @@ final class BoardMirrorTests {
         try await eventually { pending.withLock { $0 != nil } }
         #expect(mirror.reading != nil)
         let final = try host.update(edited.id, props: .object(["markdown": "received before close"]))
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         pending.withLock { $0 }?()
         try await Task.sleep(for: .milliseconds(100))
@@ -1206,7 +1207,7 @@ final class BoardMirrorTests {
         }
         try server.start()
         try await eventually { pending.withLock { $0 != nil } }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         pending.withLock { $0 }?()
         try await Task.sleep(for: .milliseconds(100))
@@ -1257,7 +1258,7 @@ final class BoardMirrorTests {
         }
         try await eventually { pending.withLock { $0 != nil } }
         #expect(!shows(board.objects[edited.id], edited) || provisional != nil)
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         #expect(board.objects.count == 1 && shows(board.objects[edited.id], edited))
         if let provisional { #expect(board.objects[provisional] == nil) }
@@ -1299,7 +1300,7 @@ final class BoardMirrorTests {
         mirror.serve(window(), as: identity)
         try await eventually { pending.withLock { $0 != nil } }
         mirror.userFocused()
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         mirror.userFocused()
         pending.withLock { $0 }?()
@@ -1330,7 +1331,7 @@ final class BoardMirrorTests {
             return true
         }), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         server.stop()
         try await eventually { mirror.connection.state == .offline }
@@ -1363,7 +1364,7 @@ final class BoardMirrorTests {
         defer { mirror.close() }
         server.stop()
         try await eventually { mirror.connection.state == .offline }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         server = Self.serve(router, at: socket)
         try server.start()
         try await eventually { mirror.connection.state == .online && mirror.availability == .closed }
@@ -1389,7 +1390,7 @@ final class BoardMirrorTests {
         let once = Once()
         once.body = { [unowned self] in
             if closeBoard {
-                try? registry.close(host.id)
+                try? await registry.close(host.id)
             } else {
                 try? host.delete(edited.id)
             }
@@ -1472,7 +1473,7 @@ final class BoardMirrorTests {
         var pasted: [String] = []
         mirror.serve(window(submit: { _, text in pasted.append(text); return true }), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         failure.withLock { $0 = "HTML reopen failed" }
         let reopened = try await registry.open(root: host.root)
@@ -1517,7 +1518,7 @@ final class BoardMirrorTests {
         defer { mirror.close() }
         mirror.serve(window(), as: identity)
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         holdRead.withLock { $0 = true }
         let reopened = try await registry.open(root: host.root)
@@ -1572,7 +1573,7 @@ final class BoardMirrorTests {
         try await eventually { mirror.attachment == .attached(client: "cli_1", version: 1) }
         var availability: [BoardMirror.Availability] = []
         mirror.onAvailability = { availability.append($0) }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         let lastSeen = board.objects
         holdRead.withLock { $0 = true }
@@ -1581,7 +1582,7 @@ final class BoardMirrorTests {
         #expect(mirror.reading != nil)
         let terminal = unfinished.create(type: .terminal, props: .object(["cwd": .string(dir.path)]))
         _ = try unfinished.update(edited.id, props: .object(["markdown": "unfinished reopen"]))
-        try registry.close(unfinished.id)
+        try await registry.close(unfinished.id)
         try await eventually { mirror.reading == nil }
         #expect(board.objects == lastSeen)
         #expect(board.objects.count == 1 && shows(board.objects[edited.id], edited))
@@ -1611,7 +1612,7 @@ final class BoardMirrorTests {
         let edited = note("last seen")
         let (mirror, board) = try await mirror()
         defer { mirror.close() }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         server.stop()
         try await eventually { mirror.connection.state == .offline }
@@ -1650,7 +1651,7 @@ final class BoardMirrorTests {
         #expect(mirror.sessionBoardID == host.id)
         var availability: [BoardMirror.Availability] = []
         mirror.onAvailability = { availability.append($0) }
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed }
         server.stop()
         try await eventually { mirror.connection.state == .offline }
@@ -2111,7 +2112,7 @@ final class BoardMirrorTests {
             easld.announce([client(source.id, serving: host.id)], board: host.id)
             try await eventually { mirror.drawingMachines == [source.id] }
         case "incarnation":
-            try registry.close(host.id)
+            try await registry.close(host.id)
             try await eventually { mirror.availability == .closed }
             _ = try await registry.open(root: host.root)
             try await eventually { mirror.availability == .open }
@@ -2187,7 +2188,7 @@ final class BoardMirrorTests {
         easld.call(method, params) { reply in waiting.withLock { $0 = reply } }
         try await Task.sleep(for: .milliseconds(100))
         #expect(waiting.withLock { $0 } == nil)
-        try registry.close(host.id)
+        try await registry.close(host.id)
         try await eventually { mirror.availability == .closed && waiting.withLock { $0 != nil } }
         #expect(waiting.withLock { $0?["error"]?["code"] } == .string("unavailable"))
         #expect(dispatched == [page.id])

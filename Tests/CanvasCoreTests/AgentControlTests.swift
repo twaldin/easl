@@ -125,7 +125,7 @@ final class AgentControlTests {
         let since = savedAt.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
         let bounded = String(repeating: "🦊", count: 499) + "…"
         let expected: JSONValue = .object(["state": "idle", "seen": .bool(false), "error": .string(bounded), "message": .string(bounded), "errorCount": 1, "errorSince": .string(since)])
-        try registry.close(board.id)
+        try await registry.close(board.id)
         let closed = try #require(try await listed()[tile.id])
         #expect(closed["open"] == .bool(false))
         #expect(closed["lifecycle"] == expected)
@@ -144,7 +144,7 @@ final class AgentControlTests {
         try other.reportSession(tile: reviewer, kind: "omp", sessionId: "s1", sessionPath: nil, model: "openai/gpt-5.2", thinking: "medium")
         try other.reportLifecycle(tile: shell, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", draft: true)
         let otherID = other.id
-        try registry.close(otherID)
+        try await registry.close(otherID)
         let here = terminal()
 
         // zmx knows the reviewer's session (running its agent) and not the shell's.
@@ -614,7 +614,7 @@ final class AgentControlTests {
         try await report(tile, "idle", seq: 2, ["draft": .bool(false)])
         _ = try await call("agent.report_session", ["tile": .string(tile), "kind": "omp", "sessionId": "s1"])
         #expect(try await call("agent.restart", ["target": "worker", "mode": "resume"])["ok"] == .bool(true))
-        try registry.close(board.id)
+        try await registry.close(board.id)
         let reopened = try await registry.open(root: dir.appendingPathComponent("root"))
         router.firstReportGrace = 0.05
         let reply = try await call("agent.wait", ["target": "worker", "timeoutMs": 1000])

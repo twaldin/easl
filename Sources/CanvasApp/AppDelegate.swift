@@ -373,9 +373,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pasteMaintenance?.stop()
         updateRestoration?.cancel()
         pasteMaintenance = nil
-        for controller in controllers.values { controller.canvas.saveViewport() }
-        registry.store.flush(Array(registry.boards.values))
-        for controller in controllers.values { controller.saveComposer() }
         server?.stop()
         cmuxServer?.stop()
         // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
@@ -398,7 +395,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         localRestore?.cancel()
         updateRestoration?.cancel()
         for opening in openingWindows.values { opening.shown.cancel() }
-        return CodeNavigation.terminateServers()
+        for controller in controllers.values {
+            controller.canvas.saveViewport()
+            controller.saveComposer()
+        }
+        return CodeNavigation.terminateServers { completion in
+            registry.store.beginFlush(Array(registry.boards.values), completion: completion)
+        }
     }
 
     private var terminating = false
@@ -664,6 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             throw ApiRouter.Failure("unavailable", message)
                         }
                         ended.append(terminal)
+                        guard registry.boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(board.id) closed while ending sessions") }
                         if board.objects[terminal.id] != nil {
                             let callback = registry.onTerminalsEnded
                             registry.onTerminalsEnded = nil
@@ -683,7 +687,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller?.canvas.saveViewport()
                 controller?.saveComposer()
                 result = BoardCloseResult(board: board, ended: ended)
-                try registry.close(board.id) {
+                try await registry.close(board.id) {
+                    try refuseLastBoard()
+                    guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
                     do {
                         try writeOpenBoards(openLocalBoards(excluding: controller?.window))
                     } catch {

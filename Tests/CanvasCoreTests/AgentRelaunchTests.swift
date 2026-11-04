@@ -20,8 +20,8 @@ final class AgentRelaunchTests {
         let board: Board
         let socket: String
 
-        func quit() {
-            registry.store.save(board)
+        func quit() async {
+            await registry.store.save(board)
         }
     }
 
@@ -83,7 +83,7 @@ final class AgentRelaunchTests {
         let before = try await launch()
         let codex = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 100, source: "canvas-codex")
-        before.quit()
+        await before.quit()
 
         // Codex worked on and finished while easl was closed; its hooks spooled every report.
         // One from before the last applied report (it timed out as easl quit) is stale.
@@ -109,7 +109,7 @@ final class AgentRelaunchTests {
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", final: "Committed d327349.")
         before.board.markSeen(omp)
-        before.quit()
+        await before.quit()
 
         let after = try await launch()
         let final = try await call(after, "agent.read", ["target": .string(omp), "final": .bool(true)])
@@ -128,14 +128,14 @@ final class AgentRelaunchTests {
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 200, source: "canvas-omp")
-        before.quit()
+        await before.quit()
 
         // A release older than the last report applied (a new session had started) is stale.
         try spooled(omp, seq: 150, method: "agent.release", ["kind": "omp", "source": "canvas-omp"])
         let stale = try await launch()
         try await eventually { spoolIsEmpty(omp) }
         #expect(stale.board.objects[omp]?.props["lifecycle"]?["state"] == .string("done"))
-        stale.quit()
+        await stale.quit()
 
         try spooled(omp, seq: 300, method: "agent.release", ["kind": "omp", "source": "canvas-omp"])
         let after = try await launch()
@@ -147,7 +147,7 @@ final class AgentRelaunchTests {
         let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
-        before.quit()
+        await before.quit()
 
         // omp's `ask` came up while easl was closed; the extension spooled its blocked report.
         try spooled(omp, seq: 101, ["kind": "omp", "state": "blocked", "source": "canvas-omp", "message": "Commit?"])
@@ -166,7 +166,7 @@ final class AgentRelaunchTests {
         let before = try await launch()
         let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
-        before.quit()
+        await before.quit()
 
         // An extension from before the spool dropped what it said while easl was closed.
         let after = try await launch()

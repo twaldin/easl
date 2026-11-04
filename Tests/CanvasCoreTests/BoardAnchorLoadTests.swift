@@ -214,7 +214,7 @@ final class BoardAnchorLoadTests {
         }
         #expect(!encoded(boardReply).contains("KEEP_") && !encoded(boardReply).contains("LEAKED_"))
 
-        try fixture.store.saveChecked(loaded)
+        try await fixture.store.saveChecked(loaded)
         let pending = try saved(loaded.id, in: fixture.store)
         #expect(pending.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == fixture.allowed.props["markdown"], "a save before git settles must not erase recoverable anchors")
         let subscriber = try LineClient(path: socket)
@@ -232,7 +232,7 @@ final class BoardAnchorLoadTests {
         #expect(editedEvent["data"]?["id"] == .string(fixture.edited.id))
         #expect(editedEvent["data"]?["props"]?["markdown"] == .string(authored))
         let revision = loaded.revision
-        try fixture.store.saveChecked(loaded)
+        try await fixture.store.saveChecked(loaded)
 
         try await holds.finish()
         await loaded.waitForAnchorScrub()
@@ -253,7 +253,7 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(fixture.code.id).props["anchor"] == "KEEP_CODE")
         #expect(try loaded.object(fixture.denied.id).props["anchor"] == nil)
         #expect(loaded.revision == revision + 2, "restoration advances only the board event cursor, not object revisions")
-        fixture.store.flush([loaded])
+        await fixture.store.flush([loaded])
         let settled = try saved(loaded.id, in: fixture.store)
         #expect(settled.objects.first { $0.id == fixture.allowed.id }?.frame == frame)
         #expect(settled.objects.first { $0.id == fixture.edited.id }?.props["markdown"] == .string(authored))
@@ -314,7 +314,7 @@ final class BoardAnchorLoadTests {
         #expect(try loaded.object(fixture.edited.id).props["markdown"] == .string(authored))
         try await replay("vw_anchor_delete")
         #expect(try loaded.object(fixture.code.id).props["anchor"] == "KEEP_CODE")
-        try fixture.store.saveChecked(loaded)
+        try await fixture.store.saveChecked(loaded)
         let persisted = try saved(loaded.id, in: fixture.store)
         #expect(persisted.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == .string(fixture.accepted))
         #expect(persisted.objects.first { $0.id == fixture.code.id }?.props["anchor"] == "KEEP_CODE")
@@ -336,7 +336,7 @@ final class BoardAnchorLoadTests {
         let registry = BoardRegistry(store: fixture.store)
         let first = try await registry.open(root: fixture.repo.root)
         #expect(first.isAnchorScrubPending(fixture.allowed.id))
-        try registry.close(first.id)
+        try await registry.close(first.id)
         #expect(try saved(first.id, in: fixture.store).objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == fixture.allowed.props["markdown"])
         let replacement = try await registry.open(root: fixture.repo.root)
         #expect(replacement !== first)
@@ -344,7 +344,7 @@ final class BoardAnchorLoadTests {
         let authored = "Only the reopened board's edit survives."
         _ = try replacement.update(fixture.allowed.id, props: .object(["markdown": .string(authored)]))
         try replacement.delete(fixture.code.id)
-        try fixture.store.saveChecked(replacement)
+        try await fixture.store.saveChecked(replacement)
         let revision = replacement.revision
 
         try await holds.finish()
@@ -358,7 +358,7 @@ final class BoardAnchorLoadTests {
         let beforeFlush = try saved(replacement.id, in: fixture.store)
         #expect(beforeFlush.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == .string(authored))
         #expect(beforeFlush.objects.first { $0.id == fixture.code.id } == nil)
-        fixture.store.flush([replacement])
+        await fixture.store.flush([replacement])
         let persisted = try saved(replacement.id, in: fixture.store)
         #expect(persisted.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] == .string(authored))
         #expect(persisted.objects.first { $0.id == fixture.code.id } == nil)
@@ -446,19 +446,19 @@ final class BoardAnchorLoadTests {
         let moved = try loaded.update(note.id, rev: loaded.object(note.id).rev, frame: Frame(x: 40, y: 50, w: 400, h: 300))
         session.observe(moved)
         loaded.recordRefSha(note.id, ref: "main", sha: sha)
-        try fixture.store.saveChecked(loaded)
+        try await fixture.store.saveChecked(loaded)
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))
         try await holds.finish()
         await loaded.waitForAnchorScrub()
         #expect(try loaded.object(note.id).props["markdown"] == .string(markdown))
-        fixture.store.flush([loaded])
+        await fixture.store.flush([loaded])
         #expect(try loaded.object(note.id).props["refSha"] == .string(sha))
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(markdown))
         session.observe(try loaded.object(note.id))
         #expect(!session.conflicted)
         let typed = "Typed while the board was checking anchors."
         #expect(try session.commit(typed, confirmed: false, on: loaded) == .saved)
-        try fixture.store.saveChecked(loaded)
+        try await fixture.store.saveChecked(loaded)
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(typed))
     }
 

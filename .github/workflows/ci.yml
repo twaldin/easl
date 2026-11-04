@@ -73,6 +73,8 @@ jobs:
           python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --ci-timing-report-only
       - name: Native main-thread stall capture regression
         run: python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/stall-sampler" --ci-timing-report-only
+      - name: Native board save responsiveness and atomic crash regression
+        run: python3 Tests/BoardSave/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/board-save"
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests

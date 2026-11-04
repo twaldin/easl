@@ -42,10 +42,10 @@ extension ApiRouterTests {
         #expect(retried["error"]?["code"] == "unavailable")
         #expect(try unreadableCopies(of: file) == copies)
         if let accidentallyOpened = registry.boards[id] {
-            registry.store.save(accidentallyOpened)
+            await registry.store.save(accidentallyOpened)
         }
         _ = try await call(client, "board.close", ["board": .string(id)])
-        registry.store.flush(Array(registry.boards.values))
+        await registry.store.flush(Array(registry.boards.values))
         #expect(try Data(contentsOf: file) == original)
         #expect(try Data(contentsOf: copy) == original)
 
@@ -54,8 +54,8 @@ extension ApiRouterTests {
         try BoardStore.encoder.encode(repaired.snapshot).write(to: file, options: .atomic)
         let recovered = try await registry.open(root: root)
         #expect(recovered.objects[kept.id]?.props["markdown"] == "repaired board")
-        try registry.close(id)
-        registry.store.flush(Array(registry.boards.values))
+        try await registry.close(id)
+        await registry.store.flush(Array(registry.boards.values))
         #expect(try Data(contentsOf: copy) == original)
         #expect(try unreadableCopies(of: file) == copies)
     }

@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 
 /// Persists boards under Application Support: one per git repository (its common git
@@ -8,7 +9,28 @@ public final class BoardStore {
     public let directory: URL
     private let files: Files
     private var pendingSaves: [BoardID: DispatchWorkItem] = [:]
+    private var saves: [BoardID: Save] = [:]
+    private var flushes: [Flush] = []
     private let debounce: TimeInterval
+
+    @MainActor private final class Save {
+        let board: Board
+        let onChange: (() -> Void)?
+        var version = 0
+        var completedVersion = -1
+        var isWriting = false
+        var checked = 0
+        var waiters: [(version: Int, continuation: CheckedContinuation<Void, Error>)] = []
+
+        init(_ board: Board) {
+            self.board = board
+            onChange = board.onChange
+        }
+    }
+    private struct Flush {
+        let boards: [Board]
+        let completion: @MainActor @Sendable () -> Void
+    }
 
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -20,6 +42,13 @@ public final class BoardStore {
         self.directory = directory
         self.debounce = debounce
         files = Files(directory: directory)
+    }
+
+    init(directory: URL, debounce: TimeInterval = 0.5,
+         write: @escaping @Sendable (Data, URL, Data.WritingOptions) throws -> Void) {
+        self.directory = directory
+        self.debounce = debounce
+        files = Files(directory: directory, write: write)
     }
 
     /// Stable board id for a root directory: its repository's (`repoID`), else its path's.
@@ -78,10 +107,14 @@ public final class BoardStore {
             let checked = await BoardAnchorScrub.check(held, boardRoot: URL(fileURLWithPath: stored.root), areas: areas)
             guard let self, let board, !board.isClosed, !Task.isCancelled else { return }
             board.settleAnchors(checked)
+            saves[board.id]?.version += 1
             let refused = checked.contains { held[$0.key]?.stored != $0.value }
             // A save is due: it writes the board as it is now.
-            guard pendingSaves[board.id] == nil else { return }
-            if files.writes(of: board.id) != read {
+            guard pendingSaves[board.id] == nil, saves[board.id] == nil else { return }
+            let writes = await files.writes(of: board.id)
+            guard !board.isClosed, !Task.isCancelled,
+                  pendingSaves[board.id] == nil, saves[board.id] == nil else { return }
+            if writes != read {
                 if refused { scheduleSave(board) }
             } else if changed || refused {
                 await files.write(id: board.id, unlessWrittenSince: read) { BoardAnchorScrub.settled(stored, checked) }
@@ -103,35 +136,142 @@ public final class BoardStore {
     public func scheduleSave(_ board: Board) {
         guard !board.isClosed else { return }
         Metrics.shared.record("save.scheduled")
-        if let pending = pendingSaves[board.id] {
+        if let pending = pendingSaves.removeValue(forKey: board.id) {
             pending.cancel()
             Metrics.shared.record("save.coalesced")
         }
+        if let saving = saves[board.id] {
+            saving.version += 1
+            Metrics.shared.record("save.coalesced")
+            if !saving.isWriting { write(saving) }
+            return
+        }
         let work = DispatchWorkItem { [weak self, weak board] in
             guard let self, let board else { return }
-            self.save(board)
+            self.enqueue(board)
         }
         pendingSaves[board.id] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
-    public func save(_ board: Board) {
-        try? saveChecked(board)
+    public func save(_ board: Board) async {
+        try? await saveChecked(board)
     }
 
     /// Saves the latest state before a close can discard its in-memory board. While git checks
     /// anchors the load held back, the file keeps the stored ones (`BoardAnchorScrub.keepStored`).
-    public func saveChecked(_ board: Board) throws {
+    public func saveChecked(_ board: Board) async throws {
         guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
-        pendingSaves.removeValue(forKey: board.id)?.cancel()
-        var snapshot = board.snapshot
-        if !board.heldAnchors.isEmpty { BoardAnchorScrub.keepStored(board.heldAnchors, in: &snapshot) }
-        let data = try Metrics.shared.span("save", "save.encode", detail: board.id) { try Self.encoder.encode(snapshot) }
-        try Metrics.shared.span("save", "save.write", detail: board.id, bytes: data.count) { try files.write(data, id: board.id) }
+        let saving = track(board)
+        saving.checked += 1
+        defer {
+            saving.checked -= 1
+            retire(saving)
+        }
+        repeat {
+            guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
+            try await withCheckedThrowingContinuation { continuation in
+                enqueue(board, continuation: continuation)
+            }
+        } while hasSave(board.id)
     }
 
-    public func flush(_ boards: [Board]) {
-        for board in boards where pendingSaves[board.id] != nil { save(board) }
+    private func enqueue(_ board: Board, continuation: CheckedContinuation<Void, Error>? = nil) {
+        pendingSaves.removeValue(forKey: board.id)?.cancel()
+        guard !board.isClosed else {
+            continuation?.resume(throwing: BoardError.notFound("board \(board.id) is closed"))
+            return
+        }
+        let saving = track(board)
+        if let continuation {
+            saving.version += 1
+            saving.waiters.append((saving.version, continuation))
+        }
+        if !saving.isWriting { write(saving) }
+    }
+
+    private func track(_ board: Board) -> Save {
+        if let saving = saves[board.id] { return saving }
+        let saving = Save(board)
+        saves[board.id] = saving
+        board.onChange = { [weak saving] in
+            saving?.version += 1
+            saving?.onChange?()
+        }
+        return saving
+    }
+
+    private func snapshot(_ board: Board) -> BoardSnapshot {
+        var snapshot = board.snapshot
+        if !board.heldAnchors.isEmpty { BoardAnchorScrub.keepStored(board.heldAnchors, in: &snapshot) }
+        return snapshot
+    }
+
+    private func write(_ saving: Save) {
+        saving.isWriting = true
+        let version = saving.version
+        files.save(snapshot(saving.board)) { [self, saving] result in
+            let board = saving.board
+            if case .failure(let error) = result {
+                let failed = saving.waiters.filter { $0.version <= version }
+                saving.waiters.removeAll { $0.version <= version }
+                for waiter in failed { waiter.continuation.resume(throwing: error) }
+            }
+            if !board.isClosed, saving.version != version {
+                write(saving)
+                return
+            }
+            saving.isWriting = false
+            saving.completedVersion = version
+            let completion: Result<Void, Error> = board.isClosed
+                ? .failure(BoardError.notFound("board \(board.id) is closed")) : result
+            for waiter in saving.waiters { waiter.continuation.resume(with: completion) }
+            saving.waiters.removeAll()
+            retire(saving)
+            finishFlushes()
+        }
+    }
+
+    private func retire(_ saving: Save) {
+        guard !saving.isWriting else { return }
+        if !saving.board.isClosed, saving.version != saving.completedVersion {
+            write(saving)
+            return
+        }
+        guard saving.checked == 0 else { return }
+        saves.removeValue(forKey: saving.board.id)
+        if !saving.board.isClosed { saving.board.onChange = saving.onChange }
+    }
+
+    private func hasSave(_ id: BoardID) -> Bool {
+        if pendingSaves[id] != nil { return true }
+        guard let saving = saves[id] else { return false }
+        return saving.isWriting || (!saving.board.isClosed && saving.version != saving.completedVersion)
+    }
+
+    public func flush(_ boards: [Board]) async {
+        await withCheckedContinuation { continuation in
+            beginFlush(boards) { continuation.resume() }
+        }
+    }
+
+    /// Starts the same save pipeline synchronously, including during AppKit's deferred quit.
+    public func beginFlush(_ boards: [Board], completion: @escaping @MainActor @Sendable () -> Void) {
+        flushes.append(Flush(boards: boards, completion: completion))
+        finishFlushes()
+    }
+
+    private func finishFlushes() {
+        for flush in flushes {
+            for board in flush.boards where hasSave(board.id) { enqueue(board) }
+        }
+        let finished = flushes.filter { flush in
+            !flush.boards.contains { hasSave($0.id) }
+        }
+        flushes.removeAll { flush in
+            !flush.boards.contains { hasSave($0.id) }
+        }
+        for flush in finished { flush.completion() }
     }
 
     /// A board as stored on disk, whether or not it is open.
@@ -167,7 +307,7 @@ public final class BoardStore {
     /// Writes a human-readable snapshot (for committing to the repo). The selection tray,
     /// attention markers, agents' last answers, their undelivered messages and pending relaunches
     /// are personal, transient state, so they are left out.
-    public static func export(_ board: Board, to url: URL) throws {
+    public static func export(_ board: Board, to url: URL) async throws {
         var snapshot = board.snapshot
         snapshot.tray = nil
         snapshot.attention = nil
@@ -178,13 +318,7 @@ public final class BoardStore {
         snapshot.messages = nil
         snapshot.htmlMessages = nil
         snapshot.relaunchedAgents = nil
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        var data = try encoder.encode(snapshot)
-        data.append(0x0A)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        try await Files.export(snapshot, to: url)
     }
 
     nonisolated static let encoder: JSONEncoder = {
@@ -206,7 +340,23 @@ public final class BoardStore {
 /// counted (`writes(of:)`), so a load's later write never lands on a save made since it read.
 private final class Files: @unchecked Sendable {
     let directory: URL
-    private let queue = DispatchQueue(label: "easl.board-store", qos: .userInitiated)
+    private static let queue = DispatchQueue(label: "easl.board-store", qos: .userInitiated)
+    private let atomicWrite: @Sendable (Data, URL, Data.WritingOptions) throws -> Void
+
+    @MainActor private final class SaveCompletion {
+        private var body: (@MainActor @Sendable (Result<Void, Error>) -> Void)?
+
+        init(_ body: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void) {
+            self.body = body
+        }
+
+        func finish(_ result: Result<Void, Error>) {
+            guard let body else { return }
+            self.body = nil
+            body(result)
+        }
+    }
+
     /// Legacy boards the migration left unresolved, re-tried when a repository's board loads;
     /// nil until read.
     private var unresolvedLegacy: [BoardID]?
@@ -217,15 +367,17 @@ private final class Files: @unchecked Sendable {
     private var loaded: Set<BoardID> = []
     /// A repository's board has loaded: the launch migration would merge under it.
     private var repositoryLoaded = false
-    private let written = Locked(Written())
+    private var written = Written()
 
     private struct Written {
         var directory = false
         var count: [BoardID: Int] = [:]
     }
 
-    init(directory: URL) {
+    init(directory: URL,
+         write: @escaping @Sendable (Data, URL, Data.WritingOptions) throws -> Void = { try $0.write(to: $1, options: $2) }) {
         self.directory = directory
+        atomicWrite = write
     }
 
     func url(for id: BoardID) -> URL {
@@ -245,14 +397,14 @@ private final class Files: @unchecked Sendable {
 
     func load(root opened: URL, id known: BoardID?, repo knownRepo: String?) async throws -> Loaded {
         try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            Self.queue.async {
                 continuation.resume(with: Result { try self.read(root: opened, id: known, repo: knownRepo) })
             }
         }
     }
 
     func migrate(knownRoots: [URL]) async -> RepoBoardMigration.Report? {
-        await run { () -> RepoBoardMigration.Report? in
+        await Self.run { () -> RepoBoardMigration.Report? in
             self.makeDirectory()
             let pending = RepoBoardMigration.pending(in: self.directory)
             guard !pending.ran, !self.repositoryLoaded else {
@@ -265,10 +417,49 @@ private final class Files: @unchecked Sendable {
         }
     }
 
+    @MainActor func save(_ snapshot: BoardSnapshot, completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void) {
+        let completion = SaveCompletion(completion)
+        Self.queue.async {
+            let result = Result<Void, Error> {
+                let start = Metrics.now()
+                defer {
+                    let ms = (Metrics.now() - start) * 1000
+                    if ms >= 250 { Metrics.shared.record("save.slow250", ms: ms) }
+                }
+                let data = try Metrics.shared.span("save", "save.encode", detail: snapshot.id) {
+                    try BoardStore.encoder.encode(snapshot)
+                }
+                try Metrics.shared.span("save", "save.write", detail: snapshot.id, bytes: data.count) {
+                    _ = try self.write(data, id: snapshot.id)
+                }
+            }
+            DispatchQueue.main.async { completion.finish(result) }
+            // AppKit's deferred-quit loop must finish saves without running MainActor tasks.
+            RunLoop.main.perform(inModes: [.default, RunLoop.Mode(rawValue: "NSModalPanelRunLoopMode")]) {
+                MainActor.assumeIsolated { completion.finish(result) }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
+        }
+    }
+
+    static func export(_ snapshot: BoardSnapshot, to url: URL) async throws {
+        try await run {
+            Result<Void, Error> {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                var data = try encoder.encode(snapshot)
+                data.append(0x0A)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            }
+        }.get()
+    }
+
     /// Writes what `snapshot` makes as board `id`'s file, unless the file was written since a
     /// load read it after `read` writes.
     func write(id: BoardID, unlessWrittenSince read: Int, _ snapshot: @escaping @Sendable () -> BoardSnapshot) async {
-        await run { () -> Void in
+        await Self.run { () -> Void in
             guard let data = try? BoardStore.encoder.encode(snapshot()) else { return }
             _ = try? self.write(data, id: id, unlessWrittenSince: read)
         }
@@ -278,25 +469,19 @@ private final class Files: @unchecked Sendable {
     /// the file has had other than `read` writes; whether it wrote.
     @discardableResult
     func write(_ data: Data, id: BoardID, unlessWrittenSince read: Int? = nil) throws -> Bool {
-        try written.withLock { written -> Result<Bool, Error> in
-            if let read, written.count[id, default: 0] != read { return .success(false) }
-            written.count[id, default: 0] += 1
-            do {
-                try make(&written)
-                try data.write(to: url(for: id), options: .atomic)
-                return .success(true)
-            } catch {
-                return .failure(error)
-            }
-        }.get()
+        if let read, written.count[id, default: 0] != read { return false }
+        written.count[id, default: 0] += 1
+        try make(&written)
+        try atomicWrite(data, url(for: id), .atomic)
+        return true
     }
 
     /// How many times board `id`'s file has been written this session.
-    func writes(of id: BoardID) -> Int {
-        written.withLock { $0.count[id, default: 0] }
+    func writes(of id: BoardID) async -> Int {
+        await Self.run { self.written.count[id, default: 0] }
     }
 
-    private func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    private static func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
         await withCheckedContinuation { continuation in
             queue.async { continuation.resume(returning: work()) }
         }
@@ -309,7 +494,7 @@ private final class Files: @unchecked Sendable {
     }
 
     private func makeDirectory() {
-        written.withLock { _ = try? make(&$0) }
+        _ = try? make(&written)
     }
 
     /// On `queue`: the board for a directory (`BoardStore.load`), read with its anchors checked
@@ -328,7 +513,7 @@ private final class Files: @unchecked Sendable {
         }
         loaded.insert(id)
         if commonDir != nil { repositoryLoaded = true }
-        let read = writes(of: id)
+        let read = written.count[id, default: 0]
         guard var snapshot = stored else {
             return Loaded(id: id, root: root, commonDir: commonDir, prepared: nil, read: read)
         }

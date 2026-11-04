@@ -216,7 +216,7 @@ struct ArrowBindingLifecycleTests {
         #expect(detached.from == .point(CGPoint(x: 400 - DrawingGeometry.arrowGap, y: 50)))
         #expect(detached.to == .object(left.id), "the surviving end stays bound")
 
-        store.save(board)
+        await store.save(board)
         let reloaded = try #require(ArrowSpec(try await store.load(root: root).object(arrow.id).props))
         #expect(reloaded == detached)
 

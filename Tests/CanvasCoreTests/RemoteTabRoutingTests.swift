@@ -24,7 +24,7 @@ private func remoteTabFixture(board: Board? = nil, id: String = "host|brd_remote
 extension ApiRouterTests {
     @Test func remoteTabListHasExactFieldsAndClosingOmitsRetainedAttachments() async throws {
         let client = try connect()
-        registry.store.save(board)
+        await registry.store.save(board)
         let before = try #require(try await call(client, "board.list", [:])["result"]?["boards"]?.array)
         let remote = remoteTabFixture()
         var open = true
@@ -119,8 +119,8 @@ extension ApiRouterTests {
             snapshot.objects[index].contentRev = nil
         }
         let oldGroup = try #require(snapshot.objects.first { $0.id == group.id })
-        try host.registry.close(host.board.id)
-        try host.registry.store.saveChecked(Board(snapshot: snapshot))
+        try await host.registry.close(host.board.id)
+        try await host.registry.store.saveChecked(Board(snapshot: snapshot))
         let authoritative = try await host.registry.open(root: host.board.root)
         let socket = host.dir.appendingPathComponent("s").path
         let mirror = BoardMirror(hostName: "host", board: authoritative.id, connection: .unixSocket(socket), diagrams: .unixSocket(socket))
@@ -262,7 +262,7 @@ extension ApiRouterTests {
         let legacyRoot = dir.appendingPathComponent("legacy")
         try FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
         let legacy = Board(id: BoardStore.pathID(legacyRoot), root: legacyRoot)
-        registry.store.save(legacy)
+        await registry.store.save(legacy)
         let backups = registry.store.directory.appendingPathComponent(RepoBoardMigration.backupFolder)
         try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: registry.store.url(for: legacy.id),

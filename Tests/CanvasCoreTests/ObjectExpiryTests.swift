@@ -165,7 +165,7 @@ final class ObjectExpiryTests {
         let deadline = ObjectExpiry(Date().addingTimeInterval(100))
         let expired = board.create(type: .note, props: .object(["markdown": "overdue"]), expires: ObjectExpiry(Date().addingTimeInterval(-1)))
         let kept = board.create(type: .note, props: .object(["markdown": "future"]), expires: deadline)
-        try registry.close(board.id)
+        try await registry.close(board.id)
         #expect(board.isClosed)
         #expect(board.expireObjects(now: Date().addingTimeInterval(200)).isEmpty)
         var deleted: [ObjectID] = []
@@ -183,7 +183,7 @@ final class ObjectExpiryTests {
 
     @Test func closedPastDeadlineWaitsForOpenAndUsesStoredAbsoluteTime() async throws {
         let object = try await create(["expiresIn": "0.15s"])
-        try registry.close(board.id)
+        try await registry.close(board.id)
         try await Task.sleep(for: .milliseconds(300))
         #expect(board.objects[object.id] == object)
         let reopened = try await registry.open(root: board.root)
@@ -197,24 +197,29 @@ final class ObjectExpiryTests {
         if isolated { return }
         let object = try await create(["expiresIn": "2s"])
         let deadline = try #require(object.expires?.date)
-        try registry.close(board.id)
+        try await registry.close(board.id)
         let restarted = BoardRegistry(store: BoardStore(directory: registry.store.directory, debounce: 60))
         var deleted: [ObjectID] = []
         restarted.onEvent = { _, event in
             if case .objectDeleted(let id) = event { deleted.append(id) }
         }
         let reopened = try await restarted.open(root: board.root)
-        defer { try? restarted.close(reopened.id) }
         #expect(deadline > Date())
         #expect(reopened.objects[object.id]?.expires == object.expires)
         #expect(deleted.isEmpty)
-        try await Task.sleep(for: .milliseconds(2500))
+        do {
+            try await Task.sleep(for: .milliseconds(2500))
+        } catch {
+            try? await restarted.close(reopened.id)
+            throw error
+        }
         #expect(reopened.objects[object.id] == nil)
         #expect(deleted == [object.id])
         #expect(board.objects[object.id] == object)
         let entries = reopened.activity.query(since: nil, limit: 100).entries.filter { $0.kind == .deleted }
         #expect(entries.map(\.id) == [object.id])
         #expect(entries.map(\.actor) == [.system])
+        try? await restarted.close(reopened.id)
     }
 
     @Test func staleReasonsAreOrderedAndListingDoesNotWrite() throws {
@@ -251,7 +256,7 @@ final class ObjectExpiryTests {
     @Test func staleBoundaryRequiresObservedRunningSessionAndRejectsInvalidDuration() async throws {
         let terminal = board.create(type: .terminal, props: .object(["name": "shell"]))
         let liveNote = board.create(type: .note, props: .object(["markdown": "live"]), caller: terminal.id)
-        try registry.store.saveChecked(board)
+        try await registry.store.saveChecked(board)
         let persisted = try Data(contentsOf: registry.store.url(for: board.id))
         let before = board.snapshot
         let cursor = board.activity.cursor
@@ -616,7 +621,7 @@ extension ObjectExpiryTests {
         let hostedIdentity = try #require(board.terminalSessionIdentity(hosted.id))
         board.observeRunningTerminalSession(localIdentity)
         board.observeRunningTerminalSession(hostedIdentity)
-        try registry.close(board.id)
+        try await registry.close(board.id)
         #expect(!board.observeRunningTerminalSession(localIdentity))
         #expect(!board.observeRunningTerminalSession(hostedIdentity))
         let reopened = try await registry.open(root: board.root)
@@ -677,7 +682,7 @@ extension ObjectExpiryTests {
         _ = board.create(type: .terminal, props: .object(["name": "original"]))
         router.terminalSessions = {
             do {
-                try self.registry.close(self.board.id)
+                try await self.registry.close(self.board.id)
                 _ = try await self.registry.open(root: self.board.root)
             } catch {
                 Issue.record(error)
