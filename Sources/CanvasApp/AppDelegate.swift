@@ -241,7 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), on: host, lines: lines, columns: columns, screen: screen) }
         }
         let router = router
-        let server = SocketServer(path: AppPaths.apiSocket) { [weak self] request, connection in
+        let server = SocketServer(path: AppPaths.apiSocket) { @MainActor [weak self] request, connection in
             await self?.localRestore?.value
             guard self?.terminating != true else { return nil }
             return await router.handle(request, connection: connection)
@@ -259,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await tile.perform(command, driver: driver)
         }
         let cmux = cmux
-        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { [weak self] request, connection in
+        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { @MainActor [weak self] request, connection in
             await self?.localRestore?.value
             guard self?.terminating != true else { return nil }
             return await cmux.handle(request, connection: connection)

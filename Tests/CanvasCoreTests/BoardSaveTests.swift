@@ -20,7 +20,7 @@ import Testing
         try await store.saveChecked(board)
         try await saving.value
 
-        let saved = try #require(BoardFile.read(store.url(for: board.id)))
+        let saved = try #require(try BoardFile.read(store.url(for: board.id)))
         #expect(saved.objects.first { $0.id == note.id }?.props["markdown"] == "newest")
         #expect(writes.snapshots.map { $0.objects.first { $0.id == note.id }?.props["markdown"] } == ["first", "newest"])
     }
@@ -44,7 +44,7 @@ import Testing
         writes.release.signal()
         try await saving.value
 
-        let saved = try #require(BoardFile.read(store.url(for: board.id)))
+        let saved = try #require(try BoardFile.read(store.url(for: board.id)))
         #expect(saved.promptTarget == PromptTarget.State(focusOrder: [target.id, newest.id], chosen: newest.id))
     }
 
@@ -72,8 +72,8 @@ import Testing
             writes.release.signal()
         }
         try await saving.value
-        let savedFirst = try #require(BoardFile.read(store.url(for: first.id)))
-        let savedSecond = try #require(BoardFile.read(store.url(for: second.id)))
+        let savedFirst = try #require(try BoardFile.read(store.url(for: first.id)))
+        let savedSecond = try #require(try BoardFile.read(store.url(for: second.id)))
         #expect(savedFirst.objects.first { $0.id == firstNote.id }?.props["markdown"] == "one newest")
         #expect(savedSecond.objects.first { $0.id == secondNote.id }?.props["markdown"] == "two newest")
     }
@@ -101,7 +101,7 @@ import Testing
         #expect(!board.isClosed)
 
         try await store.saveChecked(board)
-        let saved = try #require(BoardFile.read(store.url(for: board.id)))
+        let saved = try #require(try BoardFile.read(store.url(for: board.id)))
         #expect(saved.objects.first { $0.id == note.id }?.props["markdown"] == "retry me")
     }
 
@@ -237,6 +237,10 @@ final class SaveWrites: @unchecked Sendable {
     }
 
     func waitUntilBlocked() async -> Bool {
-        await Task.detached { self.entered.wait(timeout: .now() + 5) == .success }.value
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: self.entered.wait(timeout: .now() + 5) == .success)
+            }
+        }
     }
 }

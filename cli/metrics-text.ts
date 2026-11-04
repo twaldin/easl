@@ -50,7 +50,7 @@ export function metricsText(m: Metrics): string {
   lines.push(`writes   ${c("board.write", "total").n}, group refits ${c("board.refit", "total").n}; top ${(m.top.writers ?? []).map((w) => `${w.key} ${w.n}`).join(", ") || "none"}`);
   const route = c("route.board", "total");
   lines.push(`routing  board ${route.n}× ${ms(route.ms)} ms (max ${ms(route.maxMs)}), one arrow ${c("route.arrow", "total").n}×; triggers ${(m.top.routingTriggers ?? []).map((t) => `${t.key} ${t.n}`).join(", ") || "none"}`);
-  lines.push(`saves    ${c("save.write", "total").n} (scheduled ${c("save.scheduled", "total").n}, coalesced ${c("save.coalesced", "total").n}), encode ${ms(c("save.encode", "total").ms)} ms, ${kb(c("save.write", "total").bytes)}`);
+  lines.push(`saves    ${c("save.write", "total").n} (scheduled ${c("save.scheduled", "total").n}, coalesced ${c("save.coalesced", "total").n}, ≥250 ms ${c("save.slow250", "total").n}), encode ${ms(c("save.encode", "total").ms)} ms, ${kb(c("save.write", "total").bytes)}`);
   const live = Object.entries(m.gauges).filter(([k, v]) => k.startsWith("live.") && v > 0).map(([k, v]) => `${k.slice(5)} ${v}`);
   lines.push(`tiles    live ${live.join(" ") || "none"}; html web views ${m.gauges["html.webviews"] ?? 0}, loads ${c("html.load", "total").n}, reuses ${c("html.reuse", "total").n}, measures ${c("html.measure", "total").n} (${ms(c("html.measure", "total").ms)} ms)`);
   return lines.join("\n");
