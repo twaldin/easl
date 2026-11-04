@@ -10,8 +10,32 @@ extension NSAttributedString.Key {
     public static let noteCodeRow = NSAttributedString.Key("canvas.note.codeRow")
     /// 1-based markdown line a rendered paragraph came from, to put the caret there on edit.
     public static let noteMarkdownLine = NSAttributedString.Key("canvas.note.markdownLine")
+    public static let noteSourcePosition = NSAttributedString.Key("canvas.note.sourcePosition")
     /// `NSImage` composited by the display; its attachment reserves a TextKit frame without painting.
     public static let noteDiagramImage = NSAttributedString.Key("canvas.note.diagramImage")
+}
+
+/// One inline run's raw-markdown insertion positions, independent of its styling and wrapping.
+public enum NoteSourcePosition: Sendable {
+    case text(rendered: Int, source: Int)
+    case decoded(rendered: Int, sourceOffsets: [Int])
+    case anchor(Int)
+
+    public func sourceOffset(at renderedOffset: Int) -> Int {
+        switch self {
+        case .text(let rendered, let source): return source + max(0, renderedOffset - rendered)
+        case .decoded(let rendered, let offsets): return offsets[min(max(0, renderedOffset - rendered), offsets.count - 1)]
+        case .anchor(let source): return source
+        }
+    }
+
+    func shifted(by delta: Int) -> Self {
+        switch self {
+        case .text(let rendered, let source): return .text(rendered: rendered + delta, source: source)
+        case .decoded(let rendered, let offsets): return .decoded(rendered: rendered + delta, sourceOffsets: offsets)
+        case .anchor: return self
+        }
+    }
 }
 
 /// Paragraph decorations, drawn behind the text by `NoteBlockFragment`.

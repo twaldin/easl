@@ -1587,7 +1587,6 @@ final class TerminalTile: NSView, TileContent {
 
     func outline(for target: MentionTarget) -> NSRect? { bounds }
 
-    var takesKeyboardFocus: Bool { true }
 
     func update(_ object: CanvasObject) {
         let name = object.props["name"]?.string

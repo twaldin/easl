@@ -816,10 +816,6 @@ final class HtmlTile: NSView, TileContent {
         return hovered.rect.intersection(bounds)
     }
 
-    /// Whether clicking into the tile should take keyboard focus: a click in one of the page's
-    /// text fields does (`HtmlWebView.mouseDown`).
-    var takesKeyboardFocus: Bool { true }
-
     /// Return on the selected tile: the page takes the keyboard (its text fields type). False
     /// while the page has no view to take it (a card, or a page still building).
     func enterKeyboard() -> Bool { webView?.takeKeyboard() ?? false }
@@ -829,7 +825,7 @@ final class HtmlTile: NSView, TileContent {
     private func leaveKeyboard() {
         guard let canvas = enclosingScrollView as? CanvasView, let responder = window?.firstResponder as? NSView,
               responder === webView || responder.isDescendant(of: self) else { return }
-        canvas.leaveTile(objectID)
+        canvas.leaveTile()
     }
 
     /// A key the page didn't use can come up the responder chain to the tile; it must not act on

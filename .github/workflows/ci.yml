@@ -73,6 +73,28 @@ jobs:
         run: |
           swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
           python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --ci-timing-report-only
+      - name: Install zmx for native keyboard regressions
+        env:
+          ZMX_VERSION: 0.8.1
+          ZMX_SHA256: 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
+        run: |
+          test "$(uname -m)" = arm64
+          archive="zmx-${ZMX_VERSION}-macos-aarch64.tar.gz"
+          curl -fL -o "$RUNNER_TEMP/$archive" "https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}/$archive"
+          printf '%s  %s\n' "$ZMX_SHA256" "$RUNNER_TEMP/$archive" | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/native-zmx"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/native-zmx"
+          echo "$RUNNER_TEMP/native-zmx" >> "$GITHUB_PATH"
+      - name: Native selection and typing regression
+        id: selection-typing
+        run: python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/selection-typing"
+      - name: Preserve selection and typing evidence
+        if: always() && steps.selection-typing.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: selection-typing
+          path: ${{ runner.temp }}/selection-typing
+          if-no-files-found: error
       - name: Native main-thread stall capture regression
         run: python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/stall-sampler" --ci-timing-report-only
       - name: Native board save responsiveness and atomic crash regression

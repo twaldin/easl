@@ -824,7 +824,6 @@ final class DiagramTile: NSView, TileContent {
         return CGRect(x: rect.minX, y: top, width: rect.width, height: scale * DiagramLayout.excerptLineHeight)
     }
 
-    var takesKeyboardFocus: Bool { false }
 
     func update(_ object: CanvasObject) {
         let previous = self.object

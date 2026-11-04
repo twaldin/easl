@@ -5,9 +5,8 @@ import ObjectiveC.runtime
 @testable import CanvasApp
 @testable import CanvasCore
 
-/// An HTML tile's page takes the keyboard for its text fields: Return on the selected tile or a
-/// click in a field, and the canvas takes it back on Esc or a click on the board. A page that
-/// focuses a field on its own never captures keys. Runs local and remote boards.
+/// Real HTML body clicks take native typing synchronously. Page-initiated DOM focus never
+/// takes native typing, and later native actions cannot be reversed by page callbacks.
 @main
 @MainActor
 private enum HtmlKeyboard {
@@ -499,8 +498,14 @@ private enum HtmlKeyboard {
 
     private final class NativeClickTarget: NSView {
         var clicks = 0
+        var text = ""
+        override var acceptsFirstResponder: Bool { true }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) { clicks += 1 }
+        override func mouseDown(with event: NSEvent) {
+            clicks += 1
+            window?.makeFirstResponder(self)
+        }
+        override func keyDown(with event: NSEvent) { text += event.characters ?? "" }
     }
 
     private static func clickFixture(patch: String = "") async throws
@@ -569,30 +574,33 @@ private enum HtmlKeyboard {
         for attack in attacks {
             let fixture = try await clickFixture(patch: attack.patch)
             defer { fixture.window.close() }
-            let target = attack.delayed ? fixture.other : fixture.native
+            try await pageTurn(fixture.web)
+            try require(fixture.window.firstResponder === fixture.native,
+                        "\(attack.name): page script without a native click must not take typing")
+            typed("native", in: fixture.window)
+            try require(fixture.native.string == "native", "\(attack.name): unclicked page must leave native typing alone")
+            let unclickedKeys = await js(fixture.web, "window.pageKeys") as? Int
+            try require(unclickedKeys == 0, "\(attack.name): an unclicked page must receive no native keys")
             try await click("#plain", in: fixture.web, window: fixture.window) {
-                if attack.delayed {
-                    try require(fixture.window.makeFirstResponder(target),
-                                "\(attack.name): the user must be able to focus another native target")
-                }
+                try require(fixture.window.firstResponder === fixture.web,
+                            "\(attack.name): native body mouse-down must take typing synchronously")
+                try require(fixture.window.makeFirstResponder(fixture.other),
+                            "\(attack.name): the user must be able to focus a later native target")
             }
             if attack.delayed {
-                try await pageTurn(fixture.web)
-                try require(fixture.window.firstResponder === fixture.other,
-                            "an unresolved page promise must leave the native target focused")
                 _ = await js(fixture.web, "window.releaseGrant(); true")
                 let released = await js(fixture.web, "window.released") as? Bool
                 try require(released == true, "the delayed true promise must actually resolve")
             }
             try await pageTurn(fixture.web)
-            try require(fixture.window.firstResponder === target,
-                        "\(attack.name) must not steal the keyboard from the native target")
-            typed("native", in: fixture.window)
-            try require(target.string == "native",
-                        "\(attack.name): typed text must reach the native target")
+            try require(fixture.window.firstResponder === fixture.other,
+                        "\(attack.name): page completion must not reverse a later native typing action")
+            typed("later", in: fixture.window)
+            try require(fixture.other.string == "later", "\(attack.name): later native target must receive typing")
+            try require(fixture.native.string == "native", "\(attack.name): typing must not return to the previous native target")
             let pageKeys = await js(fixture.web, "window.pageKeys") as? Int
-            try require(pageKeys == 0, "\(attack.name): the page must not receive the native target's keys")
-            check("\(attack.name) cannot authorize keyboard capture")
+            try require(pageKeys == 0, "\(attack.name): the page must not receive another target's keys")
+            check("\(attack.name) cannot capture typing without a click or reverse a later native action")
         }
     }
 
@@ -614,20 +622,29 @@ private enum HtmlKeyboard {
             let fixture = try await clickFixture(patch: attack.patch)
             defer { fixture.window.close() }
             try await click("#plain", in: fixture.web, window: fixture.window)
+            try require(fixture.window.firstResponder === fixture.web,
+                        "\(attack.name): a real body click must give HTML native typing synchronously")
             try await pageTurn(fixture.web)
-            let granted = fixture.window.firstResponder === fixture.web
-            typed("native", in: fixture.window)
+            typed("x", in: fixture.window)
             try await pageTurn(fixture.web)
-            let pageKeys = await js(fixture.web, "window.pageKeys") as? Int
-            check("\(attack.name): native click granted=\(granted), page keys=\(pageKeys ?? -1)")
-            try require(!granted && fixture.window.firstResponder === fixture.native,
-                        "\(attack.name): a click outside the real active editable must not grant the keyboard")
-            try require(fixture.native.string == "native", "\(attack.name): typing must stay with the native target")
-            try require(pageKeys == 0, "\(attack.name): the page must receive no keys")
+            try require(fixture.native.string == "", "\(attack.name): body-click typing must not leak to the previous native target")
+            try require(fixture.window.firstResponder === fixture.web,
+                        "\(attack.name): page DOM tricks must not release native typing to the previous owner")
             try await click("#field", in: fixture.web, window: fixture.window)
             try await wait(until: { fixture.window.firstResponder === fixture.web },
-                           "\(attack.name): a new click inside the real editable must still grant")
-            check("\(attack.name) refuses the outside click and accepts a real field click")
+                           "\(attack.name): a real editable click must retain HTML typing")
+            let before = await js(fixture.web, "document.getElementById('field').value") as? String
+            typed("field", in: fixture.window)
+            var value: String?
+            for _ in 0..<200 {
+                value = await js(fixture.web, "document.getElementById('field').value") as? String
+                if value == (before ?? "") + "field" { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try require(value == (before ?? "") + "field",
+                        "\(attack.name): the clicked real editable must receive subsequent native text")
+            try require(fixture.native.string == "", "\(attack.name): editable typing must never reach the previous target")
+            check("\(attack.name) keeps native body ownership and normal editable typing")
         }
     }
 
@@ -732,27 +749,29 @@ private enum HtmlKeyboard {
         try require(!fixture.web.acceptsFirstResponder, "leaving the page must revoke its keyboard grant")
 
         try await click("#field", in: fixture.web, window: fixture.window) {
-            try require(fixture.window.makeFirstResponder(fixture.other), "focus must move away during the click check")
-            try require(fixture.window.makeFirstResponder(fixture.native), "focus must return before the click reply")
+            try require(fixture.window.firstResponder === fixture.web, "the new native click must take typing synchronously")
+            try require(fixture.window.makeFirstResponder(fixture.other), "focus must move away after the click")
+            try require(fixture.window.makeFirstResponder(fixture.native), "focus must return to the user's later native target")
         }
         try await pageTurn(fixture.web)
         try require(fixture.window.firstResponder === fixture.native,
-                    "restoring the original first responder must not revive a stale click")
-        try require(!fixture.web.acceptsFirstResponder, "an away-and-back focus change must cancel click authorization")
+                    "page completion must not reverse a later away-and-back typing action")
+        try require(!fixture.web.acceptsFirstResponder, "a later native typing action must revoke HTML authorization")
 
         try await click("#field", in: fixture.web, window: fixture.window) {
             try nativeClick(fixture.elsewhere, window: fixture.window)
             try require(fixture.elsewhere.clicks == 1, "the later click must reach another native view")
-            try require(fixture.window.firstResponder === fixture.native,
-                        "the later native click fixture must keep the same first responder")
+            try require(fixture.window.firstResponder === fixture.elsewhere,
+                        "the later native click must take typing away from HTML")
         }
         try await pageTurn(fixture.web)
-        try require(fixture.window.firstResponder === fixture.native,
-                    "a newer native click must cancel the page grant even without a focus change")
-        try require(!fixture.web.acceptsFirstResponder, "the earlier page click must remain ungranted")
+        try require(fixture.window.firstResponder === fixture.elsewhere,
+                    "page completion must not reverse a later native click")
+        try require(!fixture.web.acceptsFirstResponder, "the earlier page click must not regain authorization")
         typed("kept", in: fixture.window)
-        try require(fixture.native.string == "kept", "native typing must survive both canceled click grants")
-        check("focus away-and-back and a later native click permanently cancel pending grants")
+        try require(fixture.elsewhere.text == "kept", "the later clicked native target must receive typing")
+        try require(fixture.native.string == "", "typing after the later click must not return to the original native target")
+        check("focus away-and-back and a later native click cannot be reversed by page completion")
     }
 
     private static func exerciseWithoutSuppression(root: URL) async throws {
@@ -870,8 +889,6 @@ private enum HtmlKeyboard {
         try await wait(until: { board.objects[returned.id] == nil }, "a canvas key must act after Esc")
         check("Esc returns \(kind) keyboard to the canvas and canvas keys act again")
 
-        // A click in a text field takes the keyboard; a click on plain page text and a click on
-        // the board leave it with the canvas.
         let clicked = board.create(type: .html, props: .object(["title": .string("Quiz click \(kind)"),
                                                                 "html": .string(pageHTML())]), frame: frame)
         let clickTile = try htmlTile(canvas, clicked)
@@ -892,9 +909,6 @@ private enum HtmlKeyboard {
         try await wait(until: { window.firstResponder === canvas.document }, "Esc must leave the clicked page")
         try require(!clickPage.acceptsFirstResponder, "Esc must revoke the clicked page's keyboard permission")
         try require(!clickPage.becomeFirstResponder(), "a page must not regain the keyboard after Esc without another grant")
-        try await click("#plain", in: clickPage, window: window)
-        try await Task.sleep(for: .milliseconds(250))
-        try require(window.firstResponder === canvas.document, "a click on plain page text must leave the keyboard with the canvas")
         guard let boardClick = NSEvent.mouseEvent(with: .leftMouseDown, location: shown.origin, modifierFlags: [],
                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                                   context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
@@ -902,7 +916,7 @@ private enum HtmlKeyboard {
         }
         canvas.emptyMouseDown(boardClick)
         try require(window.firstResponder === canvas.document, "a board click must leave the keyboard with the canvas")
-        check("plain page text and the board never take \(kind) keyboard")
+        check("a board click leaves \(kind) typing with the canvas")
 
         // A page that focuses a field by itself keeps DOM focus but not the keyboard; typing stays
         // with the canvas and Delete still acts on the board.

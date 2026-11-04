@@ -3,7 +3,7 @@ import CoreGraphics
 /// A tile's title bar, `RenderMath.tileTitleHeight` tall above its content: where its buttons
 /// sit and what a press on it is. The bar is the tile's handle: a press anywhere on it but a
 /// button, on its title, dot, author mark, command status or the gaps between them, at any
-/// zoom, selects the tile, turns the keyboard to it (`KeyboardFocus.afterTitleBarPress`) and
+/// zoom, selects the tile, turns the keyboard to it and
 /// starts a move. A press on a button does the button's work and turns to the tile as well, so
 /// typing never stays behind in the tile that had the keyboard.
 public enum TileTitleBar {

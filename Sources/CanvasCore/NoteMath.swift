@@ -348,11 +348,22 @@ enum NoteMath {
     struct SourceIndex {
         private let markdown: String
         private let lineStarts: [Int]
+        private let unicodeAdjustments: [(end: Int, delta: Int)]
 
         init(_ markdown: String) {
             self.markdown = markdown
             var starts = [0]
-            for (offset, byte) in markdown.utf8.enumerated() where byte == 0x0A { starts.append(offset + 1) }
+            var adjustments: [(end: Int, delta: Int)] = []
+            var bytes = 0, utf16 = 0
+            for scalar in markdown.unicodeScalars {
+                let value = scalar.value
+                let width = value < 0x80 ? 1 : value < 0x800 ? 2 : value < 0x10000 ? 3 : 4
+                bytes += width
+                utf16 += value < 0x10000 ? 1 : 2
+                if width > 1 { adjustments.append((bytes, bytes - utf16)) }
+                if value == 0x0A { starts.append(bytes) }
+            }
+            unicodeAdjustments = adjustments
             lineStarts = starts
         }
 
@@ -362,6 +373,21 @@ enum NoteMath {
             guard let lower = bytes.index(bytes.startIndex, offsetBy: start, limitedBy: bytes.endIndex),
                   let upper = bytes.index(lower, offsetBy: end - start, limitedBy: bytes.endIndex) else { return nil }
             return String(decoding: bytes[lower..<upper], as: UTF8.self)
+        }
+
+        func utf16Range(_ range: SourceRange) -> NSRange? {
+            guard let start = utf16Offset(range.lowerBound), let end = utf16Offset(range.upperBound), start <= end else { return nil }
+            return NSRange(location: start, length: end - start)
+        }
+
+        private func utf16Offset(_ location: SourceLocation) -> Int? {
+            guard let byte = offset(location), byte <= markdown.utf8.count else { return nil }
+            var low = 0, high = unicodeAdjustments.count
+            while low < high {
+                let middle = (low + high) / 2
+                if unicodeAdjustments[middle].end <= byte { low = middle + 1 } else { high = middle }
+            }
+            return byte - (low > 0 ? unicodeAdjustments[low - 1].delta : 0)
         }
 
         private func offset(_ location: SourceLocation) -> Int? {

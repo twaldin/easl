@@ -128,8 +128,6 @@ protocol TileContent: NSView {
     /// drawn to contrast with it (`InkContrast`). Nil when it is the app's own text background
     /// (code, notes, changes); post `.tileSurfaceChanged` when it changes.
     var surfaceLuminance: Double? { get }
-    /// Whether clicking into the tile should take keyboard focus.
-    var takesKeyboardFocus: Bool { get }
     /// Return on the selected tile while the canvas has the keyboard: the tile takes it
     /// (a terminal, a code tile's rows, a changes tile, a note's editor, a page). Esc in the
     /// tile hands it back (`CanvasView.leaveTile`). False when nothing in it types.

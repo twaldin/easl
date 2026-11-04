@@ -1039,6 +1039,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private var canvasUndoApplies: Bool { canvasUndoApplies(redo: false) }
 
     private func canvasUndoApplies(redo: Bool) -> Bool {
+        guard !pageHasKeyboard else { return false }
         guard let terminal = canvas.focusedTerminal else { return true }
         return (redo ? board.nextRedo : board.nextUndo)?.pastedInto == terminal
     }
@@ -1259,7 +1260,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     /// View ▸ Leave Tile (⌘Esc): the one way out of a terminal, whose Esc belongs to its program.
-    @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
+    @objc func leaveTile(_ sender: Any?) { if canvas.focusedTile != nil { canvas.leaveTile() } }
 
     @objc func selectTool(_ sender: Any?) { drawing?.tool = .select }
     @objc func moveTool(_ sender: Any?) { drawing?.tool = .move }
@@ -1378,10 +1379,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         #selector(NSText.copy(_:)), #selector(NSText.selectAll(_:)),
     ]
 
-    /// A text view with its own undo history holding the keyboard (a note being edited).
+    private var pageHasKeyboard: Bool {
+        guard let id = canvas.focusedTile, let responder = window?.firstResponder as? NSView else { return false }
+        if let browser = canvas.tiles[id]?.content as? BrowserTile, let web = browser.webView {
+            return responder === web || responder.isDescendant(of: web)
+        }
+        if let html = canvas.tiles[id]?.content as? HtmlTile, let web = html.webView {
+            return responder === web || responder.isDescendant(of: web)
+        }
+        return responder is RemoteBrowserTile
+    }
+
+    /// Native text and pages own their undo history, even when it is empty.
     private var textUndoManager: UndoManager? {
-        guard let text = window?.firstResponder as? NSTextView, text.isEditable else { return nil }
-        return text.undoManager
+        if let text = window?.firstResponder as? NSTextView, text.isEditable { return text.undoManager }
+        return pageHasKeyboard ? window?.firstResponder?.undoManager : nil
     }
 
     /// Navigation takes priority over focused tile bindings, using the current registry.
@@ -1600,13 +1612,14 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .rightMouseDown || event.type == .otherMouseDown {
-            NotificationCenter.default.post(name: HtmlWebView.nativeMouseDown, object: self)
-        }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }
+        let clicked = event.type == .leftMouseDown ? canvas(at: event.locationInWindow) : nil
+        let selectionTarget = clicked.flatMap { $0.view.selectionClickTarget(event, hit: $0.hit) }
+        if let selectionTarget { clicked?.view.prepareSelectionClick(selectionTarget, event: event) }
         super.sendEvent(event)
+        if let selectionTarget { clicked?.view.completeSelectionClick(selectionTarget, event: event) }
     }
 
     override func resignKey() {

@@ -823,7 +823,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 selection = nil
                 refreshPainter()
             } else {
-                (enclosingScrollView as? CanvasView)?.leaveTile(object.id)
+                (enclosingScrollView as? CanvasView)?.leaveTile()
             }
             return
         }
@@ -1258,7 +1258,6 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         return union?.intersection(NSRect(x: 0, y: ChangesMetrics.headerHeight, width: bounds.width, height: viewportHeight))
     }
 
-    var takesKeyboardFocus: Bool { false }
 
     /// Whether `set` is the listing as it is now: a live tile watches its worktree and git
     /// directory, and nothing is pending. Off screen or zoomed out nothing is watched (and a

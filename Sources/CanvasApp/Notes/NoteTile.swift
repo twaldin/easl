@@ -59,7 +59,6 @@ final class NoteTile: NSView, TileContent {
 
     private var session: NoteEditSession?
     var isEditing: Bool { session != nil }
-    private var clickMonitor: Any?
 
     init(object: CanvasObject, board: Board, files: HostFiles? = nil) {
         self.object = object
@@ -542,15 +541,16 @@ final class NoteTile: NSView, TileContent {
     /// terminal, dictation pastes there); a click on a note link should act, not just focus.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    func followsLink(_ event: NSEvent) -> Bool {
+        !isEditing && !display.isSelectable && link(at: convert(event.locationInWindow, from: nil)) != nil
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if event.clickCount >= 2 {
-            beginEditing(at: point)
-        } else if let link = link(at: point) {
+        if let link = link(at: point) {
             open(link, defaultBrowser: event.modifierFlags.contains(.option))
         } else {
-            // Selecting and dragging the note is the frame's job.
-            super.mouseDown(with: event)
+            beginEditing(at: point)
         }
     }
 
@@ -635,7 +635,7 @@ final class NoteTile: NSView, TileContent {
     /// back to the canvas with the note selected.
     func enterKeyboard() -> Bool {
         if display.isSelectable { return window?.makeFirstResponder(display) == true }
-        guard session == nil else { return false }
+        if session != nil { return window?.makeFirstResponder(editor) == true }
         beginEditing(at: nil)
         enteredByKeyboard = true
         return true
@@ -682,21 +682,17 @@ final class NoteTile: NSView, TileContent {
         editorScroll.isHidden = false
         window?.makeFirstResponder(editor)
         editor.scrollRangeToVisible(editor.selectedRange())
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, self.session != nil, event.window === self.window else { return }
-                let point = self.convert(event.locationInWindow, from: nil)
-                if !self.bounds.contains(point) { self.endEditing(.implicit) }
-            }
-            return event
-        }
     }
 
-    /// Start of the markdown line the clicked paragraph was rendered from.
     private func caretOffset(at point: NSPoint, in text: String) -> Int {
+        guard let storage = display.textStorage, storage.length > 0 else { return (text as NSString).length }
+        let insertion = display.characterIndexForInsertion(at: display.convert(point, from: self))
+        let index = min(max(0, insertion), storage.length - 1)
+        let position = storage.attribute(.noteSourcePosition, at: index, effectiveRange: nil) as? NoteSourcePosition
+            ?? (insertion > 0 ? storage.attribute(.noteSourcePosition, at: min(insertion - 1, storage.length - 1), effectiveRange: nil) as? NoteSourcePosition : nil)
+        if let position { return min(max(0, position.sourceOffset(at: insertion)), (text as NSString).length) }
         guard let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
-              let storage = display.textStorage, offset < storage.length,
-              let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
+              offset < storage.length, let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
             return (text as NSString).length
         }
         var current = 1
@@ -741,8 +737,6 @@ final class NoteTile: NSView, TileContent {
 
     private func finishEditing(returningFocus: Bool) {
         session = nil
-        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
-        clickMonitor = nil
         hideBanner()
         let hadFocus = window?.firstResponder === editor
         editorScroll.isHidden = true
@@ -762,7 +756,7 @@ final class NoteTile: NSView, TileContent {
     /// Return, else to where prompts go.
     private func returnFocus() {
         if enteredByKeyboard, let canvas {
-            canvas.leaveTile(object.id)
+            canvas.leaveTile()
         } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
             terminal.focus()
         } else {
@@ -1030,7 +1024,6 @@ final class NoteTile: NSView, TileContent {
         return rect.isEmpty ? nil : rect
     }
 
-    var takesKeyboardFocus: Bool { isEditing }
 }
 
 /// The rendered note. TextKit 2 lays out only a viewport around what's visible, and on the canvas

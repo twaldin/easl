@@ -543,7 +543,6 @@ final class VideoTile: NSView, TileContent {
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }
     func outline(for target: MentionTarget) -> NSRect? { bounds }
-    var takesKeyboardFocus: Bool { true }
     var surfaceLuminance: Double? { 0 }
     func enterKeyboard() -> Bool { window?.makeFirstResponder(playerView) ?? false }
 }

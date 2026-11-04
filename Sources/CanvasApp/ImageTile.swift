@@ -502,7 +502,6 @@ final class ImageTile: NSView, TileContent {
         return rect
     }
 
-    var takesKeyboardFocus: Bool { false }
 
     func update(_ object: CanvasObject) {
         let previous = self.object

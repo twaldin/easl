@@ -189,7 +189,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     /// The keyboard back to the canvas, the tile still selected.
     private func leave() {
         guard window?.firstResponder === self || window?.firstResponder === note else { return }
-        (enclosingCanvas)?.leaveTile(object.id)
+        (enclosingCanvas)?.leaveTile()
     }
 
     private var enclosingCanvas: CanvasView? {
@@ -218,12 +218,18 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         }
     }
 
+    /// Links and controls own their focus effects, including leaving after answering.
+    func handlesSelectionClick(_ event: NSEvent) -> Bool {
+        let point = page.convert(event.locationInWindow, from: nil)
+        if let text = painter?.question, text.rect.contains(point), text.link(at: point) != nil { return true }
+        return painter?.hit(point) != nil
+    }
+
     /// A press on the page: on the question's text it selects or follows a link once it is
-    /// released or dragged (`TextPress`); on a control it acts at once. Anywhere on an open
-    /// question it gives the tile the keyboard, for its number keys and Return.
+    /// released or dragged (`TextPress`); on a control it acts at once.
     fileprivate func pressed(_ event: NSEvent, at point: NSPoint) {
         if let text = painter?.question, text.rect.contains(point) {
-            if takesKeyboardFocus { window?.makeFirstResponder(self) }
+            if text.link(at: point) == nil { window?.makeFirstResponder(self) }
             let offset = text.offset(at: point)
             var press = TextPress(at: event.locationInWindow, offset: offset, on: text.link(at: point),
                                   extending: event.modifierFlags.contains(.shift) ? selection : nil)
@@ -237,7 +243,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
             setConfidence(value)
         } else if let hit = painter?.hit(point) {
             perform(hit)
-        } else if takesKeyboardFocus {
+        } else {
             window?.makeFirstResponder(self)
         }
     }
@@ -309,9 +315,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
 
     // MARK: Keyboard
 
-    /// Open or closed, Return gives it the keyboard (`enterKeyboard`), and so does selecting its
-    /// text (for ⌘C); a click on its body or going to it (⌘J, Go to) only while open
-    /// (`takesKeyboardFocus`).
+    /// Open or closed, user selection gives it the keyboard; links preserve the prior owner.
     override var acceptsFirstResponder: Bool { true }
 
     /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note, and on a
@@ -409,11 +413,6 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
     func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }
 
     func outline(for target: MentionTarget) -> NSRect? { bounds }
-
-    /// A click on its body, or going to it, gives an open question the keyboard; a closed one
-    /// takes it only by Return or a selection in its text (its Return archives, so no arrival
-    /// should hand it a Return).
-    var takesKeyboardFocus: Bool { spec.status == .open }
 
     /// The keyboard to the question: open, for its number keys, note and Return (answers);
     /// closed, for Return (archives).
