@@ -548,7 +548,7 @@ final class NoteTile: NSView, TileContent {
         let point = convert(event.locationInWindow, from: nil)
         if let link = link(at: point) {
             open(link, defaultBrowser: event.modifierFlags.contains(.option))
-        } else {
+        } else if !event.modifierFlags.contains(.shift) {
             beginEditing(at: point)
         }
     }

@@ -218,12 +218,13 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         }
     }
 
-    /// Links navigate without typing; answering, dismissal and confidence are control actions.
+    /// Links navigate without typing; answering and dismissal keep their control behavior.
     func handlesSelectionClick(_ event: NSEvent) -> Bool {
         let point = page.convert(event.locationInWindow, from: nil)
         if let text = painter?.question, text.rect.contains(point), text.link(at: point) != nil { return true }
         guard let hit = painter?.hit(point) else { return false }
         if case .option = hit { return false }
+        if case .confidence = hit { return false }
         return true
     }
 

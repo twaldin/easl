@@ -41,11 +41,11 @@ private enum HtmlKeyboard {
         (try? await web.evaluateJavaScript(expression)) as Any?
     }
 
-    private static func wait(until condition: @MainActor () -> Bool, _ message: String,
+    private static func wait(until condition: @MainActor () async -> Bool, _ message: String,
                              limit: Duration = .seconds(5)) async throws {
         let deadline = ContinuousClock.now + limit
         while ContinuousClock.now < deadline {
-            if condition() { return }
+            if await condition() { return }
             try await Task.sleep(for: .milliseconds(30))
         }
         throw Failure(message: message)
@@ -157,6 +157,7 @@ private enum HtmlKeyboard {
         let root = URL(fileURLWithPath: home).appendingPathComponent("board", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         if CommandLine.arguments.contains("--document-grants") {
+            try await exerciseColdKeyboard(root: root.appendingPathComponent("cold", isDirectory: true))
             try await exerciseDocumentGrant(root: root)
             return
         }
@@ -683,6 +684,10 @@ private enum HtmlKeyboard {
         try require(tile.webView == nil, "cold entry must run before the asynchronous web-view build")
         try require(tile.enterKeyboard() && window.firstResponder === tile,
                     "a cold HTML tile must synchronously own native keys without a web view")
+        try require(tile.tryToPerform(#selector(NSText.selectAll(_:)), with: nil),
+                    "cold HTML must handle the native Select All action")
+        try require(window.firstResponder === tile && canvas.selection == [object.id],
+                    "Select All while cold HTML owns keys must not select the board or leave the tile")
         let revision = board.revision
         typed("pending", in: window)
         try require(previous.string == "prior" && board.revision == revision,

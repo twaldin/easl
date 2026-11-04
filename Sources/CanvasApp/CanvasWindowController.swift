@@ -1644,7 +1644,9 @@ final class CanvasWindow: NSWindow {
         super.sendEvent(event)
         if event.type == .leftMouseUp { boardSelectionClick = nil }
         if let selectionTarget, let selectionSerial {
+            let continuesBoardSelection = boardSelectionClick == selectionSerial && clicked?.view.selectionSerial == selectionSerial
             clicked?.view.completeSelectionClick(selectionTarget, event: event, serial: selectionSerial, wasTyping: wasTyping)
+            if continuesBoardSelection { boardSelectionClick = clicked?.view.selectionSerial }
         }
     }
 

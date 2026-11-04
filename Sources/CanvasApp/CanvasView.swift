@@ -216,7 +216,7 @@ final class CanvasView: NSScrollView {
         var doubleClick: Bool
         var tileOrigins: [ObjectID: NSPoint]
         var drawn: [ObjectID: NSRect]
-        /// Nil until a drag event, even when the pointer later returns to its start.
+        /// Nil until the pointer crosses the drag threshold, even if it later returns to its start.
         var delta: NSSize?
     }
 
@@ -767,22 +767,24 @@ final class CanvasView: NSScrollView {
     /// HTML takes native typing before dispatch; other content places its caret first.
     func prepareSelectionClick(_ id: ObjectID, event: NSEvent, wasTyping: Bool) {
         lastClickedTile = id
+        guard let html = tiles[id]?.content as? HtmlTile else { return }
         if event.modifierFlags.contains(.shift) {
             if !wasTyping { select(id, extend: true) }
-        } else if let html = tiles[id]?.content as? HtmlTile {
+        } else {
             setSelection([id], cause: .user)
             html.webView?.beginSelectionClick(event)
-        } else {
-            setSelection([id])
         }
     }
 
     /// Native handlers cannot turn a multi-selection into a typing grant.
     func completeSelectionClick(_ id: ObjectID, event: NSEvent, serial: UInt64, wasTyping: Bool) {
-        guard selectionSerial == serial else { return }
+        guard selectionSerial == serial, move?.pressed != id else { return }
         if event.modifierFlags.contains(.shift) {
-            if !wasTyping { hand(.canvas) }
-        } else if selection == [id], !(tiles[id]?.content is HtmlTile) {
+            if !wasTyping {
+                if tiles[id]?.content is HtmlTile { hand(.canvas) }
+                else { select(id, extend: true) }
+            }
+        } else if !(tiles[id]?.content is HtmlTile) {
             setSelection([id], cause: .user)
         }
     }
@@ -980,6 +982,7 @@ final class CanvasView: NSScrollView {
         guard var gesture = move else { return }
         let point = docPoint(event)
         let delta = NSSize(width: point.x - gesture.start.x, height: point.y - gesture.start.y)
+        if gesture.delta == nil, hypot(delta.width, delta.height) * magnification < 3 { return }
         gesture.delta = delta
         move = gesture
         for (id, origin) in gesture.tileOrigins {
@@ -1252,9 +1255,6 @@ final class CanvasView: NSScrollView {
         showNew(board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor)))
     }
 
-    /// An object the user just made or opened: revealed with the least pan, selected, and given
-    /// the keyboard; an empty note starts editing (as Return would), so what they type right
-    /// away goes into it, and Esc then leaves it selected with the canvas holding the keyboard.
     func showNew(_ object: CanvasObject) {
         reveal(object.id)
         setSelection([object.id], cause: .user)
@@ -2079,10 +2079,8 @@ final class CanvasView: NSScrollView {
         setSelection([id], cause: .user)
     }
 
-    /// An attention edge pill: framed like Go to (one step of Navigate Back), and the marker is
-    /// acknowledged (the user went there). Selection and keyboard focus stay, except on a
-    /// walkthrough (a stop, or a group holding stops: an agent's "Start here"), which is selected
-    /// with the canvas holding the keyboard so ⌥⌘→ steps from it (`StepOrder`).
+    /// An attention edge pill frames and acknowledges its object. Walkthrough stops use
+    /// user selection so the next step starts there; other markers preserve selection and typing.
     func jumpToAttention(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         navigating {
