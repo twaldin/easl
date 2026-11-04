@@ -1744,7 +1744,7 @@ private enum SelectionTyping {
         let field = NSTextField(frame: NSRect(x: 20, y: 40, width: 250, height: 24))
         sheet.contentView?.addSubview(field)
         sheet.initialFirstResponder = field
-        f.window.beginSheet(sheet)
+        f.window.beginSheet(sheet, completionHandler: nil)
         defer {
             f.window.endSheet(sheet)
             sheet.orderOut(nil)
