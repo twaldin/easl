@@ -133,6 +133,67 @@ private enum BoardSaveRegression {
 #endif
     }
 
+    static var racedFlushFinished = false
+
+    static func closeRace(directory: URL) async throws {
+#if SAVE_BASELINE
+        throw RegressionFailure("the baseline has no asynchronous close")
+#else
+        let attempts = Locked(0)
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let store = BoardStore(directory: directory.appendingPathComponent("boards"), debounce: 60) { data, url, options in
+            let number = attempts.withLock { $0 += 1; return $0 }
+            if number == 1 {
+                entered.signal()
+                guard release.wait(timeout: .now() + 10) == .success else { throw RegressionFailure("first write was never released") }
+            } else {
+                throw RegressionFailure("injected disk-full failure")
+            }
+            try data.write(to: url, options: options)
+        }
+        let registry = BoardRegistry(store: store)
+        let board = try await registry.open(root: directory.appendingPathComponent("root"))
+        let note = board.create(type: .note, props: .object(["markdown": .string("first durable state")]))
+        let closing = Task { try await registry.close(board.id) }
+        let blocked = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { continuation.resume(returning: entered.wait(timeout: .now() + 5) == .success) }
+        }
+        guard blocked else { throw RegressionFailure("close never reached its first write") }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            DispatchQueue.main.async {
+                let mode = RunLoop.Mode(rawValue: "NSModalPanelRunLoopMode")
+                let deadline = Date(timeIntervalSinceNow: 5)
+                let keepAlive = Timer(timeInterval: 5, repeats: false) { _ in }
+                RunLoop.main.add(keepAlive, forMode: mode)
+                defer { keepAlive.invalidate() }
+                store.beginFlush([board]) {
+                    do {
+                        try board.update(note.id, props: .object(["markdown": .string("new edit whose write fails")]))
+                        store.beginFlush([board]) { racedFlushFinished = true }
+                    } catch { failure = "\(error)"; racedFlushFinished = true }
+                }
+                release.signal()
+                while !racedFlushFinished, Date() < deadline {
+                    _ = RunLoop.main.run(mode: mode, before: min(deadline, Date(timeIntervalSinceNow: 0.05)))
+                }
+                if racedFlushFinished { continuation.resume() }
+                else { continuation.resume(throwing: RegressionFailure("second write never completed in the modal loop")) }
+            }
+        }
+        do {
+            try await closing.value
+            throw RegressionFailure("close reported success after the newest edit failed to write")
+        } catch let error as ApiRouter.Failure {
+            guard error.code == "unavailable", !board.isClosed, registry.boards[board.id] === board,
+                  try board.object(note.id).props["markdown"]?.string == "new edit whose write fails" else {
+                throw RegressionFailure("failed close discarded its newest in-memory edit")
+            }
+        }
+        print("PASS close retains the newest edit when its post-success write fails before resumption")
+#endif
+    }
+
     static func main() -> Int32 {
         guard CommandLine.arguments.count == 2 || CommandLine.arguments.count == 3 else { return 2 }
         let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
@@ -145,7 +206,9 @@ private enum BoardSaveRegression {
                     print("PASS delayed atomic write persists the concurrent edit; timing is recorded above")
                 } else {
 #if !SAVE_BASELINE
-                    if mode == "modal" {
+                    if mode == "close-race" {
+                        try await closeRace(directory: directory)
+                    } else if mode == "modal" {
                         try await modal(directory: directory)
                     } else {
                         try await atomic(directory: directory, crash: mode == "crash")

@@ -69,11 +69,13 @@ def main():
             raise RuntimeError(f"Owned regression PID {child.pid} exceeded 20 seconds")
     print((output / "child.log").read_text(), end="", flush=True)
     if not args.baseline:
-        modal_home = pathlib.Path(tempfile.mkdtemp(prefix="modal-", dir=output))
-        environment["EASL_HOME"] = str(modal_home)
-        with (output / "modal.log").open("w") as log:
-            subprocess.run([str(executable), str(modal_home), "modal"], env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=20)
-        print((output / "modal.log").read_text(), end="", flush=True)
+        for case in ("modal", "close-race"):
+            case_home = pathlib.Path(tempfile.mkdtemp(prefix=f"{case}-", dir=output))
+            environment["EASL_HOME"] = str(case_home)
+            log_path = output / f"{case}.log"
+            with log_path.open("w") as log:
+                subprocess.run([str(executable), str(case_home), case], env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=20)
+            print(log_path.read_text(), end="", flush=True)
     hook = output / "atomic-write-hook.dylib"
     subprocess.run(["xcrun", "clang", "-dynamiclib", "-O2", str(root / "Tests/BoardSave/atomic-write-hook.c"), "-o", str(hook)], check=True, timeout=60)
     subprocess.run(["codesign", "--force", "--sign", "-", str(hook)], check=True, timeout=30)

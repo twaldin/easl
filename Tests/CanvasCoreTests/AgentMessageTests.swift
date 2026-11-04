@@ -442,7 +442,7 @@ final class AgentMessageTests {
             #expect(abs(now.queuedAt.timeIntervalSince(was.queuedAt)) < 1, "ISO 8601 to the second")
         }
         let exported = dir.appendingPathComponent("export.json")
-        try await BoardStore.export(board, to: exported)
+        try await registry.store.export(board, to: exported)
         #expect(!(try String(contentsOf: exported, encoding: .utf8)).contains("Nightly failed."))
     }
 

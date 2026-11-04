@@ -485,7 +485,7 @@ public final class ApiRouter {
                 let url = board.absoluteURL(params["path"]?.string ?? ".easl/board.json").standardizedFileURL
                 let objectCount = board.objects.count
                 do {
-                    try await BoardStore.export(board, to: url)
+                    try await registry.store.export(board, to: url)
                 } catch {
                     throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
                 }

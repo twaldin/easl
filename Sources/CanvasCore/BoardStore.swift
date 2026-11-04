@@ -18,6 +18,7 @@ public final class BoardStore {
         let onChange: (() -> Void)?
         var version = 0
         var completedVersion = -1
+        var failedVersion: Int?
         var isWriting = false
         var checked = 0
         var waiters: [(version: Int, continuation: CheckedContinuation<Void, Error>)] = []
@@ -173,7 +174,7 @@ public final class BoardStore {
             try await withCheckedThrowingContinuation { continuation in
                 enqueue(board, continuation: continuation)
             }
-        } while hasSave(board.id)
+        } while hasSave(board.id) || saving.failedVersion == saving.completedVersion
     }
 
     private func enqueue(_ board: Board, continuation: CheckedContinuation<Void, Error>? = nil) {
@@ -213,6 +214,7 @@ public final class BoardStore {
         files.save(snapshot(saving.board)) { [self, saving] result in
             let board = saving.board
             if case .failure(let error) = result {
+                saving.failedVersion = version
                 let failed = saving.waiters.filter { $0.version <= version }
                 saving.waiters.removeAll { $0.version <= version }
                 for waiter in failed { waiter.continuation.resume(throwing: error) }
@@ -307,7 +309,7 @@ public final class BoardStore {
     /// Writes a human-readable snapshot (for committing to the repo). The selection tray,
     /// attention markers, agents' last answers, their undelivered messages and pending relaunches
     /// are personal, transient state, so they are left out.
-    public static func export(_ board: Board, to url: URL) async throws {
+    public func export(_ board: Board, to url: URL) async throws {
         var snapshot = board.snapshot
         snapshot.tray = nil
         snapshot.attention = nil
@@ -318,7 +320,7 @@ public final class BoardStore {
         snapshot.messages = nil
         snapshot.htmlMessages = nil
         snapshot.relaunchedAgents = nil
-        try await Files.export(snapshot, to: url)
+        try await files.export(snapshot, to: url)
     }
 
     nonisolated static let encoder: JSONEncoder = {
@@ -340,7 +342,7 @@ public final class BoardStore {
 /// counted (`writes(of:)`), so a load's later write never lands on a save made since it read.
 final class Files: @unchecked Sendable {
     let directory: URL
-    private static let queue = DispatchQueue(label: "easl.board-store", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "easl.board-store", qos: .userInitiated)
     private let atomicWrite: @Sendable (Data, URL, Data.WritingOptions) throws -> Void
 
     @MainActor private final class SaveCompletion {
@@ -397,14 +399,14 @@ final class Files: @unchecked Sendable {
 
     func load(root opened: URL, id known: BoardID?, repo knownRepo: String?) async throws -> Loaded {
         try await withCheckedThrowingContinuation { continuation in
-            Self.queue.async {
+            queue.async {
                 continuation.resume(with: Result { try self.read(root: opened, id: known, repo: knownRepo) })
             }
         }
     }
 
     func migrate(knownRoots: [URL]) async -> RepoBoardMigration.Report? {
-        await Self.run { () -> RepoBoardMigration.Report? in
+        await run { () -> RepoBoardMigration.Report? in
             self.makeDirectory()
             let pending = RepoBoardMigration.pending(in: self.directory)
             guard !pending.ran, !self.repositoryLoaded else {
@@ -419,7 +421,7 @@ final class Files: @unchecked Sendable {
 
     @MainActor func save(_ snapshot: BoardSnapshot, completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void) {
         let completion = SaveCompletion(completion)
-        Self.queue.async {
+        queue.async {
             let result = Result<Void, Error> {
                 let start = Metrics.now()
                 defer {
@@ -442,7 +444,7 @@ final class Files: @unchecked Sendable {
         }
     }
 
-    @MainActor static func export(_ snapshot: BoardSnapshot, to url: URL) async throws {
+    @MainActor func export(_ snapshot: BoardSnapshot, to url: URL) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 continuation.resume(with: Result {
@@ -461,7 +463,7 @@ final class Files: @unchecked Sendable {
     /// Writes what `snapshot` makes as board `id`'s file, unless the file was written since a
     /// load read it after `read` writes.
     func write(id: BoardID, unlessWrittenSince read: Int, _ snapshot: @escaping @Sendable () -> BoardSnapshot) async {
-        await Self.run { () -> Void in
+        await run { () -> Void in
             guard let data = try? BoardStore.encoder.encode(snapshot()) else { return }
             _ = try? self.write(data, id: id, unlessWrittenSince: read)
         }
@@ -480,10 +482,10 @@ final class Files: @unchecked Sendable {
 
     /// How many times board `id`'s file has been written this session.
     func writes(of id: BoardID) async -> Int {
-        await Self.run { self.written.count[id, default: 0] }
+        await run { self.written.count[id, default: 0] }
     }
 
-    private static func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    private func run<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
         await withCheckedContinuation { continuation in
             queue.async { continuation.resume(returning: work()) }
         }
