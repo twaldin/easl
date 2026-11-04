@@ -459,6 +459,7 @@ final class HtmlWebView: WKWebView {
     private enum KeyboardAuthorization {
         case denied
         case granted
+        case suspended
     }
 
     private var keyboardAuthorization: KeyboardAuthorization = .denied
@@ -496,7 +497,7 @@ final class HtmlWebView: WKWebView {
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { keyboardAuthorization = .denied }
+        if resigned, case .granted = keyboardAuthorization { keyboardAuthorization = .suspended }
         return resigned
     }
 
@@ -511,6 +512,25 @@ final class HtmlWebView: WKWebView {
             return false
         }
         return true
+    }
+
+    func restoreKeyboard(to responder: NSResponder) -> Bool {
+        guard let window, let view = responder as? NSView,
+              view.window === window, !view.isHiddenOrHasHiddenAncestor,
+              view === self || view.isDescendant(of: self) else { return false }
+        if window.firstResponder === responder { return true }
+        guard case .suspended = keyboardAuthorization else { return false }
+        keyboardAuthorization = .granted
+        guard window.makeFirstResponder(responder) else {
+            keyboardAuthorization = .denied
+            return false
+        }
+        return true
+    }
+
+    func suspendKeyboardIfNeeded() {
+        guard let window, !ownsKeyboard(in: window), case .granted = keyboardAuthorization else { return }
+        keyboardAuthorization = .suspended
     }
 
     private func ownsKeyboard(in window: NSWindow) -> Bool {
@@ -594,7 +614,7 @@ final class HtmlWebView: WKWebView {
         return web
     }
 
-    private static func ancestorWebView(of view: NSView) -> HtmlWebView? {
+    static func ancestorWebView(of view: NSView) -> HtmlWebView? {
         var current: NSView? = view
         while let view = current {
             if let web = view as? HtmlWebView { return web }

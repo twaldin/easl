@@ -1299,6 +1299,11 @@ final class CanvasView: NSScrollView {
     static func returnKeyboard(to previous: NSResponder?, in window: NSWindow) {
         var view = previous as? NSView
         while let current = view {
+            if let html = current as? HtmlWebView {
+                if html.restoreKeyboard(to: previous ?? html) { return }
+                window.makeFirstResponder(window.initialFirstResponder)
+                return
+            }
             if let terminal = current as? TerminalTile, terminal.window === window, !terminal.isHiddenOrHasHiddenAncestor {
                 terminal.focus()
                 if let focused = window.firstResponder as? NSView,

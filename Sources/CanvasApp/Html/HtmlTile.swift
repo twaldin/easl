@@ -916,6 +916,13 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         return schemes.contains(url.scheme ?? "") ? .allow : .cancel
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard webView === self.webView, navigation !== uncommittedNavigation else { return }
+        pendingKeyboardEntry = false
+        uncommittedNavigation = navigation
+        (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard webView === self.webView else {
             (webView as? HtmlWebView)?.resetKeyboardAuthorization()

@@ -1601,7 +1601,10 @@ final class CanvasWindow: NSWindow {
             if let html = current as? HtmlWebView, !html.acceptsFirstResponder { return false }
             view = current.superview
         }
-        return super.makeFirstResponder(responder)
+        let previousHTML = (firstResponder as? NSView).flatMap { HtmlWebView.ancestorWebView(of: $0) }
+        let accepted = super.makeFirstResponder(responder)
+        if accepted { previousHTML?.suspendKeyboardIfNeeded() }
+        return accepted
     }
 
     override func close() {

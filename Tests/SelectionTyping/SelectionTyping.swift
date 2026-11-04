@@ -63,6 +63,8 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-replacement-title", baseline: "feature regression"))
         cases.append(Scenario(name: "html-loading-entry", baseline: "feature regression"))
         cases.append(Scenario(name: "board-undo-redo", baseline: "existing behavior control"))
+        cases.append(Scenario(name: "html-page-reload-entry", baseline: "feature regression"))
+        cases.append(Scenario(name: "html-panel-replacement", baseline: "existing behavior control"))
         cases.append(Scenario(name: "keyboard-neighbor-note", baseline: "feature regression"))
         cases.append(Scenario(name: "keyboard-tab-note", baseline: "feature regression"))
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
@@ -83,6 +85,34 @@ private enum SelectionTyping {
         }
         cases.append(Scenario(name: "question-confidence-from-note", baseline: "existing behavior control"))
         return cases
+    }
+
+    private final class ReloadEntryObserver: NSObject, WKNavigationDelegate {
+        weak var tile: HtmlTile?
+        var onStart: (() -> Void)?
+        var committed = false
+
+        init(tile: HtmlTile) { self.tile = tile }
+
+        func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+            guard let tile else { return .cancel }
+            return await tile.webView(webView, decidePolicyFor: action)
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            let delegate: (any WKNavigationDelegate)? = tile
+            delegate?.webView?(webView, didStartProvisionalNavigation: navigation)
+            onStart?()
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            tile?.webView(webView, didCommit: navigation)
+            committed = true
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            tile?.webView(webView, didFinish: navigation)
+        }
     }
 
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
@@ -160,6 +190,7 @@ private enum SelectionTyping {
         NSApp.postEvent(marker, atStart: false)
         try await wait("AppKit did not dispatch native event batch \(batch)") { delivered }
         print("QUEUED batch=\(batch) events=\(events.map { $0.type.rawValue })")
+        fflush(nil)
     }
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) async throws {
@@ -256,6 +287,7 @@ private enum SelectionTyping {
                 NSApp.isActive && self.window.isKeyWindow
             }
             print("DISPATCH active=\(NSApp.isActive) key=\(window.isKeyWindow) delegate=\(String(describing: NSApp.delegate)) responder=\(String(describing: window.firstResponder))")
+            fflush(nil)
         }
 
         func create(_ type: ObjectType, x: Double = 30, y: Double = 45, width: Double = 450, height: Double = 290) async throws -> CanvasObject {
@@ -298,6 +330,7 @@ private enum SelectionTyping {
             let object = board.create(type: type, props: props, frame: Frame(x: x, y: y, w: width, h: height))
             try require(board.objects[object.id]?.type == type, "created fixture must retain its real object identity")
             print("OBJECT board=\(board.id) id=\(object.id) type=\(type.rawValue) frame=\(object.frame)")
+            fflush(nil)
             if type == .terminal {
                 receipts[object.id] = root.appendingPathComponent("input-\(terminals.count).bin")
                 terminals.append(object)
@@ -1186,23 +1219,32 @@ private enum SelectionTyping {
             "replacement title entry must retain the selected HTML typing owner")
     }
 
-    private static func exerciseHTMLLoadingEntry(_ f: Fixture) async throws {
-        _ = try await f.create(.html, x: 30, y: 90, width: 340, height: 260)
-        let object = f.board.create(type: .html, props: .object(["html": .string(page)]),
-            frame: Frame(x: 470, y: 90, w: 440, h: 320))
-        guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("loading HTML tile missing") }
-        let deadline = ContinuousClock.now + .seconds(12)
-        while tile.webView == nil && ContinuousClock.now < deadline { await Task.yield() }
-        guard let web = tile.webView else { throw Failure("loading HTML never attached") }
-        try require(web.backForwardList.currentItem == nil, "loading entry must occur after attachment but before initial commit")
-        f.canvas.setSelection([object.id])
-        try require(tile.enterKeyboard(), "native entry must acquire an attached loading HTML tile")
-        _ = try await f.web(object.id)
-        try await typed("ready", in: f.window)
-        try await wait("initial commit must preserve a native entry made after attachment") {
-            await js(web, "document.getElementById('keys').textContent") as? String == "ready"
+    private static func exerciseHTMLNavigationEntry(_ f: Fixture, pageInitiated: Bool) async throws {
+        let html = try await f.create(.html)
+        guard let tile = f.canvas.tiles[html.id]?.content as? HtmlTile else { throw Failure("reload HTML tile missing") }
+        let web = try await f.web(html.id)
+        let observer = ReloadEntryObserver(tile: tile)
+        var entered = false
+        observer.onStart = {
+            f.canvas.setSelection([html.id])
+            entered = tile.enterKeyboard()
         }
-        try require(f.canvas.focusedTile == object.id, "the completed loading page must retain typing")
+        web.navigationDelegate = observer
+        defer { web.navigationDelegate = tile }
+        if pageInitiated {
+            _ = await js(web, "location.reload(); true")
+        } else {
+            _ = try f.board.update(html.id, props: .object(["html": .string(page.replacingOccurrences(
+                of: "Selection typing fixture", with: "Native pending document"))]))
+        }
+        try await wait("navigation must start and receive a fresh native entry before commit") { entered }
+        try await wait("the pending navigation must commit") { observer.committed }
+        _ = try await f.web(html.id)
+        try await typed("reload", in: f.window)
+        try await wait("a fresh native entry during navigation must survive only that live commit") {
+            await js(web, "document.getElementById('keys').textContent") as? String == "reload"
+        }
+        try require(f.canvas.focusedTile == html.id, "the completed HTML page must retain the fresh native typing owner")
     }
 
     private static func exerciseBoardUndo(_ f: Fixture) async throws {
@@ -1324,7 +1366,7 @@ private enum SelectionTyping {
         try await assertInput(first, in: f)
     }
 
-    private static func exercisePanelReturn(_ f: Fixture) async throws {
+    private static func exercisePanelReturn(_ f: Fixture, replacement: Bool = false) async throws {
         let html = try await f.create(.html)
         try await click(try await f.pagePoint(html.id, selector: "#field"), in: f.window)
         try await wait("HTML field must own typing before opening Go to") { f.canvas.focusedTile == html.id }
@@ -1334,11 +1376,28 @@ private enum SelectionTyping {
             f.window.firstResponder !== responder && f.window.firstResponder !== f.canvas.document
                 && (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
         }
-        try await post([key(53, "\u{1b}", in: f.window)])
-        try await wait("closing Go to after page authorization is revoked must return keys to board, never the window") {
-            f.window.firstResponder === f.canvas.document
+        try require(!f.window.makeFirstResponder(responder), "page-initiated focus while a panel owns typing must stay denied")
+        if replacement {
+            _ = try f.board.update(html.id, props: .object(["html": .string(page.replacingOccurrences(
+                of: "Selection typing fixture", with: "Replacement while panel owns typing"))]))
+            let web = try await f.web(html.id)
+            try await wait("the HTML replacement must load while the panel retains typing") {
+                await js(web, "document.getElementById('plain').textContent") as? String == "Replacement while panel owns typing"
+            }
         }
-        try f.boardOwns([html.id])
+        try await post([key(53, "\u{1b}", in: f.window)])
+        if replacement {
+            try await wait("panel cancellation must not authorize a replacement document") { f.window.firstResponder === f.canvas.document }
+            try f.boardOwns([html.id])
+        } else {
+            try await wait("panel cancellation must restore the unchanged HTML responder") { f.window.firstResponder === responder }
+            try await typed("returned", in: f.window)
+            let web = try await f.web(html.id)
+            try await wait("the next native keys after panel cancellation must reach the unchanged HTML field") {
+                await js(web, "document.getElementById('field').value") as? String == "returned"
+            }
+            try require(f.canvas.selection == [html.id] && f.canvas.focusedTile == html.id, "restoring a panel must preserve selection and HTML typing")
+        }
     }
 
 
@@ -1413,7 +1472,11 @@ private enum SelectionTyping {
         } else if name == "html-replacement-title" {
             try await exerciseHTMLReplacementTitle(f)
         } else if name == "html-loading-entry" {
-            try await exerciseHTMLLoadingEntry(f)
+            try await exerciseHTMLNavigationEntry(f, pageInitiated: false)
+        } else if name == "html-page-reload-entry" {
+            try await exerciseHTMLNavigationEntry(f, pageInitiated: true)
+        } else if name == "html-panel-replacement" {
+            try await exercisePanelReturn(f, replacement: true)
         } else if name == "board-undo-redo" {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
