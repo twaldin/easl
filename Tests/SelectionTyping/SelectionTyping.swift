@@ -198,6 +198,7 @@ private enum SelectionTyping {
         for event in events { NSApp.postEvent(event, atStart: false) }
         NSApp.postEvent(marker, atStart: false)
         try await wait("AppKit did not dispatch native event batch \(batch)") { delivered }
+        await MainTurns.next()
         print("QUEUED batch=\(batch) events=\(events.map { $0.type.rawValue })")
         fflush(nil)
     }
@@ -1490,11 +1491,18 @@ private enum SelectionTyping {
             let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
             try require(rect.width > 0 && rect.height > 0, "shift-click character must have native geometry")
             let point = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
+            print("SHIFT before=\(editor.selectedRange()) insertion=\(editor.characterIndexForInsertion(at: editor.convert(point, from: nil))) point=\(point) \(f.diagnostic(point))")
+            fflush(nil)
+            try require(editor.selectedRange() == NSRange(location: 6, length: 0)
+                && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
+                "Shift-click geometry must target insertion 1 while the native caret remains at 6")
             try await click(point, flags: .shift, in: f.window)
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside the active note must retain its editor and selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
-            try require(range.length > 0 && NSMaxRange(range) == 6, "native Shift-click must extend note text selection from the existing caret")
+            print("SHIFT after=\(range) globalFlags=\(NSEvent.modifierFlags.rawValue)")
+            fflush(nil)
+            try require(range.length > 0 && NSMaxRange(range) == 6, "native Shift-click must extend note text selection from caret 6; actual=\(range)")
             let expected = (editor.string as NSString).replacingCharacters(in: range, with: "X")
             try await typed("X", in: f.window)
             try require(editor.string == expected, "typing must replace the Shift-clicked note text range")

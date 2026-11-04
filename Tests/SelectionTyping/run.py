@@ -84,7 +84,7 @@ def main():
     (output / "inputs.json").write_text(json.dumps({"bin_path": str(build), "resources": str(resources),
         "link_file": str(link_file), "objects": [str(p) for p in objects], "sdk": sdk,
         "harness_source": str(source), "harness_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "normal_events": "AppKit queue with an observed completion marker",
+        "normal_events": "AppKit queue with an observed dispatch marker, then an asynchronous main-run-loop wake",
         "wheel_events": "DevInput.replay into the recorded native window and hit-tested point; assert document movement and keyboard ownership",
         "immediate_html_events": "back-to-back NSApp.sendEvent mouseDown and keyDown without yielding"}, indent=2) + "\n")
     compiled = capture(command, output / "link", cwd=root)
