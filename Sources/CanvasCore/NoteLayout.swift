@@ -80,9 +80,7 @@ public enum NoteLink: Equatable {
     }
 
     public init?(encoded: String) {
-        let lower = encoded.lowercased()
-        let reserved = ["easl:object", "easl:key", "easl://object", "easl://key"].contains { lower.hasPrefix($0) }
-        if reserved {
+        if encoded.lowercased().hasPrefix("easl:") {
             guard let target = ObjectTarget(encoded: encoded) else { return nil }
             self = .object(target)
         } else if encoded.hasPrefix("code:") {

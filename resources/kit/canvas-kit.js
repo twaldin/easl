@@ -86,6 +86,7 @@
 
   const canvasKit = {
     goTo(target) {
+      if (arguments.length !== 1) return Promise.reject(new Error('goTo takes one target object'));
       if (!target || typeof target !== 'object' || Array.isArray(target)) return Promise.reject(new Error('goTo target must be an object'));
       if (Object.prototype.hasOwnProperty.call(target, 'type')) return Promise.reject(new Error('unknown goTo target field: type'));
       return post({ ...target, type: 'object.goTo' });

@@ -58,7 +58,7 @@ struct NoteObjectLinkTests {
         for target in [ObjectTarget.id("obj_a/b% α"), .key("Plan / α")] {
             #expect(NoteLink(encoded: NoteLink.object(target).encoded) == .object(target))
         }
-        for url in ["easl:object/", "easl:key/a/b", "easl:object/a?zoom=1", "easl:object/%GG", "easl://object/a", "EASL:object/a"] {
+        for url in ["easl:object/", "easl:key/a/b", "easl:object/a?zoom=1", "easl:object/%GG", "easl://object/a", "EASL:object/a", "easl:%6Fbject/obj_1", "easl:/object/obj_1"] {
             #expect(NoteLink(encoded: url) == nil)
         }
     }

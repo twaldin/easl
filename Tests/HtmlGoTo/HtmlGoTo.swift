@@ -158,6 +158,22 @@ private enum HtmlGoTo {
         }
         print("PASS id and key navigate, select, and return through Back")
 
+        guard let bounds = try await web.evaluateJavaScript("""
+        (() => { const r = document.querySelector('canvas-object[key]').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2}; })()
+        """) as? [String: Double], let x = bounds["x"], let y = bounds["y"] else {
+            throw Failure(message: "key component has no native click geometry")
+        }
+        let scale = web.pageZoom * web.magnification
+        let componentPoint = web.convert(NSPoint(x: CGFloat(x) * scale, y: web.isFlipped ? CGFloat(y) * scale : web.bounds.height - CGFloat(y) * scale), to: nil)
+        NSApp.sendEvent(mouse(.leftMouseDown, at: componentPoint, in: window))
+        NSApp.sendEvent(mouse(.leftMouseUp, at: componentPoint, in: window))
+        try await wait("native canvas-object key click did not navigate") {
+            canvas.selection == [target.id] && canvas.viewport.rect.rect.intersects(target.frame.rect)
+        }
+        try back(to: initial)
+        print("PASS native canvas-object key click navigates, selects, and records Back")
+
         _ = try await refused(web, target: ["id": target.id])
         try arm()
         try await Task.sleep(for: .milliseconds(1600))
@@ -177,14 +193,21 @@ private enum HtmlGoTo {
             try arm()
             _ = try await refused(web, target: lookup)
         }
+        let extraArgumentRefused = try await web.callAsyncJavaScript("""
+        try { await canvasKit.goTo({id}, {zoom:'fit'}); return false; }
+        catch { return true; }
+        """, arguments: ["id": target.id], contentWorld: .page) as? Bool
+        try require(extraArgumentRefused == true && canvas.viewport.matches(initial), "the removed zoom argument must reject without navigation")
         print("PASS zoom, ambiguous targets, and empty targets are rejected")
 
         try require(web.takeKeyboard(), "HTML page must take keyboard for Enter")
         NSApp.sendEvent(key("a", code: 0, in: window))
         _ = try await refused(web, target: ["id": target.id])
+        _ = await js(web, "document.querySelector('canvas-object[id]').focus()")
         NSApp.sendEvent(key("\r", code: 36, in: window))
-        _ = try await call(web, target: ["key": "destination"])
-        try require(canvas.selection == [target.id] && canvas.viewport.rect.rect.intersects(target.frame.rect), "native Enter in page must authorize navigation")
+        try await wait("native Enter on the id component did not navigate") {
+            canvas.selection == [target.id] && canvas.viewport.rect.rect.intersects(target.frame.rect)
+        }
         try back(to: initial)
         print("PASS only native Enter, not ordinary typing, authorizes keyboard navigation")
 
