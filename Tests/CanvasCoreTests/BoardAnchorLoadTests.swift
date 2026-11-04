@@ -462,6 +462,31 @@ final class BoardAnchorLoadTests {
         #expect(try saved(loaded.id, in: fixture.store).objects.first { $0.id == note.id }?.props["markdown"] == .string(typed))
     }
 
+    @Test(.timeLimit(.minutes(1))) func gitSettlementDuringInFlightSaveWritesRefusedAnchorsOutNext() async throws {
+        let fixture = try await gitFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.repo.root) }
+        let holds = GitLoadHolds()
+        defer { holds.release() }
+        try await holds.occupy(in: directory)
+        let writes = SaveWrites(blocking: [1])
+        defer { writes.release.signal() }
+        let store = BoardStore(directory: fixture.store.directory, debounce: 60, write: { try writes.write($0, to: $1, options: $2) })
+        let loaded = try await store.load(root: fixture.repo.root)
+        #expect(loaded.isAnchorScrubPending(fixture.allowed.id))
+        let saving = Task { try await store.saveChecked(loaded) }
+        #expect(await writes.waitUntilBlocked())
+        try await holds.finish()
+        await loaded.waitForAnchorScrub()
+        writes.release.signal()
+        try await saving.value
+
+        #expect(writes.snapshots.map { $0.objects.first { $0.id == fixture.allowed.id }?.props["markdown"] }
+                == [fixture.allowed.props["markdown"], .string(fixture.accepted)])
+        let persisted = try saved(loaded.id, in: store)
+        #expect(!String(decoding: try BoardStore.encoder.encode(persisted), as: UTF8.self).contains("LEAKED_"))
+        #expect(persisted.objects.first { $0.id == fixture.code.id }?.props["anchor"] == "KEEP_CODE")
+    }
+
     struct GitFixture {
         let repo: TempRepo
         let store: BoardStore

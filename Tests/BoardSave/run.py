@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--bin-path", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--baseline", action="store_true", help="Compile against the synchronous save API with the identical write-injection seam.")
+    parser.add_argument("--ci-timing-report-only", action="store_true", help="Report the 50 ms stretch limit without enforcing it on shared CI; keep thread, durability, and atomicity checks strict.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This native regression requires macOS.")
@@ -58,7 +59,8 @@ def main():
         environment.pop(key, None)
     environment.update(EASL_HOME=str(home), EASL_NO_ACTIVATE="1")
     with (output / "child.log").open("w") as log:
-        child = subprocess.Popen([str(executable), str(home)], cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)
+        child = subprocess.Popen([str(executable), str(home), "slow-report" if args.ci_timing_report_only else "slow"],
+                                 cwd=root, env=environment, stdout=log, stderr=subprocess.STDOUT)
         try:
             status = child.wait(timeout=20)
         except subprocess.TimeoutExpired:
@@ -66,6 +68,12 @@ def main():
             child.wait(timeout=5)
             raise RuntimeError(f"Owned regression PID {child.pid} exceeded 20 seconds")
     print((output / "child.log").read_text(), end="", flush=True)
+    if not args.baseline:
+        modal_home = pathlib.Path(tempfile.mkdtemp(prefix="modal-", dir=output))
+        environment["EASL_HOME"] = str(modal_home)
+        with (output / "modal.log").open("w") as log:
+            subprocess.run([str(executable), str(modal_home), "modal"], env=environment, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=20)
+        print((output / "modal.log").read_text(), end="", flush=True)
     hook = output / "atomic-write-hook.dylib"
     subprocess.run(["xcrun", "clang", "-dynamiclib", "-O2", str(root / "Tests/BoardSave/atomic-write-hook.c"), "-o", str(hook)], check=True, timeout=60)
     subprocess.run(["codesign", "--force", "--sign", "-", str(hook)], check=True, timeout=30)

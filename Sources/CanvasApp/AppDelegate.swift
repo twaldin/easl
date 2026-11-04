@@ -243,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { [weak self] request, connection in
             await self?.localRestore?.value
+            guard self?.terminating != true else { return nil }
             return await router.handle(request, connection: connection)
         }
         do {
@@ -260,6 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cmux = cmux
         let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { [weak self] request, connection in
             await self?.localRestore?.value
+            guard self?.terminating != true else { return nil }
             return await cmux.handle(request, connection: connection)
         }
         do {
@@ -373,8 +375,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pasteMaintenance?.stop()
         updateRestoration?.cancel()
         pasteMaintenance = nil
-        server?.stop()
-        cmuxServer?.stop()
         // Normal quitting closes no sheet or connection, and a relay left to see its stdin close
         // may outlive the app (an `nc` without `-N`): end every ssh before exiting, and wait.
         // Every remote board's attachment ends with its links; the reopen list stays for the next launch.
@@ -395,11 +395,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         localRestore?.cancel()
         updateRestoration?.cancel()
         for opening in openingWindows.values { opening.shown.cancel() }
-        for controller in controllers.values {
-            controller.canvas.saveViewport()
-            controller.saveComposer()
-        }
-        return CodeNavigation.terminateServers { completion in
+        return CodeNavigation.terminateServers { [self] completion in
+            server?.stop()
+            cmuxServer?.stop()
+            for controller in controllers.values {
+                controller.canvas.saveViewport()
+                controller.saveComposer()
+            }
             registry.store.beginFlush(Array(registry.boards.values), completion: completion)
         }
     }

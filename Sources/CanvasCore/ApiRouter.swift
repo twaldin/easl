@@ -480,6 +480,16 @@ public final class ApiRouter {
                 return nil
             case "board.open_remote": return Self.ok(id, try await openRemote(params))
             case "board.close": return Self.ok(id, try await close(params))
+            case "board.export":
+                let board = try board(params)
+                let url = board.absoluteURL(params["path"]?.string ?? ".easl/board.json").standardizedFileURL
+                let objectCount = board.objects.count
+                do {
+                    try await BoardStore.export(board, to: url)
+                } catch {
+                    throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
+                }
+                return Self.ok(id, .object(["path": .string(url.path), "objects": .number(Double(objectCount))]))
             case "board.stale": return Self.ok(id, try await stale(params))
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
@@ -1829,17 +1839,6 @@ public final class ApiRouter {
             }
             let remote = remoteTabs?().compactMap { $0.isOpen ? $0.info.listJSON : nil } ?? []
             return .object(["boards": .array(boards + remote)])
-
-        case "board.export":
-            let board = try board(p)
-            let url = board.absoluteURL(p["path"]?.string ?? ".easl/board.json").standardizedFileURL
-            let objectCount = board.objects.count
-            do {
-                try await BoardStore.export(board, to: url)
-            } catch {
-                throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
-            }
-            return .object(["path": .string(url.path), "objects": .number(Double(objectCount))])
 
         case "object.get":
             let id = try string(p, "id")

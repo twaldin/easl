@@ -338,7 +338,7 @@ public final class BoardStore {
 /// A store's directory off the main actor. Loads and the migration run on `queue`, one at a
 /// time, which alone touches what the store knows of its files. Every board file write is
 /// counted (`writes(of:)`), so a load's later write never lands on a save made since it read.
-private final class Files: @unchecked Sendable {
+final class Files: @unchecked Sendable {
     let directory: URL
     private static let queue = DispatchQueue(label: "easl.board-store", qos: .userInitiated)
     private let atomicWrite: @Sendable (Data, URL, Data.WritingOptions) throws -> Void
@@ -442,18 +442,20 @@ private final class Files: @unchecked Sendable {
         }
     }
 
-    static func export(_ snapshot: BoardSnapshot, to url: URL) async throws {
-        try await run {
-            Result<Void, Error> {
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-                var data = try encoder.encode(snapshot)
-                data.append(0x0A)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
+    @MainActor static func export(_ snapshot: BoardSnapshot, to url: URL) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                continuation.resume(with: Result {
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                    var data = try encoder.encode(snapshot)
+                    data.append(0x0A)
+                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                })
             }
-        }.get()
+        }
     }
 
     /// Writes what `snapshot` makes as board `id`'s file, unless the file was written since a
@@ -468,7 +470,7 @@ private final class Files: @unchecked Sendable {
     /// Writes board `id`'s file (making the directory first, once), unless `read` is given and
     /// the file has had other than `read` writes; whether it wrote.
     @discardableResult
-    func write(_ data: Data, id: BoardID, unlessWrittenSince read: Int? = nil) throws -> Bool {
+    private func write(_ data: Data, id: BoardID, unlessWrittenSince read: Int? = nil) throws -> Bool {
         if let read, written.count[id, default: 0] != read { return false }
         written.count[id, default: 0] += 1
         try make(&written)

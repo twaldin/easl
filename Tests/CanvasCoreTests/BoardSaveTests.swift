@@ -141,6 +141,57 @@ import Testing
         #expect(try reopened.object(note.id).props["markdown"] == "latest state before close")
     }
 
+    @Test func conditionalSaveSkipsAfterSuccessfulAndFailedNewerWrites() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fail = Locked(false)
+        let files = Files(directory: directory) { data, url, options in
+            if fail.withLock({ $0 }) { throw SaveWrites.Failure() }
+            try data.write(to: url, options: options)
+        }
+        let board = Board(id: "brd_conditional", root: directory.appendingPathComponent("root"))
+        let note = board.create(type: .note, props: .object(["markdown": "stale load"]))
+        let stale = board.snapshot
+        let read = await files.writes(of: board.id)
+        _ = try board.update(note.id, props: .object(["markdown": "newer durable state"]))
+        try await withCheckedThrowingContinuation { continuation in files.save(board.snapshot) { continuation.resume(with: $0) } }
+        await files.write(id: board.id, unlessWrittenSince: read) { stale }
+        let previous = try Data(contentsOf: files.url(for: board.id))
+        #expect(try BoardFile.read(files.url(for: board.id))?.objects.first { $0.id == note.id }?.props["markdown"] == "newer durable state")
+
+        let beforeFailure = await files.writes(of: board.id)
+        fail.withLock { $0 = true }
+        do {
+            try await withCheckedThrowingContinuation { continuation in files.save(stale) { continuation.resume(with: $0) } }
+            Issue.record("injected write failure was swallowed")
+        } catch is SaveWrites.Failure {}
+        fail.withLock { $0 = false }
+        await files.write(id: board.id, unlessWrittenSince: beforeFailure) { stale }
+        #expect(try Data(contentsOf: files.url(for: board.id)) == previous)
+    }
+
+    @Test func closeJoiningFailedAutosaveWaitsForItsNewerSuccessfulWrite() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let writes = SaveWrites(blocking: [1], failing: [1])
+        defer { writes.release.signal() }
+        let store = BoardStore(directory: directory, debounce: 0, write: { try writes.write($0, to: $1, options: $2) })
+        let registry = BoardRegistry(store: store)
+        let board = try await registry.open(root: directory.appendingPathComponent("root"))
+        let note = board.create(type: .note, props: .object(["markdown": "failed autosave"]))
+        #expect(await writes.waitUntilBlocked())
+        _ = try board.update(note.id, props: .object(["markdown": "newest state at close"]))
+        let closing = Task {
+            writes.release.signal()
+            try await registry.close(board.id)
+        }
+        try await closing.value
+        #expect(board.isClosed)
+        #expect(registry.boards[board.id] == nil)
+        let reopened = try await registry.open(root: board.root)
+        #expect(try reopened.object(note.id).props["markdown"] == "newest state at close")
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("easl-save-\(UUID().uuidString)", isDirectory: true)
     }
@@ -150,7 +201,7 @@ import Testing
     }
 }
 
-private final class SaveWrites: @unchecked Sendable {
+final class SaveWrites: @unchecked Sendable {
     struct Failure: Error {}
     let release = DispatchSemaphore(value: 0)
     private let entered = DispatchSemaphore(value: 0)
