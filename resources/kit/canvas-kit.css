@@ -118,7 +118,7 @@
   canvas-code .tok-c { color: var(--canvas-tok-comment); font-style: italic; }
   canvas-code .tok-t { color: var(--canvas-tok-type); }
 
-  canvas-link {
+  canvas-link, canvas-object {
     color: var(--canvas-accent);
     font-family: var(--canvas-mono);
     font-size: 0.92em;
@@ -126,7 +126,7 @@
     text-underline-offset: 2px;
     cursor: pointer;
   }
-  canvas-link:hover { text-decoration-style: solid; }
+  canvas-link:hover, canvas-object:hover { text-decoration-style: solid; }
 
   canvas-decisions {
     display: block;

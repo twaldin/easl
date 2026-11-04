@@ -69,16 +69,21 @@ public enum NoteLink: Equatable {
     /// Open a code tile beside the note.
     case code(path: String, lines: LineRange?)
     case web(URL)
+    case object(ObjectTarget)
 
     public var encoded: String {
         switch self {
         case .code(let path, let lines): "code:" + path + (lines.map { "#L\($0.start)-\($0.end)" } ?? "")
         case .web(let url): url.absoluteString
+        case .object(let target): target.encoded
         }
     }
 
     public init?(encoded: String) {
-        if encoded.hasPrefix("code:") {
+        if encoded.lowercased().hasPrefix("easl:") {
+            guard let target = ObjectTarget(encoded: encoded) else { return nil }
+            self = .object(target)
+        } else if encoded.hasPrefix("code:") {
             self = Self.code(String(encoded.dropFirst(5)))
         } else if let url = URL(string: encoded), url.scheme != nil {
             self = .web(url)

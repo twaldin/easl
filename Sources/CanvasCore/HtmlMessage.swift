@@ -16,6 +16,7 @@ public enum HtmlMessage: Equatable, Sendable {
     case rendered(scrollY: Double?)
     /// `canvasKit.send(payload)`: hand a JSON value to the agent terminal that created the tile.
     case send(payload: JSONValue)
+    case goTo(ObjectTarget)
 
     public static let maxMessageBytes = 64 * 1024
     public static let maxStateValueBytes = 16 * 1024
@@ -30,6 +31,7 @@ public enum HtmlMessage: Equatable, Sendable {
         "state.set": ["key", "value"],
         "view.rendered": ["scrollY"],
         "send": ["payload"],
+        "object.goTo": ["id", "key"],
     ]
 
     /// Parses the serialized message body. The size cap applies before any decoding.
@@ -47,6 +49,8 @@ public enum HtmlMessage: Equatable, Sendable {
             throw HtmlError.unexpectedField(extra)
         }
         switch type {
+        case "object.goTo":
+            return .goTo(try ObjectTarget.parse(object))
         case "code.excerpt":
             return .excerpt(path: try path(object), lines: try lines(object), symbol: try symbol(object))
         case "code.open":

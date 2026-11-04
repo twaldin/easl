@@ -21,7 +21,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
   - **KaTeX**: `$…$` (inline) and `$$…$$` (display) typeset as math, as do `\(…\)` and `\[…\]`; KaTeX loads only when the page has a formula. `$5 and $10` stays prose (Pandoc's rule), `\$` is a dollar, and code/pre is untouched. Keep the text color inherited (`text-foreground`) so math follows dark mode.
   - **easl components** (below).
-- Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`, `.send(payload)`.
+- Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.goTo({id} | {key})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`, `.send(payload)`.
 - Text fields work: the user presses Return on the selected tile or clicks an `<input>`, `<textarea>`, `<select>` or contenteditable element, then types; Esc (or a click on the board) gives the keyboard back. A page that focuses a field itself does not take the keyboard. Typed text lives only in the page while it is open, so persist it as it changes and restore it on load: `field.addEventListener('input', () => canvasKit.setState('answer', field.value))`, then `canvasKit.getState('answer')` (or `canvasKit.onState`) fills `field.value`. Read the answer with `object.get` `props.state.answer` before you act on it.
 
 ## Components
@@ -30,11 +30,23 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 | --- | --- |
 | `<canvas-code path="src/x.ts" lines="10-40"></canvas-code>` | Excerpt read from the real file. `lines` are line numbers in the file as it is now: they don't follow code that moves (a code tile's range and a note's fence do). `symbol="Board.update"` anchors to a symbol instead (re-found after edits; wins over `lines`): use it for code that may move. A stale badge means the symbol wasn't found or the lines are past the file's end. Long lines soft-wrap with a hanging indent, so don't widen the tile for them. Click opens a code tile. `path` is board-relative. |
 | `<canvas-link path="src/x.ts" line="42">the retry loop</canvas-link>` | Inline file:line link (also `lines="10-20"`, `symbol=`). Empty text renders `path:line`. A click goes to the code tile already showing those lines (exactly, or a captioned tile whose range holds them), else opens one beside the page: an overview can link to its own stops. |
+| `<canvas-object id="obj_…">the result</canvas-object>` | Inline same-board object link. Use exactly one `id` or `key` attribute. `key="result"` uses the same lookup as `object.find`. Empty text shows the ID or key. Click or Enter selects and shows the object like a question context link, including fitting oversized objects. Errors appear in the link's title. |
 | `<canvas-decisions key="storage" question="Where should boards live?">` + `<canvas-option value="sqlite" label="SQLite">why / cost</canvas-option>`… | A choice the user makes in place. The pick is stored in the tile's `props.state.storage`; read it with `object.get`. Clicking again clears it. |
 | `<canvas-compare>` + `<canvas-pane label="Before">…</canvas-pane>`… | Equal-width labeled columns, any count. |
 
 Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references.
 Never paste code you could anchor: pasted code is a copy that falls behind silently, an anchored excerpt shows the file as it is now.
+
+## Going to a board object
+
+`canvasKit.goTo({id: 'obj_…'})` or `canvasKit.goTo({key: 'result'})` returns a promise resolving to `{id: resolvedObjectId}`. The target must contain exactly one string `id` or `key`. Unknown fields, including `zoom`, are errors and are forwarded to native validation rather than silently removed. There is no zoom argument or policy.
+
+A recent click or Enter in this page allows one jump. The existing document-bound native permit lasts 1.5 seconds and is consumed once. Any code in the page can spend that permit, including a timer or synthetic event handler. Load scripts, timers, and synthetic events do not create permission themselves. Without a fresh permit, after it expires, or after it has been spent, `goTo` rejects. Offscreen renders cannot navigate. Reload and detach revoke unused permission.
+`goTo` and `send` share this permit. One native gesture authorizes only one of them: after `goTo`, `send` can still queue inert data but cannot wake the agent; after `send`, `goTo` rejects.
+
+The target must be open on the same board. Missing, closed, other-board, malformed, and unauthorized targets reject the promise with a clear error. Catch the rejection and display it. Navigation selects and shows the target exactly like a question context link, including fitting oversized targets; Navigate Back returns to the previous view. Remote boards work through viewer-local navigation, without a host navigation RPC.
+
+Notes use `[label](easl:object/<id>)` or `[label](easl:key/<key>)`. Percent-encode the ID or key as one URL path component when needed, for example `[result](easl:key/review%20result)`. These links use the same same-board navigation and Navigate Back behavior.
 
 ## Sending page content back
 

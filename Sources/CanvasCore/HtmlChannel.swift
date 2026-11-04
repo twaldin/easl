@@ -22,6 +22,8 @@ public enum HtmlChannel {
             if files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
         }
         switch message {
+        case .goTo:
+            throw HtmlError.unavailable("navigation runs in the viewer")
         case .excerpt(let path, let lines, let symbol):
             if let files {
                 let relative = try HtmlKit.boardRelative(path)

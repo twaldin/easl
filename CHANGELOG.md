@@ -14,6 +14,7 @@ Each version's section is its GitHub release's notes.
 ### Added
 
 - `board.stale` accepts `createdBy: "<tile id>"` to list only one agent's cleanup candidates. The CLI's `--mine` fills it from `EASL_TILE_ID`.
+- HTML tiles can link to an open same-board object with `canvasKit.goTo({id} | {key})` or `<canvas-object>`. Notes support `[label](easl:object/<id>)` and `[label](easl:key/<key>)`, with URL-encoded targets. Links select and show the target like question context links, including fitting oversized objects, and support Navigate Back. Remote-board navigation stays on the viewer. HTML navigation requires a fresh native click or Enter; malformed targets and unknown fields, including `zoom`, are refused.
 
 ## 0.3.5
 

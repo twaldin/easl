@@ -172,6 +172,7 @@ final class NoteTile: NSView, TileContent {
     /// A web link the user clicked in the note opened or found this browser tile; the canvas
     /// shows it.
     var onOpenedLink: ((ObjectID) -> Void)?
+    var onGoTo: ((ObjectID) -> Void)?
     /// Where the note's relative paths resolve (`Board.linkRoot`, or where its ref was read).
     private var linkRoot: URL { reading?.root ?? board.linkRoot(of: object) }
 
@@ -605,6 +606,15 @@ final class NoteTile: NSView, TileContent {
     /// file of this Mac and leaves its links out of app.log: they are its host's.
     private func open(_ link: NoteLink, defaultBrowser: Bool) {
         switch link {
+        case .object(let target):
+            do {
+                guard !hostBoardClosed else { throw HtmlError.unavailable("host closed this board") }
+                let id = try target.resolve(on: board, from: object.id)
+                guard let onGoTo else { throw HtmlError.unavailable("navigation is unavailable") }
+                onGoTo(id)
+            } catch {
+                canvas?.showNotice(String(describing: error))
+            }
         case .code(let path, let lines):
             // A note anchored to a branch opens its code at the same ref.
             let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines, ref: RefSource.ref(of: object.props)), from: object.id)
