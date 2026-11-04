@@ -83,7 +83,7 @@ jobs:
             *) exit 1 ;;
           esac
           archive="zmx-${ZMX_VERSION}-macos-${platform}.tar.gz"
-          curl -fL -o "$RUNNER_TEMP/$archive" "https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}/$archive"
+          curl -fL --max-time 120 -o "$RUNNER_TEMP/$archive" "https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}/$archive"
           printf '%s  %s\n' "$ZMX_SHA256" "$RUNNER_TEMP/$archive" | shasum -a 256 --check
           mkdir -p "$RUNNER_TEMP/native-zmx"
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/native-zmx"

@@ -89,7 +89,7 @@ def main():
         "immediate_html_events": "back-to-back NSApp.sendEvent mouseDown and keyDown without yielding"}, indent=2) + "\n")
     compiled = capture(command, output / "link", cwd=root)
     if compiled["returncode"] != 0:
-        raise SystemExit(f"Harness link failed; see {output / 'link/stderr.log'}")
+        raise SystemExit(f"Harness link failed: {compiled}; see {output / 'link'}")
     listing = capture([str(executable), "--list"], output / "list", cwd=root)
     if listing["returncode"] != 0:
         raise SystemExit(f"Harness listing failed: {listing}; see {output / 'list/stderr.log'}")

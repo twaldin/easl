@@ -116,7 +116,7 @@ Command-Escape always returns typing to the board and preserves the current sele
 | Type | Single user selection | Plain Escape |
 | --- | --- | --- |
 | Terminal | Gives its terminal view typing. | Sent to the running program. |
-| Note | Starts markdown editing at a visible source caret; a prose click uses the clicked position. Body drags select editor text; move the note by its title or the Move tool. | Saves and ends editing. Prose entry restores the prompt target when available; keyboard/title entry returns to the board. With a conflict, keeps theirs with the draft available through Undo. |
+| Note | Starts markdown editing at a visible source caret; a prose click uses the clicked position. A rule uses its source line; a whitespace-only note uses source end. Body drags select editor text; move the note by its title or the Move tool. | Saves and ends editing. Prose entry restores the prompt target when available; keyboard/title entry returns to the board. With a conflict, keeps theirs with the draft available through Undo. |
 | HTML | Synchronously gives the native page typing before later keys. The native click places editable focus inside the page. Pending page work may drop a key, but never sends it to the previous responder. | The page handles it first. Unhandled Escape leaves typing. |
 | Browser | Gives the loaded page typing, or its address field when blank. | The page keeps its handling. In the address field, resets the address and leaves typing. |
 | Remote browser | Gives its remote page keyboard forwarding. | Keeps the remote page's existing handling. |

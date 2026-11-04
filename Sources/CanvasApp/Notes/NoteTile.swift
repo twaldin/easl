@@ -740,7 +740,7 @@ final class NoteTile: NSView, TileContent {
         if let position { return min(max(0, position.sourceOffset(at: insertion)), (text as NSString).length) }
         guard let offset = offset(of: fragment.rangeInElement.location),
               offset < storage.length, let markdownLine = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
-            return 0
+            return (text as NSString).length
         }
         return sourceOffset(ofLine: markdownLine, in: text)
     }

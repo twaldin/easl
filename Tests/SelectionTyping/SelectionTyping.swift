@@ -57,6 +57,8 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "note-click-caret", baseline: "feature regression"))
         cases.append(Scenario(name: "note-styled-click-caret", baseline: "feature regression"))
         cases.append(Scenario(name: "note-wrapped-click-caret", baseline: "feature regression"))
+        cases.append(Scenario(name: "note-rule-click-caret", baseline: "feature regression"))
+        cases.append(Scenario(name: "note-whitespace-click-caret", baseline: "feature regression"))
         cases.append(Scenario(name: "html-immediate-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-immediate-field-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-click-go-to", baseline: "feature regression"))
@@ -156,8 +158,8 @@ private enum SelectionTyping {
     </script>
     """
 
-    private static func key(_ code: UInt16, _ text: String, flags: NSEvent.ModifierFlags = [], isARepeat: Bool = false, in window: NSWindow) -> NSEvent {
-        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+    private static func key(_ code: UInt16, _ text: String, type: NSEvent.EventType = .keyDown, flags: NSEvent.ModifierFlags = [], isARepeat: Bool = false, in window: NSWindow) -> NSEvent {
+        NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
             context: nil, characters: flags.contains(.shift) ? text.uppercased() : text,
             charactersIgnoringModifiers: flags.contains(.shift) ? text.uppercased() : text,
@@ -204,8 +206,14 @@ private enum SelectionTyping {
     }
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
-        try await post([mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window),
-            mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)])
+        let down = mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window)
+        let up = mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)
+        if flags.contains(.shift) {
+            try await post([key(56, "", type: .flagsChanged, flags: flags, in: window), down, up,
+                key(56, "", type: .flagsChanged, in: window)])
+        } else {
+            try await post([down, up])
+        }
     }
 
     private static func typed(_ text: String, in window: NSWindow) async throws {
@@ -1238,6 +1246,47 @@ private enum SelectionTyping {
         }
     }
 
+    private static func exerciseUnmappedNoteCaret(_ f: Fixture, whitespace: Bool) async throws {
+        let object = try await f.create(.note)
+        let source = whitespace ? " \n \n" : "Before.\n\n---\n\nAfter.\n"
+        _ = try f.board.update(object.id, props: .object(["markdown": .string(source)]))
+        guard let tile = f.canvas.tiles[object.id]?.content as? NoteTile else { throw Failure("note tile is missing") }
+        func target() -> NSTextView? {
+            descendants(tile).compactMap { $0 as? NSTextView }.first {
+                guard !$0.isEditable, !$0.isHiddenOrHasHiddenAncestor, let storage = $0.textStorage, storage.length > 0 else { return false }
+                return whitespace
+                    ? storage.attribute(.noteSourcePosition, at: 0, effectiveRange: nil) == nil
+                        && storage.attribute(.noteMarkdownLine, at: 0, effectiveRange: nil) == nil
+                    : $0.string.contains("Before.") && $0.string.contains(" \n")
+            }
+        }
+        try await wait("the intended non-prose row must render") { target() != nil }
+        guard let text = target(), let layout = text.textLayoutManager, let content = layout.textContentManager else {
+            throw Failure("rendered row must expose native text geometry")
+        }
+        let index = whitespace ? 0 : (text.string as NSString).range(of: " \n").location
+        guard let start = content.location(content.documentRange.location, offsetBy: index),
+              let end = content.location(start, offsetBy: 1), let range = NSTextRange(location: start, end: end) else {
+            throw Failure("rendered row has no native character range")
+        }
+        layout.ensureLayout(for: content.documentRange)
+        var point: NSPoint?
+        layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, rect, _, _ in
+            point = text.convert(NSPoint(x: rect.minX + text.textContainerOrigin.x + min(1, rect.width / 10),
+                y: rect.midY + text.textContainerOrigin.y), to: nil)
+            return false
+        }
+        guard let point else { throw Failure("rendered row did not lay out") }
+        try await click(try f.checked(point, target: tile, label: "non-prose source caret"), in: f.window)
+        try await wait("one rendered-row click must enter editing") {
+            (f.window.firstResponder as? NSTextView)?.isEditable == true && f.canvas.focusedTile == object.id
+        }
+        try await typed("CLICK", in: f.window)
+        let expected = whitespace ? source + "CLICK" : "Before.\n\nCLICK---\n\nAfter.\n"
+        try require((f.window.firstResponder as? NSTextView)?.string == expected,
+            "a rule or whitespace click must preserve its source position; actual=\(String(describing: (f.window.firstResponder as? NSTextView)?.string))")
+    }
+
     private static func exerciseFirstNoteDrag(_ f: Fixture, reversed: Bool) async throws {
         let note = try await f.create(.note)
         guard let tile = f.canvas.tiles[note.id]?.content as? NoteTile else { throw Failure("drag note missing") }
@@ -1798,6 +1847,8 @@ private enum SelectionTyping {
             try await exerciseNoteCaret(f, styled: true)
         } else if name == "note-wrapped-click-caret" {
             try await exerciseNoteCaret(f, styled: true, wrapped: true)
+        } else if name == "note-rule-click-caret" || name == "note-whitespace-click-caret" {
+            try await exerciseUnmappedNoteCaret(f, whitespace: name == "note-whitespace-click-caret")
         } else if name == "note-first-drag-forward" || name == "note-first-drag-reverse" {
             try await exerciseFirstNoteDrag(f, reversed: name == "note-first-drag-reverse")
         } else if name == "note-blank-body-caret" {

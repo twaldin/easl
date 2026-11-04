@@ -108,7 +108,9 @@ public final class NoteRenderer {
         case let table as Table:
             self.table(table, context: context, line: line)
         case is ThematicBreak:
-            append(" \n", [.font: Self.bodyFont, .paragraphStyle: style(context, spacing: 8), .noteBlock: NoteBlock.rule.rawValue])
+            var rule: [NSAttributedString.Key: Any] = [.font: Self.bodyFont, .paragraphStyle: style(context, spacing: 8), .noteBlock: NoteBlock.rule.rawValue]
+            if let line { rule[.noteMarkdownLine] = line }
+            append(" \n", rule)
         case let html as HTMLBlock:
             code(html.rawHTML, context: context, line: line)
         default:
