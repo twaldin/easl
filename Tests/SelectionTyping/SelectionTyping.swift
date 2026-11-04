@@ -77,6 +77,7 @@ private enum SelectionTyping {
             cases.append(Scenario(name: name, baseline:
                 name == "html-panel-return" ? "existing bug regression" : "feature regression"))
         }
+        cases.append(Scenario(name: "sheet-blocked-html-click", baseline: "existing behavior control"))
         for name in ["overview-card-click", "overview-card-drag", "title-drag-unselected", "resize-unselected",
                      "note-scrollbar", "note-scroll", "board-scroll", "note-navigation-caret"] {
             cases.append(Scenario(name: name, baseline: "feature regression"))
@@ -189,7 +190,8 @@ private enum SelectionTyping {
                       if event.type == .applicationDefined, event.subtype.rawValue == 27183, event.data1 == batch {
                           delivered = true
                       } else if events.contains(where: {
-                          $0.type == event.type && $0.windowNumber == event.windowNumber && $0.timestamp == event.timestamp
+                          $0.type == event.type && $0.windowNumber == event.windowNumber
+                              && ($0.timestamp == event.timestamp || event.type == .leftMouseDown || event.type == .leftMouseUp)
                       }) {
                           print("NATIVE batch=\(batch) type=\(event.type.rawValue) flags=\(event.modifierFlags.rawValue) point=\(event.locationInWindow)")
                       }
@@ -311,7 +313,7 @@ private enum SelectionTyping {
             try await wait("isolated dispatch fixture must be active with a key board window") {
                 NSApp.isActive && self.window.isKeyWindow
             }
-            print("DISPATCH active=\(NSApp.isActive) key=\(window.isKeyWindow) delegate=\(String(describing: NSApp.delegate)) responder=\(String(describing: window.firstResponder))")
+            print("DISPATCH app=\(type(of: NSApp!)) active=\(NSApp.isActive) key=\(window.isKeyWindow) delegate=\(String(describing: NSApp.delegate)) responder=\(String(describing: window.firstResponder))")
             fflush(nil)
         }
 
@@ -1584,11 +1586,6 @@ private enum SelectionTyping {
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
             try await click(point, flags: .shift, in: f.window)
-            print("SHIFT dispatched range=\(editor.selectedRange()) mode=\(String(describing: CFRunLoopCopyCurrentMode(CFRunLoopGetMain())))")
-            fflush(nil)
-            try await wait("native Shift-click must finish with exactly characters 1 through 5 selected") {
-                editor.selectedRange() == NSRange(location: 1, length: 5)
-            }
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
@@ -1732,6 +1729,36 @@ private enum SelectionTyping {
             f.canvas.selection == [first.id] && f.canvas.focusedTile == first.id
         }
         try await assertInput(first, in: f)
+    }
+
+    private static func exerciseSheetClick(_ f: Fixture) async throws {
+        let note = try await f.create(.note)
+        let html = try await f.create(.html, x: 540)
+        let point = try await f.pagePoint(html.id, selector: "#field")
+        try await click(try f.point(note.id, title: true), in: f.window)
+        let selection = f.canvas.selection
+        let responder = f.window.firstResponder
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        let field = NSTextField(frame: NSRect(x: 20, y: 40, width: 250, height: 24))
+        sheet.contentView?.addSubview(field)
+        sheet.initialFirstResponder = field
+        f.window.beginSheet(sheet)
+        defer {
+            f.window.endSheet(sheet)
+            sheet.orderOut(nil)
+        }
+        try await wait("native sheet must own its text field before the blocked click") {
+            f.window.attachedSheet === sheet && sheet.firstResponder is NSTextView
+        }
+        let sheetResponder = sheet.firstResponder
+        try await click(point, in: f.window)
+        try require(f.canvas.selection == selection && f.window.firstResponder === responder,
+            "a click blocked by a native sheet must preserve the underlying selection and typing owner")
+        try require(sheet.firstResponder === sheetResponder, "the blocked click must preserve the sheet's exact responder")
+        try await post([key(12, "q", in: sheet)])
+        try require(field.stringValue == "q", "native keys after the blocked click must reach the sheet, not the HTML page")
     }
 
     private static func exercisePanelReturn(_ f: Fixture, replacement: Bool = false) async throws {
@@ -1964,6 +1991,8 @@ private enum SelectionTyping {
         } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
             let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
             try await exerciseShiftText(type, f)
+        } else if name == "sheet-blocked-html-click" {
+            try await exerciseSheetClick(f)
         } else if name == "offscreen-go-note" {
             try await exerciseOffscreenGo(f)
         } else if name == "heading-go-note" {

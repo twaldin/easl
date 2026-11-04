@@ -1627,12 +1627,21 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
-        let previousMouseDispatch = dispatchingSelectionMouse
-        dispatchingSelectionMouse = event.type == .leftMouseDown || event.type == .leftMouseDragged || event.type == .leftMouseUp
-        defer { dispatchingSelectionMouse = previousMouseDispatch }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }
+        if event.type == .leftMouseDown || event.type == .leftMouseDragged || event.type == .leftMouseUp {
+            sendSelectionMouse(event) { super.sendEvent(event) }
+        } else {
+            super.sendEvent(event)
+        }
+    }
+
+    func sendSelectionMouse(_ event: NSEvent, dispatch: () -> Void) {
+        guard !dispatchingSelectionMouse,
+              attachedSheet == nil, NSApp.modalWindow == nil else { return dispatch() }
+        dispatchingSelectionMouse = true
+        defer { dispatchingSelectionMouse = false }
         let clicked = event.type == .leftMouseDown ? canvas(at: event.locationInWindow) : nil
         let selectionTarget = clicked.flatMap { $0.view.selectionClickTarget(event, hit: $0.hit) }
         let selectionClick = selectionTarget.flatMap { id in
@@ -1646,7 +1655,7 @@ final class CanvasWindow: NSWindow {
         if case .board? = selectionClick {
             boardSelectionSerial = selectionSerial
         }
-        super.sendEvent(event)
+        dispatch()
         if event.type == .leftMouseUp { boardSelectionSerial = nil }
         if let selectionTarget, let selectionSerial, let selectionClick {
             let continuesBoardSelection = boardSelectionSerial == selectionSerial && clicked?.view.selectionSerial == selectionSerial
