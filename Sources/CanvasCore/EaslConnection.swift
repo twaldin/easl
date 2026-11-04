@@ -729,7 +729,15 @@ public final class EaslConnection: @unchecked Sendable {
             link.stopWriting()
             let generation = link.generation
             let reason = "write failed: \(String(cString: strerror(code)))"
-            queue.async { [weak self] in self?.lost(generation, reason: reason) }
+            if link.process != nil {
+                // A closing relay's exit and drained stderr decide why it failed.
+                queue.asyncAfter(deadline: .now() + 0.3) { [weak self, weak link] in
+                    guard let self, let link, self.link === link, link.process?.isRunning == true else { return }
+                    self.lost(generation, reason: reason)
+                }
+            } else {
+                queue.async { [weak self] in self?.lost(generation, reason: reason) }
+            }
             return
         }
         link.outbox.removeAll(keepingCapacity: true)
