@@ -21,6 +21,8 @@ final class HtmlTile: NSView, TileContent {
     private var live = true
     private(set) var hostBoardClosed = false
     private var building = false
+    private var acceptingNativeKeyboard = false
+    private var coldKeyboardEntry = false
     private var loadFailure: NSTextField?
     private var hostImageFailure: NSTextField?
     private var hostImageFailures: [URL: String] = [:]
@@ -124,6 +126,9 @@ final class HtmlTile: NSView, TileContent {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     nonisolated override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool {
+        live && !hostBoardClosed && (acceptingNativeKeyboard || window?.firstResponder === self)
+    }
 
     var objectID: ObjectID { object.id }
     /// Where the page's relative `<img src>` paths resolve: the tile's link root (a scratch tile
@@ -223,7 +228,9 @@ final class HtmlTile: NSView, TileContent {
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
+        let coldEntry = coldKeyboardEntry && window?.firstResponder === self
         loadPage(in: web)
+        coldKeyboardEntry = coldEntry && window?.firstResponder === self
     }
 
     private func detach() {
@@ -235,6 +242,10 @@ final class HtmlTile: NSView, TileContent {
         readyWaiters.removeAll()
         work.cancelAll()
         guard let web = webView else { return }
+        if live, !hostBoardClosed, let responder = window?.firstResponder as? NSView,
+           responder === web || responder.isDescendant(of: web) {
+            _ = takeNativeKeyboard()
+        }
         webViewCount = nil
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         web.stopLoading()
@@ -282,6 +293,7 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func loadPage(in web: WKWebView) {
+        coldKeyboardEntry = false
         (web as? HtmlWebView)?.resetKeyboardAuthorization()
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         hostImageFailures.removeAll()
@@ -442,6 +454,7 @@ final class HtmlTile: NSView, TileContent {
     func setHostBoardClosed(_ closed: Bool) {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
+        if closed { coldKeyboardEntry = false }
         if closed {
             suspendAssetWatch()
             (webView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
@@ -459,7 +472,7 @@ final class HtmlTile: NSView, TileContent {
         self.live = live
         if !live {
             leaveKeyboard()
-            webView?.revokeSendPermit()
+            webView?.resetKeyboardAuthorization()
             suspendAssetWatch()
             webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         }
@@ -762,6 +775,7 @@ final class HtmlTile: NSView, TileContent {
         let previous = self.object
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
         let pageChanged = ["html", "root", "ref"].contains { object.props[$0] != previous.props[$0] }
+        if networkChanged || pageChanged { coldKeyboardEntry = false }
         self.object = object
         if networkChanged, board.isRemote {
             contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
@@ -816,15 +830,33 @@ final class HtmlTile: NSView, TileContent {
         return hovered.rect.intersection(bounds)
     }
 
-    /// Return on the selected tile: the page takes the keyboard (its text fields type). False
-    /// while the page has no view to take it (a card, or a page still building).
-    func enterKeyboard() -> Bool { webView?.takeKeyboard() ?? false }
+    /// Native ownership stays in this tile while its sandboxed page is being built.
+    func enterKeyboard() -> Bool {
+        guard live, !hostBoardClosed else { return false }
+        if webView?.takeKeyboard() == true { return true }
+        let accepted = takeNativeKeyboard()
+        coldKeyboardEntry = accepted && webView == nil
+        return accepted
+    }
+
+    @discardableResult
+    func takeNativeKeyboard() -> Bool {
+        guard live, !hostBoardClosed else { return false }
+        acceptingNativeKeyboard = true
+        defer { acceptingNativeKeyboard = false }
+        return window?.makeFirstResponder(self) == true
+    }
+
+    /// A cold page has no WebKit child; its body click must not bubble to the board.
+    override func mouseDown(with event: NSEvent) {
+        webView?.beginSelectionClick(event)
+    }
 
     /// Esc in the page, or the page parked while it had the keyboard: the canvas takes it back,
     /// the tile stays selected (`CanvasView.leaveTile`). Only when the keyboard is in this tile.
     private func leaveKeyboard() {
         guard let canvas = enclosingScrollView as? CanvasView, let responder = window?.firstResponder as? NSView,
-              responder === webView || responder.isDescendant(of: self) else { return }
+              responder === self || responder.isDescendant(of: self) else { return }
         canvas.leaveTile()
     }
 
@@ -879,7 +911,10 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        let grantColdEntry = coldKeyboardEntry && window?.firstResponder === self
+        coldKeyboardEntry = false
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+        if grantColdEntry { _ = (webView as? HtmlWebView)?.takeKeyboard() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -890,6 +925,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        coldKeyboardEntry = false
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
         guard !hostBoardClosed, !board.isClosed else { return }
         if webView === self.webView {

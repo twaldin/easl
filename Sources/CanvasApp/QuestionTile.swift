@@ -218,11 +218,13 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         }
     }
 
-    /// Links and controls own their focus effects, including leaving after answering.
+    /// Links navigate without typing; answering, dismissal and confidence are control actions.
     func handlesSelectionClick(_ event: NSEvent) -> Bool {
         let point = page.convert(event.locationInWindow, from: nil)
         if let text = painter?.question, text.rect.contains(point), text.link(at: point) != nil { return true }
-        return painter?.hit(point) != nil
+        guard let hit = painter?.hit(point) else { return false }
+        if case .option = hit { return false }
+        return true
     }
 
     /// A press on the page: on the question's text it selects or follows a link once it is
@@ -239,7 +241,6 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
             return
         }
         if let value = painter?.confidenceValue(at: point) {
-            window?.makeFirstResponder(self)
             setConfidence(value)
         } else if let hit = painter?.hit(point) {
             perform(hit)

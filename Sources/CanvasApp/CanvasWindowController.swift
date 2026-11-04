@@ -1295,7 +1295,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case #selector(navigateBack(_:)): return focusedPage?.webView?.canGoBack ?? canvas.canNavigateBack
         case #selector(navigateForward(_:)): return focusedPage?.webView?.canGoForward ?? canvas.canNavigateForward
         case #selector(deleteSelection(_:)):
-            if NSApp.currentEvent?.type == .keyDown, canvas.focusedTile != nil { return false }
+            if let event = NSApp.currentEvent, event.type == .keyDown, canvas.focusedTile != nil,
+               Self.menuItem(for: event, in: NSApp.mainMenu) === item { return false }
             return !selection.isEmpty
         case #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
         case #selector(groupSelection(_:)): return selection.count >= 2
@@ -1387,15 +1388,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if let browser = canvas.tiles[id]?.content as? BrowserTile, let web = browser.webView {
             return responder === web || responder.isDescendant(of: web)
         }
-        if let html = canvas.tiles[id]?.content as? HtmlTile, let web = html.webView {
-            return responder === web || responder.isDescendant(of: web)
+        if let html = canvas.tiles[id]?.content as? HtmlTile {
+            return responder === html || responder.isDescendant(of: html)
         }
         return responder is RemoteBrowserTile
     }
 
     /// Native text and pages own their undo history, even when it is empty.
     private var textUndoManager: UndoManager? {
-        if window?.firstResponder is RemoteBrowserTile { return nil }
+        if window?.firstResponder is RemoteBrowserTile || window?.firstResponder is HtmlTile { return nil }
         if let text = window?.firstResponder as? NSTextView, text.isEditable { return text.undoManager }
         return pageHasKeyboard ? window?.firstResponder?.undoManager : nil
     }
@@ -1581,6 +1582,9 @@ final class CanvasWindow: NSWindow {
     private(set) var scrollSequence: UInt64 = 0
     private var browserScroll = ScrollGesture()
     private var browserScrollStart: (sequence: UInt64, tile: ObjectIdentifier)?
+    /// A foreign ⇧-click belongs to board selection through its drag and release.
+    private var boardSelectionClick: UInt64?
+    private var dispatchingSelectionMouse = false
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
@@ -1589,7 +1593,13 @@ final class CanvasWindow: NSWindow {
 
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
         var view = responder as? NSView
+        if let editor = view as? NSTextView, editor.isFieldEditor, let control = editor.delegate as? NSView {
+            view = control
+        }
         while let current = view {
+            if dispatchingSelectionMouse, let serial = boardSelectionClick,
+               (windowController as? CanvasWindowController)?.canvas.selectionSerial == serial,
+               current is TileFrameView { return false }
             if let html = current as? HtmlWebView, !html.acceptsFirstResponder { return false }
             view = current.superview
         }
@@ -1616,22 +1626,32 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
+        let previousMouseDispatch = dispatchingSelectionMouse
+        dispatchingSelectionMouse = event.type == .leftMouseDown || event.type == .leftMouseDragged || event.type == .leftMouseUp
+        defer { dispatchingSelectionMouse = previousMouseDispatch }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }
         let clicked = event.type == .leftMouseDown ? canvas(at: event.locationInWindow) : nil
         let selectionTarget = clicked.flatMap { $0.view.selectionClickTarget(event, hit: $0.hit) }
-        if let selectionTarget { clicked?.view.prepareSelectionClick(selectionTarget, event: event) }
+        let wasTyping = selectionTarget != nil && clicked?.view.focusedTile == selectionTarget
+        if event.type == .leftMouseDown { boardSelectionClick = nil }
+        if let selectionTarget { clicked?.view.prepareSelectionClick(selectionTarget, event: event, wasTyping: wasTyping) }
         let selectionSerial = clicked?.view.selectionSerial
+        if selectionTarget != nil, event.modifierFlags.contains(.shift), !wasTyping {
+            boardSelectionClick = selectionSerial
+        }
         super.sendEvent(event)
+        if event.type == .leftMouseUp { boardSelectionClick = nil }
         if let selectionTarget, let selectionSerial {
-            clicked?.view.completeSelectionClick(selectionTarget, event: event, serial: selectionSerial)
+            clicked?.view.completeSelectionClick(selectionTarget, event: event, serial: selectionSerial, wasTyping: wasTyping)
         }
     }
 
     override func resignKey() {
         super.resignKey()
         cancelMiddlePan()
+        boardSelectionClick = nil
     }
 
     private func canvas(at point: NSPoint) -> (view: CanvasView, hit: NSView)? {

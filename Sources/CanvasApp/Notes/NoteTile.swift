@@ -2,11 +2,10 @@ import AppKit
 import CanvasCore
 import Markdown
 
-/// A markdown note (docs/design.md "Notes"). Displays rendered markdown with live code fences;
-/// double-click edits the raw markdown, ⌘↩, clicking away or Esc commits. The note holds
-/// keyboard focus only while editing, then hands it back to the prompt-target terminal. A
-/// conflicting change by someone else is only overwritten by an explicit ⌘↩; Esc keeps theirs,
-/// the user's text one ⌘Z away.
+/// A markdown note with rendered markdown and live code fences. A prose click or user selection
+/// edits the raw markdown; ⌘↩, clicking away or Esc commits. Keyboard entry returns to the canvas,
+/// prose entry to the prompt-target terminal. A conflicting change is overwritten only by an
+/// explicit ⌘↩; Esc keeps theirs, the user's text one ⌘Z away.
 @MainActor
 final class NoteTile: NSView, TileContent {
     static let placeholder = ObjectMeasure.notePlaceholder
@@ -631,12 +630,15 @@ final class NoteTile: NSView, TileContent {
 
     // MARK: Editing
 
-    /// Return on the selected note: editing, the caret at the end; Esc or ⌘↩ gives the keyboard
-    /// back to the canvas with the note selected.
+    /// Enters at the first visible rendered text; Esc or ⌘↩ returns to the canvas.
     func enterKeyboard() -> Bool {
         if display.isSelectable { return window?.makeFirstResponder(display) == true }
         if session != nil { return window?.makeFirstResponder(editor) == true }
-        beginEditing(at: nil)
+        let shown = display.visibleRect.intersection(canvas?.clearVisibleRect(of: display) ?? display.visibleRect)
+        let visible = shown.isEmpty ? display.bounds : shown
+        let point = NSPoint(x: min(visible.maxX - 1, max(visible.minX + 1, display.textContainerOrigin.x + (display.textContainer?.lineFragmentPadding ?? 0))),
+                            y: visible.minY + min(8, visible.height / 2))
+        beginEditing(at: convert(point, from: display))
         enteredByKeyboard = true
         return true
     }
@@ -685,15 +687,23 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func caretOffset(at point: NSPoint, in text: String) -> Int {
-        guard let storage = display.textStorage, storage.length > 0 else { return (text as NSString).length }
-        let insertion = display.characterIndexForInsertion(at: display.convert(point, from: self))
-        let index = min(max(0, insertion), storage.length - 1)
+        guard let storage = display.textStorage, storage.length > 0,
+              let layout = display.textLayoutManager, let content = layout.textContentManager else { return 0 }
+        let local = display.convert(point, from: self)
+        let origin = display.textContainerOrigin
+        let inContainer = NSPoint(x: local.x - origin.x, y: local.y - origin.y)
+        let selections = layout.textSelectionNavigation.textSelections(interactingAt: inContainer,
+            inContainerAt: content.documentRange.location, anchors: [], modifiers: [], selecting: false,
+            bounds: display.bounds.offsetBy(dx: -origin.x, dy: -origin.y))
+        guard let location = selections.first?.textRanges.first?.location else { return 0 }
+        let insertion = min(max(0, content.offset(from: content.documentRange.location, to: location)), storage.length)
+        let index = min(insertion, storage.length - 1)
         let position = storage.attribute(.noteSourcePosition, at: index, effectiveRange: nil) as? NoteSourcePosition
             ?? (insertion > 0 ? storage.attribute(.noteSourcePosition, at: min(insertion - 1, storage.length - 1), effectiveRange: nil) as? NoteSourcePosition : nil)
         if let position { return min(max(0, position.sourceOffset(at: insertion)), (text as NSString).length) }
         guard let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
               offset < storage.length, let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
-            return (text as NSString).length
+            return 0
         }
         return sourceOffset(ofLine: line, in: text)
     }
@@ -1020,7 +1030,6 @@ final class NoteTile: NSView, TileContent {
 
     /// Enters the raw editor at the heading's source line and returns its visible caret.
     func reveal(heading line: Int) -> NSRect? {
-        display.isSelectable = false
         guard enterKeyboard(), isEditing, let window else { return nil }
         let range = NSRange(location: sourceOffset(ofLine: line, in: editor.string), length: 0)
         editor.setSelectedRange(range)

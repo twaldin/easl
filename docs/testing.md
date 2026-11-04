@@ -460,7 +460,7 @@ The runner links the prebuilt `CanvasApp`, opens a board in a disposable home, a
 
 The runner also exercises hostile click handlers, including delayed script evaluation and stale native interactions. Its `--missing-selector` mode makes `_setShouldSuppressFirstResponderChanges:` unavailable and requires the native keyboard gate to keep page-initiated focus from taking the keyboard. Both `--hostile-clicks` and `--missing-selector` run in the default suite. For a focused run, pass either flag directly to the linked `HtmlKeyboard` executable with the disposable environment that `run.py` sets. The runner forwards only `--exports`.
 
-`--clobbered-click` rejects a `<form name="activeElement" contenteditable>` shadowing `document.activeElement`, and `--stale-focus-click` rejects a plain-page click while a field retains DOM focus. Both require a later real field click to work. `--document-grants` grants keys, rewrites the tile's HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click to grant again. These cases also run in the default suite. The document case awaits the expected key-event count: a JavaScript timer turn alone is not a barrier for WebKit's native input IPC.
+`--clobbered-click` uses a `<form name="activeElement" contenteditable>` that shadows `document.activeElement`; `--stale-focus-click` clicks plain content while another field retains DOM focus. Real body clicks grant native typing without trusting either DOM condition. Page-initiated focus without a native click remains denied. `--document-grants` rewrites HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click. These cases run in the default suite. The document case awaits the expected key-event count, not merely a JavaScript timer turn.
 
 The default suite also exports a hostile HTML tile through `HtmlTile.exportDocument` and reopens the saved file in an ordinary WebKit view. It checks the export-only policy, removal of active content, and preservation of rendered diagrams, math, code, images, and links. Add `--exports` to the runner command for this regression alone. Native Save as HTML and Open in Browser captures remain separate guest proof under `html-export` in the verification map.
 
@@ -493,11 +493,11 @@ The Kitty consumer emits a startup banner before its `READY` line. The fixture f
 
 ### Move tool input isolation
 
-Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.
+Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Record selection and typing, then drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and the same selection and typing. Repeat moving an unselected tile while another terminal or text tile owns typing.
 
 Shift-click the second tile and drag either body. One ⌘Z must restore both frames. Escape during a held drag must restore the preview without committing it. After release, Select must be active. With Move on, scroll over each body and require board pan rather than content scroll.
 
-Check hidden-terminal focus separately. Focus the terminal in Select, then pan it far enough offscreen to become a card. Press M and pan it back into view. The terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
+Check hidden-terminal focus separately. Leave a typing terminal with Command-Escape, then pan it out until it becomes a card. Press M and pan it back into view. Neither selection nor typing changes during those gestures, and the terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
 
 Repeat the body, multi-selection, group, and undo cases on a guest-local scratch host with a second viewer. Read committed frames from the host and capture both viewers by exact PID and window ID.
 

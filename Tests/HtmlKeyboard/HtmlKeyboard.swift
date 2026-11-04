@@ -180,6 +180,7 @@ private enum HtmlKeyboard {
         try await exerciseHostileClicks()
         try await exerciseStaleClicks()
         try await exerciseDOMClicks()
+        try await exerciseColdKeyboard(root: root.appendingPathComponent("cold", isDirectory: true))
         try await exerciseDocumentGrant(root: root.appendingPathComponent("replacement", isDirectory: true))
         try await exerciseExports(root: root.appendingPathComponent("exports", isDirectory: true))
         print("PASS HTML tile keyboard: Return, click into a field, Tab, Esc, board click, and no focus from a page on load (local and remote)")
@@ -646,6 +647,66 @@ private enum HtmlKeyboard {
             try require(fixture.native.string == "", "\(attack.name): editable typing must never reach the previous target")
             check("\(attack.name) keeps native body ownership and normal editable typing")
         }
+    }
+
+    private static func exerciseColdKeyboard(root: URL) async throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let board = Board(id: "html-keyboard-cold", root: root)
+        let canvas = CanvasView(board: board, viewport: nil, remote: nil)
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        canvas.frame = window.contentView!.bounds
+        window.contentView!.addSubview(canvas)
+        board.onEvent = { canvas.apply($0) }
+        defer {
+            board.onEvent = nil
+            canvas.discard()
+            window.close()
+        }
+        window.orderFrontRegardless()
+        canvas.show(Viewport(rect: Frame(x: -410, y: -310, w: 820, h: 620), zoom: 1))
+        let previous = NSTextView(frame: NSRect(x: 0, y: 0, width: 40, height: 20))
+        previous.string = "prior"
+        previous.setSelectedRange(NSRange(location: 5, length: 0))
+        window.contentView!.addSubview(previous)
+        let html = pageHTML().replacingOccurrences(of: "<script>", with: """
+        <script>
+        window.coldKeys = 0;
+        document.addEventListener('keydown', () => window.coldKeys++);
+        """)
+        let object = board.create(type: .html, props: .object(["html": .string(html)]),
+                                  frame: Frame(x: -350, y: -250, w: 700, h: 500))
+        let tile = try htmlTile(canvas, object)
+        canvas.setSelection([object.id])
+        try require(window.makeFirstResponder(previous), "cold control must start with another native text owner")
+        try require(tile.webView == nil, "cold entry must run before the asynchronous web-view build")
+        try require(tile.enterKeyboard() && window.firstResponder === tile,
+                    "a cold HTML tile must synchronously own native keys without a web view")
+        let revision = board.revision
+        typed("pending", in: window)
+        try require(previous.string == "prior" && board.revision == revision,
+                    "pending HTML keys must not edit the previous responder or the board")
+        let web = try await page(in: tile)
+        try await loaded(web)
+        try await wait(until: { window.firstResponder === web }, "the original cold document must finish native entry")
+        let pendingKeys = await js(web, "window.coldKeys") as? Int
+        try require(pendingKeys == 0, "pending keys must not be buffered into the page")
+        typed("x", in: window)
+        try await wait(until: { await js(web, "window.coldKeys") as? Int == 1 },
+                       "the cold document must receive later native keys after construction")
+        let other = board.create(type: .html, props: .object(["html": .string(html)]),
+                                 frame: Frame(x: -350, y: -250, w: 700, h: 500))
+        let otherTile = try htmlTile(canvas, other)
+        canvas.setSelection([other.id])
+        try require(otherTile.webView == nil && otherTile.enterKeyboard(), "second entry must also start cold")
+        try require(window.makeFirstResponder(previous), "a later native action must be able to leave cold HTML")
+        let otherWeb = try await page(in: otherTile)
+        try await loaded(otherWeb)
+        typed("s", in: window)
+        try require(window.firstResponder === previous && previous.string == "priors",
+                    "finishing a cold page must not reverse a later native keyboard action")
+        check("cold HTML owns pending keys without holding them or stealing a later responder")
     }
 
     private static func exerciseDocumentGrant(root: URL) async throws {

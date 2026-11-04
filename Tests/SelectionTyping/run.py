@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import pathlib
@@ -33,15 +34,20 @@ def main():
     parser.add_argument("--bin-path", required=True, type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--resources", type=pathlib.Path, help="Recorded app resources checkout, default: this checkout.")
+    parser.add_argument("--harness-source", type=pathlib.Path, help="Use this exact Swift harness for both baseline and candidate objects.")
     parser.add_argument("--scenario", action="append", default=[], help="Case name or glob; repeat to select several cases.")
     parser.add_argument("--list", action="store_true", help="Link the harness and list cases without opening a window.")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS and a guest GUI claim.")
-    root = pathlib.Path(__file__).resolve().parents[2]
+    root = (args.resources or pathlib.Path(__file__).resolve().parents[2]).resolve()
     build = args.bin_path.resolve()
     output = args.output.resolve()
     resources = (args.resources or root).resolve()
+    source = (args.harness_source or root / "Tests/SelectionTyping/SelectionTyping.swift").resolve()
+    if not source.is_file():
+        parser.error("--harness-source must name the native SelectionTyping Swift harness.")
+    source_bytes = source.read_bytes()
     output.mkdir(parents=True, exist_ok=True)
     link_file = build / "Easl.product/Objects.LinkFileList"
     description_file = build / "description.json"
@@ -70,14 +76,17 @@ def main():
         elif argument == "-I" and "libghostty" in arguments[index + 1]:
             command.extend(["-I", arguments[index + 1]])
     executable = output / "SelectionTyping"
-    command.append(str(root / "Tests/SelectionTyping/SelectionTyping.swift"))
+    command.append(str(source))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty", "-framework", "AppKit",
                     "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-Xlinker", "-e", "-Xlinker", "_SelectionTypingMain", "-o", str(executable)])
     (output / "inputs.json").write_text(json.dumps({"bin_path": str(build), "resources": str(resources),
         "link_file": str(link_file), "objects": [str(p) for p in objects], "sdk": sdk,
-        "harness_source": str(root / "Tests/SelectionTyping/SelectionTyping.swift")}, indent=2) + "\n")
+        "harness_source": str(source), "harness_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "normal_events": "AppKit queue with an observed completion marker",
+        "wheel_events": "DevInput.replay into the recorded native window and hit-tested point; assert document movement and keyboard ownership",
+        "immediate_html_events": "back-to-back NSApp.sendEvent mouseDown and keyDown without yielding"}, indent=2) + "\n")
     compiled = capture(command, output / "link", cwd=root)
     if compiled["returncode"] != 0:
         raise SystemExit(f"Harness link failed; see {output / 'link/stderr.log'}")

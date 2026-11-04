@@ -514,14 +514,6 @@ final class HtmlWebView: WKWebView {
         return true
     }
 
-    func resetKeyboardAuthorization() {
-        keyboardAuthorization = .denied
-        revokeSendPermit()
-        guard let window, ownsKeyboard(in: window) else { return }
-        onEscape?()
-        if ownsKeyboard(in: window) { window.makeFirstResponder(nil) }
-    }
-
     private func ownsKeyboard(in window: NSWindow) -> Bool {
         guard let responder = window.firstResponder as? NSView else { return false }
         return responder === self || responder.isDescendant(of: self)
@@ -541,6 +533,16 @@ final class HtmlWebView: WKWebView {
 
     func revokeSendPermit() {
         sendPermit.reset()
+    }
+
+    func resetKeyboardAuthorization() {
+        let owned = window.map { ownsKeyboard(in: $0) } == true
+        keyboardAuthorization = .denied
+        revokeSendPermit()
+        if owned, let window {
+            if let tile = superview as? HtmlTile, tile.takeNativeKeyboard() { return }
+            window.makeFirstResponder(window.initialFirstResponder)
+        }
     }
 
     /// False when the page is parked, hidden, or not the live tile. A hidden page can still queue

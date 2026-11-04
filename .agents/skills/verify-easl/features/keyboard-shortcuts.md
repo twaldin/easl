@@ -37,6 +37,7 @@ Run local and scratch remote boards. Keep a raw terminal byte recorder, a note, 
 4. Marquee one terminal, Shift-click to select several tiles, and select a group. Require board ownership and no terminal receipt. Command-9 must still zoom the board. Select an image and require board ownership.
 5. Send plain Escape to the terminal program and require byte `1b`. Command-Escape must leave typing without a second byte or selection change. Repeat Leave Tile for every keyboard-handling type.
 6. Type into the browser textarea, undo with Command-Z, and redo with Shift-Command-Z. Require exact DOM text and unchanged board object frames. Repeat in HTML.
+7. Record selection and typing, then scroll a rendered note, drag its scrollbar, resize or move another tile, hover, and pinch. Both states must stay unchanged. A title/card click without dragging still selects; an overview-card drag must retain zoom and save exactly its pointer delta.
 
 Replay uses `scripts/dev.sh input key` and `shortcut` with the owned window ID. Independently exercise genuine HID inside the guest using `/Applications/CuaDriver.app/Contents/MacOS/cua-driver call press_key` with JSON fields `pid`, `window_id`, a unique `session`, `key`, `modifiers`, and `delivery_mode: "foreground"`. This exact-window route briefly activates the owned guest window and restores the previous app. Never invoke it on home. Retain the delivery receipt and verify independent pixels or terminal bytes; a posted-key receipt alone proves no effect. End the Cua session before cleanup.
 
