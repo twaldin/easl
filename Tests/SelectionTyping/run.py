@@ -90,8 +90,10 @@ def main():
     compiled = capture(command, output / "link", cwd=root)
     if compiled["returncode"] != 0:
         raise SystemExit(f"Harness link failed; see {output / 'link/stderr.log'}")
-    listing = subprocess.run([str(executable), "--list"], cwd=root, check=True, capture_output=True, text=True)
-    cases = json.loads(listing.stdout)
+    listing = capture([str(executable), "--list"], output / "list", cwd=root)
+    if listing["returncode"] != 0:
+        raise SystemExit(f"Harness listing failed: {listing}; see {output / 'list/stderr.log'}")
+    cases = json.loads((output / "list/stdout.log").read_text())
     if args.scenario:
         unknown = [pattern for pattern in args.scenario if not any(fnmatch.fnmatchcase(case["name"], pattern) for case in cases)]
         if unknown:

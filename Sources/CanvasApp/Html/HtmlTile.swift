@@ -853,7 +853,6 @@ final class HtmlTile: NSView, TileContent {
 
     override func selectAll(_ sender: Any?) {}
 
-    /// A cold page has no WebKit child; its body click must not bubble to the board.
     override func mouseDown(with event: NSEvent) {
         webView?.beginSelectionClick(event)
     }
