@@ -108,7 +108,7 @@ public final class BoardStore {
             let checked = await BoardAnchorScrub.check(held, boardRoot: URL(fileURLWithPath: stored.root), areas: areas)
             guard let self, let board, !board.isClosed, !Task.isCancelled else { return }
             board.settleAnchors(checked)
-            saves[board.id]?.version += 1
+            Metrics.shared.span("save", "save.schedule", detail: board.id) { saves[board.id]?.version += 1 }
             let refused = checked.contains { held[$0.key]?.stored != $0.value }
             // A save is due: it writes the board as it is now.
             guard pendingSaves[board.id] == nil, saves[board.id] == nil else { return }
