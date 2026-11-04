@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes.
 
+## 0.3.7 (unreleased)
+
+### Fixed
+
+- Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
+
 ## 0.3.6
 
 easl 0.3.6 moves board-save encoding and writes off the main thread, fixing the save path that froze a real board for 19.5 seconds. HTML tiles and notes can now jump to objects on the same board. `board.stale` judges content age rather than layout activity, and browser automation waits for the real document and answers within its timeout.

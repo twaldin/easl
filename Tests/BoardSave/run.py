@@ -69,7 +69,7 @@ def main():
             raise RuntimeError(f"Owned regression PID {child.pid} exceeded 20 seconds")
     print((output / "child.log").read_text(), end="", flush=True)
     if not args.baseline:
-        for case in ("modal", "close-race"):
+        for case in ("modal", "close-race", "completion", "completion-modal"):
             case_home = pathlib.Path(tempfile.mkdtemp(prefix=f"{case}-", dir=output))
             environment["EASL_HOME"] = str(case_home)
             log_path = output / f"{case}.log"

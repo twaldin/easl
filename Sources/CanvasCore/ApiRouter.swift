@@ -148,21 +148,27 @@ public final class BoardRegistry {
         defer { closing.remove(board.id) }
         do {
             try await store.saveChecked(board)
-            guard boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(id)") }
-            try beforeEviction()
+            try Metrics.shared.span("save", "save.complete", detail: board.id) {
+                guard boards[board.id] === board else { throw ApiRouter.Failure("not_found", "board \(id)") }
+                try beforeEviction()
+            }
         } catch let failure as ApiRouter.Failure {
             throw failure
         } catch {
-            throw ApiRouter.Failure("unavailable", "cannot save board \(board.id) before closing: \(error.localizedDescription)")
+            throw Metrics.shared.span("save", "save.complete", detail: board.id) {
+                ApiRouter.Failure("unavailable", "cannot save board \(board.id) before closing: \(error.localizedDescription)")
+            }
         }
-        board.returnRemoteComposerPrompts()
-        if !board.composerReceipts.isEmpty { closedComposerReceipts[board.id] = board.composerReceipts }
-        boards.removeValue(forKey: board.id)
-        board.deactivate()
-        if frontmost == board.id { frontmost = boards.keys.sorted().first }
-        didClose?(board)
-        if closedWindows.remove(board.id) == nil {
-            broadcast("board.closed", data: .object([:]), board: board.id)
+        Metrics.shared.span("save", "save.complete", detail: board.id) {
+            board.returnRemoteComposerPrompts()
+            if !board.composerReceipts.isEmpty { closedComposerReceipts[board.id] = board.composerReceipts }
+            boards.removeValue(forKey: board.id)
+            board.deactivate()
+            if frontmost == board.id { frontmost = boards.keys.sorted().first }
+            didClose?(board)
+            if closedWindows.remove(board.id) == nil {
+                broadcast("board.closed", data: .object([:]), board: board.id)
+            }
         }
     }
 
