@@ -194,6 +194,54 @@ private enum BoardSaveRegression {
 #endif
     }
 
+#if !SAVE_BASELINE
+    static func completionAttribution(directory: URL, modal: Bool) async throws {
+        let metrics = Metrics.shared
+        metrics.monitorMainThread()
+        let store = BoardStore(directory: directory.appendingPathComponent("boards"), debounce: 60)
+        let board = try await store.load(root: directory.appendingPathComponent("root"))
+        let note = board.create(type: .note, props: .object(["markdown": "save completion attribution"]))
+        try await Task.sleep(for: .milliseconds(100))
+        metrics.reset()
+        try await Task.sleep(for: .milliseconds(50))
+        modalFinished = false
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                store.beginFlush([board]) {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    modalFinished = true
+                    if !modal { continuation.resume() }
+                }
+                if modal {
+                    let mode = RunLoop.Mode(rawValue: "NSModalPanelRunLoopMode")
+                    let deadline = Date(timeIntervalSinceNow: 5)
+                    let keepAlive = Timer(timeInterval: 5, repeats: false) { _ in }
+                    RunLoop.main.add(keepAlive, forMode: mode)
+                    defer { keepAlive.invalidate() }
+                    while !modalFinished, Date() < deadline {
+                        _ = RunLoop.main.run(mode: mode, before: min(deadline, Date(timeIntervalSinceNow: 0.05)))
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+        guard modalFinished else { throw RegressionFailure("save completion did not run") }
+        try await Task.sleep(for: .milliseconds(100))
+        let result = metrics.snapshot()
+        try JSONEncoder().encode(result).write(to: directory.appendingPathComponent("metrics.json"), options: .atomic)
+        let persisted = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: board.id)))
+        guard persisted.objects.first { $0.id == note.id }?.props["markdown"] == "save completion attribution" else {
+            throw RegressionFailure("completion ran without persisting the note")
+        }
+        guard (result["longest"]?["ms"]?.number ?? 0) >= 250,
+              result["longest"]?["cause"]?.string?.contains("save.complete") == true,
+              (result["counters"]?["save.complete"]?["total"]?["maxMs"]?.number ?? 0) >= 275 else {
+            throw RegressionFailure("slow completion is not attributed to save.complete: \(result)")
+        }
+        print("PASS slow save completion is attributed in \(modal ? "modal" : "default") run-loop delivery")
+    }
+#endif
+
     static func main() -> Int32 {
         guard CommandLine.arguments.count == 2 || CommandLine.arguments.count == 3 else { return 2 }
         let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
@@ -206,7 +254,9 @@ private enum BoardSaveRegression {
                     print("PASS delayed atomic write persists the concurrent edit; timing is recorded above")
                 } else {
 #if !SAVE_BASELINE
-                    if mode == "close-race" {
+                    if mode == "completion" || mode == "completion-modal" {
+                        try await completionAttribution(directory: directory, modal: mode == "completion-modal")
+                    } else if mode == "close-race" {
                         try await closeRace(directory: directory)
                     } else if mode == "modal" {
                         try await modal(directory: directory)
