@@ -814,10 +814,11 @@ final class CanvasView: NSScrollView {
         case .extendText(let editor, let anchor):
             guard window?.firstResponder === editor else { return }
             let range = editor.selectedRange()
-            let end = editor.selectionAffinity == .upstream ? range.location : NSMaxRange(range)
+            let end = range.location == anchor ? NSMaxRange(range)
+                : NSMaxRange(range) == anchor ? range.location
+                : editor.selectionAffinity == .upstream ? range.location : NSMaxRange(range)
             editor.setSelectedRange(NSRange(location: min(anchor, end), length: abs(end - anchor)),
                                     affinity: end < anchor ? .upstream : .downstream, stillSelecting: false)
-            editor.scrollRangeToVisible(NSRange(location: end, length: 0))
         case .native: break
         }
     }
