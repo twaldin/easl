@@ -1584,6 +1584,11 @@ private enum SelectionTyping {
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
             try await click(point, flags: .shift, in: f.window)
+            print("SHIFT dispatched range=\(editor.selectedRange()) mode=\(String(describing: CFRunLoopCopyCurrentMode(CFRunLoopGetMain())))")
+            fflush(nil)
+            try await wait("native Shift-click must finish with exactly characters 1 through 5 selected") {
+                editor.selectedRange() == NSRange(location: 1, length: 5)
+            }
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
