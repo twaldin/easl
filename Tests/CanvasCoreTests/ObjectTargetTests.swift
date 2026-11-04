@@ -6,7 +6,7 @@ struct ObjectTargetTests {
     @Test func bridgeRequiresExactlyOneTargetAndNoOptions() throws {
         #expect(try HtmlMessage.parse(.object(["type": "object.goTo", "id": "obj_a"])) == .goTo(.id("obj_a")))
         #expect(try HtmlMessage.parse(.object(["type": "object.goTo", "key": "Plan / α"])) == .goTo(.key("Plan / α")))
-        let invalid: [[String: JSONValue]] = [[:], ["id": "a", "key": "b"], ["id": .null], ["id": ""], ["id": "a", "zoom": 1], ["key": "a", "extra": true]]
+        let invalid: [[String: JSONValue]] = [[:], ["id": "a", "key": "b"], ["id": .null], ["id": ""], ["id": "a", "zoom": 1], ["key": "a", "extra": .bool(true)]]
         for fields in invalid {
             var message = fields
             message["type"] = "object.goTo"
@@ -28,9 +28,9 @@ struct ObjectTargetTests {
             var permit = HtmlGesturePermit(url: "page")
             permit.arm(at: 10, gesture: gesture)
             #expect(permit.consume(at: 11, forNavigation: true) == (gesture != .otherKey))
-            #expect(!permit.consume(at: 11))
+            #expect(permit.consume(at: 11) == false)
             permit.arm(at: 10, gesture: gesture)
-            #expect(permit.consume(at: 11))
+            #expect(permit.consume(at: 11) == true)
         }
     }
 
@@ -45,7 +45,7 @@ struct ObjectTargetTests {
         #expect(throws: HtmlError.self) { try ObjectTarget.id(foreign.id).resolve(on: board, from: source.id) }
         #expect(throws: HtmlError.self) { try ObjectTarget.key("missing").resolve(on: board, from: source.id) }
         #expect(throws: HtmlError.self) { try ObjectTarget.id(target.id).resolve(on: board, from: foreign.id) }
-        let hidden = board.create(type: .question, props: .object(["archived": true]))
+        let hidden = board.create(type: .question, props: .object(["archived": .bool(true)]))
         #expect(throws: HtmlError.unavailable("target object is hidden")) { try ObjectTarget.id(hidden.id).resolve(on: board, from: source.id) }
         board.deactivate()
         #expect(throws: HtmlError.unavailable("host closed this board")) { try ObjectTarget.key("plan").resolve(on: board, from: source.id) }
