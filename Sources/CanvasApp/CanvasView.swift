@@ -1825,21 +1825,25 @@ final class CanvasView: NSScrollView {
 
     /// Records the view once it has stopped moving (every pan and pinch step calls this).
     private func scheduleViewportSave() {
-        guard viewPlaced else { return }
-        viewportSave?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.saveViewport() }
+        Metrics.shared.span("save", "save.schedule", detail: board.id) {
+            guard viewPlaced else { return }
+            viewportSave?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.saveViewport() }
+            }
+            viewportSave = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
         }
-        viewportSave = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     /// Writes the view now unless the file holds it already: when the board's tab closes and the
     /// app quits. A write that failed is tried again at the next of those.
     func saveViewport() {
-        viewportSave?.cancel()
-        guard viewPlaced else { return }
-        viewportRecorder?.record(currentViewport)
+        Metrics.shared.span("save", "save.viewport", detail: board.id) {
+            viewportSave?.cancel()
+            guard viewPlaced else { return }
+            viewportRecorder?.record(currentViewport)
+        }
     }
 
     private func scroll(to origin: NSPoint) {

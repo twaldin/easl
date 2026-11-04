@@ -396,13 +396,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateRestoration?.cancel()
         for opening in openingWindows.values { opening.shown.cancel() }
         return CodeNavigation.terminateServers { [self] completion in
-            server?.stop()
-            cmuxServer?.stop()
-            for controller in controllers.values {
-                controller.canvas.saveViewport()
-                controller.saveComposer()
+            Metrics.shared.span("save", "save.prepare") {
+                server?.stop()
+                cmuxServer?.stop()
+                for controller in controllers.values {
+                    controller.canvas.saveViewport()
+                    controller.saveComposer()
+                }
+                registry.store.beginFlush(Array(registry.boards.values), completion: completion)
             }
-            registry.store.beginFlush(Array(registry.boards.values), completion: completion)
         }
     }
 
@@ -686,8 +688,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 controller?.apiCloseInProgress = true
                 try refuseLastBoard()
                 guard !terminating else { throw ApiRouter.Failure("unavailable", "easl is quitting") }
-                controller?.canvas.saveViewport()
-                controller?.saveComposer()
+                Metrics.shared.span("save", "save.prepare", detail: board.id) {
+                    controller?.canvas.saveViewport()
+                    controller?.saveComposer()
+                }
                 result = BoardCloseResult(board: board, ended: ended)
                 try await registry.close(board.id) {
                     try refuseLastBoard()
@@ -698,13 +702,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         throw ApiRouter.Failure("unavailable", "cannot save open-boards.json before closing \(board.id): \(error.localizedDescription)")
                     }
                 }
-                controllers.removeValue(forKey: board.id)
-                openedOrder.removeAll { $0 == board.id }
+                Metrics.shared.span("save", "save.complete", detail: board.id) {
+                    controllers.removeValue(forKey: board.id)
+                    openedOrder.removeAll { $0 == board.id }
+                }
             } catch {
-                let failure = (error as? ApiRouter.Failure) ?? ApiRouter.Failure("unavailable", error.localizedDescription)
-                guard !ended.isEmpty else { throw failure }
-                let ids = ended.map(\.id).joined(separator: ", ")
-                throw ApiRouter.Failure(failure.code, "\(failure.message); ended terminal sessions [\(ids)]")
+                throw Metrics.shared.span("save", "save.complete", detail: board.id) {
+                    let failure = (error as? ApiRouter.Failure) ?? ApiRouter.Failure("unavailable", error.localizedDescription)
+                    guard !ended.isEmpty else { return failure }
+                    let ids = ended.map(\.id).joined(separator: ", ")
+                    return ApiRouter.Failure(failure.code, "\(failure.message); ended terminal sessions [\(ids)]")
+                }
             }
         case .remote(let key, let controller):
             // Out of the reopen list first: a board closed with `board.close` stays detached.
@@ -721,7 +729,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let controller = target.controller {
             let privateWindow = openingWindows[ObjectIdentifier(controller.board)]?.controller === controller
-            retire(controller, savingFrame: !privateWindow)
+            Metrics.shared.span("save", "save.complete", detail: id) {
+                retire(controller, savingFrame: !privateWindow)
+            }
         }
         return result
     }

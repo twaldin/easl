@@ -91,6 +91,9 @@ final class MetricsHUD {
         let events = (m["counters"]?.object ?? [:]).keys.filter { $0.hasPrefix("event.") }.map { counter($0) }
         lines.append("saves  \(save.n) (encode \(number(encode.ms)) ms, \(save.bytes / 1024) KB)  events \(events.reduce(0) { $0 + $1.n }) "
             + "(\(events.reduce(0) { $0 + $1.bytes } / 1024) KB)  writes \(counter("board.write").n)")
+        lines.append("       main snapshot \(number(counter("save.snapshot").ms)) ms, schedule \(number(counter("save.schedule").ms)) ms, "
+            + "enqueue \(number(counter("save.enqueue").ms)) ms, prepare \(number(counter("save.prepare").ms)) ms, complete \(number(counter("save.complete").ms)) ms")
+        lines.append("       composer \(number(counter("save.composer").ms)) ms, viewport \(number(counter("save.viewport").ms)) ms")
         let live = (m["gauges"]?.object ?? [:]).filter { $0.key.hasPrefix("live.") && ($0.value.number ?? 0) > 0 }
             .sorted { $0.key < $1.key }.map { "\($0.key.dropFirst(5).replacingOccurrences(of: "Tile", with: "")) \($0.value.int ?? 0)" }
         lines.append("live   " + (live.isEmpty ? "none" : live.joined(separator: " ")) + "  web views \(m["gauges"]?["html.webviews"]?.int ?? 0)")

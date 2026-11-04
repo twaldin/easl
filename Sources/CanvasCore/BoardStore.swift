@@ -135,24 +135,26 @@ public final class BoardStore {
     }
 
     public func scheduleSave(_ board: Board) {
-        guard !board.isClosed else { return }
-        Metrics.shared.record("save.scheduled")
-        if let pending = pendingSaves.removeValue(forKey: board.id) {
-            pending.cancel()
-            Metrics.shared.record("save.coalesced")
+        Metrics.shared.span("save", "save.schedule", detail: board.id) {
+            guard !board.isClosed else { return }
+            Metrics.shared.record("save.scheduled")
+            if let pending = pendingSaves.removeValue(forKey: board.id) {
+                pending.cancel()
+                Metrics.shared.record("save.coalesced")
+            }
+            if let saving = saves[board.id] {
+                saving.version += 1
+                Metrics.shared.record("save.coalesced")
+                if !saving.isWriting { write(saving) }
+                return
+            }
+            let work = DispatchWorkItem { [weak self, weak board] in
+                guard let self, let board else { return }
+                self.enqueue(board)
+            }
+            pendingSaves[board.id] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
         }
-        if let saving = saves[board.id] {
-            saving.version += 1
-            Metrics.shared.record("save.coalesced")
-            if !saving.isWriting { write(saving) }
-            return
-        }
-        let work = DispatchWorkItem { [weak self, weak board] in
-            guard let self, let board else { return }
-            self.enqueue(board)
-        }
-        pendingSaves[board.id] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 
     public func save(_ board: Board) async {
@@ -162,33 +164,44 @@ public final class BoardStore {
     /// Saves the latest state before a close can discard its in-memory board. While git checks
     /// anchors the load held back, the file keeps the stored ones (`BoardAnchorScrub.keepStored`).
     public func saveChecked(_ board: Board) async throws {
-        guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
-        let saving = track(board)
-        saving.checked += 1
+        let saving = try Metrics.shared.span("save", "save.enqueue", detail: board.id) {
+            guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
+            let saving = track(board)
+            saving.checked += 1
+            return saving
+        }
         defer {
-            saving.checked -= 1
-            retire(saving)
+            Metrics.shared.span("save", "save.complete", detail: board.id) {
+                saving.checked -= 1
+                retire(saving)
+            }
         }
         repeat {
-            guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
+            try Metrics.shared.span("save", "save.enqueue", detail: board.id) {
+                guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
+            }
             try await withCheckedThrowingContinuation { continuation in
                 enqueue(board, continuation: continuation)
             }
-        } while hasSave(board.id) || saving.failedVersion == saving.completedVersion
+        } while Metrics.shared.span("save", "save.complete", detail: board.id, {
+            hasSave(board.id) || saving.failedVersion == saving.completedVersion
+        })
     }
 
     private func enqueue(_ board: Board, continuation: CheckedContinuation<Void, Error>? = nil) {
-        pendingSaves.removeValue(forKey: board.id)?.cancel()
-        guard !board.isClosed else {
-            continuation?.resume(throwing: BoardError.notFound("board \(board.id) is closed"))
-            return
+        Metrics.shared.span("save", "save.enqueue", detail: board.id) {
+            pendingSaves.removeValue(forKey: board.id)?.cancel()
+            guard !board.isClosed else {
+                continuation?.resume(throwing: BoardError.notFound("board \(board.id) is closed"))
+                return
+            }
+            let saving = track(board)
+            if let continuation {
+                saving.version += 1
+                saving.waiters.append((saving.version, continuation))
+            }
+            if !saving.isWriting { write(saving) }
         }
-        let saving = track(board)
-        if let continuation {
-            saving.version += 1
-            saving.waiters.append((saving.version, continuation))
-        }
-        if !saving.isWriting { write(saving) }
     }
 
     private func track(_ board: Board) -> Save {
@@ -203,9 +216,11 @@ public final class BoardStore {
     }
 
     private func snapshot(_ board: Board) -> BoardSnapshot {
-        var snapshot = board.snapshot
-        if !board.heldAnchors.isEmpty { BoardAnchorScrub.keepStored(board.heldAnchors, in: &snapshot) }
-        return snapshot
+        Metrics.shared.span("save", "save.snapshot", detail: board.id) {
+            var snapshot = board.snapshot
+            if !board.heldAnchors.isEmpty { BoardAnchorScrub.keepStored(board.heldAnchors, in: &snapshot) }
+            return snapshot
+        }
     }
 
     private func write(_ saving: Save) {
@@ -259,8 +274,10 @@ public final class BoardStore {
 
     /// Starts the same save pipeline synchronously, including during AppKit's deferred quit.
     public func beginFlush(_ boards: [Board], completion: @escaping @MainActor @Sendable () -> Void) {
-        flushes.append(Flush(boards: boards, completion: completion))
-        finishFlushes()
+        Metrics.shared.span("save", "save.enqueue") {
+            flushes.append(Flush(boards: boards, completion: completion))
+            finishFlushes()
+        }
     }
 
     private func finishFlushes() {
@@ -310,16 +327,19 @@ public final class BoardStore {
     /// attention markers, agents' last answers, their undelivered messages and pending relaunches
     /// are personal, transient state, so they are left out.
     public func export(_ board: Board, to url: URL) async throws {
-        var snapshot = board.snapshot
-        snapshot.tray = nil
-        snapshot.attention = nil
-        snapshot.finalAnswers = nil
-        snapshot.turnErrors = nil
-        snapshot.lifecycleSeq = nil
-        snapshot.repo = nil
-        snapshot.messages = nil
-        snapshot.htmlMessages = nil
-        snapshot.relaunchedAgents = nil
+        let snapshot = Metrics.shared.span("save", "save.snapshot", detail: board.id) {
+            var snapshot = board.snapshot
+            snapshot.tray = nil
+            snapshot.attention = nil
+            snapshot.finalAnswers = nil
+            snapshot.turnErrors = nil
+            snapshot.lifecycleSeq = nil
+            snapshot.repo = nil
+            snapshot.messages = nil
+            snapshot.htmlMessages = nil
+            snapshot.relaunchedAgents = nil
+            return snapshot
+        }
         try await files.export(snapshot, to: url)
     }
 
@@ -354,8 +374,10 @@ final class Files: @unchecked Sendable {
 
         func finish(_ result: Result<Void, Error>) {
             guard let body else { return }
-            self.body = nil
-            body(result)
+            Metrics.shared.span("save", "save.complete") {
+                self.body = nil
+                body(result)
+            }
         }
     }
 

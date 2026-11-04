@@ -310,25 +310,29 @@ final class ComposerController {
     // MARK: Saving
 
     private func scheduleSave() {
-        saveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.save() }
-        saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        Metrics.shared.span("save", "save.schedule", detail: board.id) {
+            saveWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.save() }
+            saveWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        }
     }
 
     /// Writes the draft, the history and the extra targets now (window closing, app quitting).
     func save() {
-        saveWork?.cancel()
-        saveWork = nil
-        state.draft = bar.draft
-        guard let file else { return }
-        do {
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            try encoder.encode(state).write(to: file, options: .atomic)
-        } catch {
-            NSLog("easl: composer state for board \(board.id) not saved: \(error)")
+        Metrics.shared.span("save", "save.composer", detail: board.id) {
+            saveWork?.cancel()
+            saveWork = nil
+            state.draft = bar.draft
+            guard let file else { return }
+            do {
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                try encoder.encode(state).write(to: file, options: .atomic)
+            } catch {
+                NSLog("easl: composer state for board \(board.id) not saved: \(error)")
+            }
         }
     }
 }

@@ -714,16 +714,18 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard isBoardOpen else {
-            window?.contentView = nil
-            return
+        Metrics.shared.span("save", "save.complete", detail: board.id) {
+            guard isBoardOpen else {
+                window?.contentView = nil
+                return
+            }
+            isBoardOpen = false
+            if remote == nil {
+                canvas.saveViewport()
+                composer.save()
+            }
+            onClose?()
         }
-        isBoardOpen = false
-        if remote == nil {
-            canvas.saveViewport()
-            composer.save()
-        }
-        onClose?()
     }
 
     /// The window content as the user sees it, with the viewport it shows. Content drawn outside
