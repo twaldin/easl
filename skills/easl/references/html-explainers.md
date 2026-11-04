@@ -42,6 +42,7 @@ Never paste code you could anchor: pasted code is a copy that falls behind silen
 `canvasKit.goTo({id: 'obj_…'})` or `canvasKit.goTo({key: 'result'})` returns a promise resolving to `{id: resolvedObjectId}`. The target must contain exactly one string `id` or `key`. Unknown fields, including `zoom`, are errors and are forwarded to native validation rather than silently removed. There is no zoom argument or policy.
 
 A recent click or Enter in this page allows one jump. The existing document-bound native permit lasts 1.5 seconds and is consumed once. Any code in the page can spend that permit, including a timer or synthetic event handler. Load scripts, timers, and synthetic events do not create permission themselves. Without a fresh permit, after it expires, or after it has been spent, `goTo` rejects. Offscreen renders cannot navigate. Reload and detach revoke unused permission.
+`goTo` and `send` share this permit. One native gesture authorizes only one of them: after `goTo`, `send` can still queue inert data but cannot wake the agent; after `send`, `goTo` rejects.
 
 The target must be open on the same board. Missing, closed, other-board, malformed, and unauthorized targets reject the promise with a clear error. Catch the rejection and display it. Navigation selects and shows the target exactly like a question context link, including fitting oversized targets; Navigate Back returns to the previous view. Remote boards work through viewer-local navigation, without a host navigation RPC.
 

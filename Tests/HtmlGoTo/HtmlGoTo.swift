@@ -73,7 +73,7 @@ private enum HtmlGoTo {
                     point = text.convert(NSPoint(x: rect.midX + text.textContainerOrigin.x, y: rect.midY + text.textContainerOrigin.y), to: nil)
                     return false
                 }
-                stop.pointee = point != nil
+                if point != nil { stop.pointee = true }
             }
             if let point { return point }
         }
