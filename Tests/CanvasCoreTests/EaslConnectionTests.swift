@@ -341,6 +341,40 @@ final class EaslConnectionTests {
         }
     }
 
+    @Test func aRelayThatClosesItsInputFirstReportsItsOwnExit() async throws {
+        let gate = dir.appendingPathComponent("exit")
+        let ready = dir.appendingPathComponent("stdin-closed")
+        try #require(mkfifo(gate.path, 0o600) == 0)
+        let release = open(gate.path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        try #require(release >= 0)
+        defer { Darwin.close(release) }
+        let script = """
+        IFS= read -r ping
+        printf '%s\\n' '{"id":"-1","ok":true,"result":{}}'
+        exec <&-
+        touch '\(ready.path)'
+        IFS= read -r go < '\(gate.path)'
+        echo 'ssh: connect to host work port 22: Connection refused' >&2
+        exit 255
+        """
+        let connection = EaslConnection.process("/bin/sh", ["-c", script], backoff: .init(initial: .seconds(30), maximum: .seconds(30)))
+        defer { connection.close() }
+        try #require(await reach(.online, connection))
+        let deadline = Date().addingTimeInterval(30)
+        while !FileManager.default.fileExists(atPath: ready.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: ready.path))
+        connection.subscribe(board: "brd_a")
+        // Drain the write and its deferred failure before the relay may exit.
+        _ = connection.state
+        _ = connection.state
+        try #require(Darwin.write(release, "go\n", 3) == 3)
+        #expect(await reach(.offline, connection))
+        #expect(connection.relayStatus == 255)
+        #expect(connection.problem == "sh exited with status 255: ssh: connect to host work port 22: Connection refused")
+    }
+
     /// ssh closes its stdout before it exits with the remote command's status (nc finding no
     /// socket on the host exits 1); that status, not a kill's, says the host was reached.
     @Test func aRelayThatClosesItsOutputFirstReportsItsOwnExit() async throws {
