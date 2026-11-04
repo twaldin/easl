@@ -145,7 +145,7 @@ public final class BoardRegistry {
     public func close(_ id: BoardID, beforeEviction: () throws -> Void = {}) async throws {
         guard let board = board(id: id) else { throw ApiRouter.Failure("not_found", "board \(id)") }
         guard closing.insert(board.id).inserted else { throw ApiRouter.Failure("conflict", "board \(board.id) is already closing") }
-        defer { Metrics.shared.span("save", "save.complete", detail: board.id) { closing.remove(board.id) } }
+        defer { closing.remove(board.id) }
         do {
             try await store.saveChecked(board)
             try Metrics.shared.span("save", "save.complete", detail: board.id) {

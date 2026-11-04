@@ -310,12 +310,10 @@ final class ComposerController {
     // MARK: Saving
 
     private func scheduleSave() {
-        Metrics.shared.span("save", "save.schedule", detail: board.id) {
-            saveWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.save() }
-            saveWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-        }
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.save() }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     /// Writes the draft, the history and the extra targets now (window closing, app quitting).

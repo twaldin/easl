@@ -177,9 +177,7 @@ public final class BoardStore {
             }
         }
         repeat {
-            try Metrics.shared.span("save", "save.enqueue", detail: board.id) {
-                guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
-            }
+            guard !board.isClosed else { throw BoardError.notFound("board \(board.id) is closed") }
             try await withCheckedThrowingContinuation { continuation in
                 enqueue(board, continuation: continuation)
             }
@@ -209,10 +207,8 @@ public final class BoardStore {
         let saving = Save(board)
         saves[board.id] = saving
         board.onChange = { [weak saving] in
-            Metrics.shared.span("save", "save.schedule", detail: saving?.board.id ?? "") {
-                saving?.version += 1
-                saving?.onChange?()
-            }
+            Metrics.shared.span("save", "save.schedule", detail: saving?.board.id ?? "") { saving?.version += 1 }
+            saving?.onChange?()
         }
         return saving
     }
@@ -329,19 +325,16 @@ public final class BoardStore {
     /// attention markers, agents' last answers, their undelivered messages and pending relaunches
     /// are personal, transient state, so they are left out.
     public func export(_ board: Board, to url: URL) async throws {
-        let snapshot = Metrics.shared.span("save", "save.snapshot", detail: board.id) {
-            var snapshot = board.snapshot
-            snapshot.tray = nil
-            snapshot.attention = nil
-            snapshot.finalAnswers = nil
-            snapshot.turnErrors = nil
-            snapshot.lifecycleSeq = nil
-            snapshot.repo = nil
-            snapshot.messages = nil
-            snapshot.htmlMessages = nil
-            snapshot.relaunchedAgents = nil
-            return snapshot
-        }
+        var snapshot = board.snapshot
+        snapshot.tray = nil
+        snapshot.attention = nil
+        snapshot.finalAnswers = nil
+        snapshot.turnErrors = nil
+        snapshot.lifecycleSeq = nil
+        snapshot.repo = nil
+        snapshot.messages = nil
+        snapshot.htmlMessages = nil
+        snapshot.relaunchedAgents = nil
         try await files.export(snapshot, to: url)
     }
 

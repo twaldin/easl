@@ -4,9 +4,9 @@ Read [verify-easl](../SKILL.md) for claims, release builds, Doctor, native captu
 
 ## Entry points
 
-- `save-main-steps`: edit a local note, pan its canvas, close its window, and quit with a pending board save. Board debounce and in-flight coalescing use `save.schedule`; enqueue and flush admission use `save.enqueue`; board snapshot capture uses `save.snapshot`. Completion delivery, flush callbacks, checked-save resumption, and close continuation use `save.complete`. Close and quit preparation use `save.prepare`. Composer and viewport persistence use `save.composer` and `save.viewport`.
+- `save-main-steps`: edit a local note, pan its canvas, close its window, and quit with a pending board save. Board debounce and in-flight coalescing use `save.schedule`; enqueue and flush admission use `save.enqueue`; board snapshot capture uses `save.snapshot`. Completion delivery, flush callbacks, checked-save resumption, and local close continuation use `save.complete`. Composer and viewport persistence use `save.composer` and `save.viewport`, including close and quit.
 - `save-slow-worker`: the release-config app with `Tests/BoardSave/atomic-write-hook.c`, `EASL_TEST_SAVE_DELAY_MS=2000`, and `EASL_TEST_SAVE_DIRECTORY` set to the canonical private boards directory. The hook delays the real atomic rename on the worker. It does not deliberately delay main-thread completion.
-- `save-slow-completion`: the native regression's `completion` and `completion-modal` modes delay a flush callback on main for 300 ms. Both require a durable note and a longest stretch attributed to `save.complete`.
+- `save-slow-completion`: the native regression's `completion` and `completion-modal` modes delay a flush callback on main for one second. Both require a durable note and a longest stretch attributed to `save.complete`.
 
 ## Run the native regression
 

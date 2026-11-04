@@ -55,7 +55,7 @@ The native board-save regression uses the same optimized, testing-enabled build:
 
 Its injected `Files` writer delays atomic writes by two seconds. The default run requires no main-thread stretch of 50 ms or more, an edit applied during the write, durable latest-state readback, and a recorded `save.slow250`. A nested modal-loop case flushes two pending boards without relying on main-queue task delivery. A close-race case fails a newer edit's write after close's first write succeeds but before its task resumes; close must report failure and retain the edit. A child exits at the real atomic rename and must leave the previous board file byte-exact.
 
-Two completion-attribution cases hold a real flush callback on the main thread for 300 ms, in default and modal run-loop delivery. Both require `app.metrics` to name `save.complete` in the longest stretch and count the delayed completion, after checking the saved note on disk.
+Two completion-attribution cases hold a real flush callback on the main thread for one second, in default and modal run-loop delivery. Both require `app.metrics` to name `save.complete` in the longest stretch and count the delayed completion, after checking the saved note on disk.
 
 CI passes `--ci-timing-report-only` to report the 50 ms upper bound without enforcing shared-runner scheduling. Off-main writes, write duration, latest-state durability, modal-loop completion, and crash atomicity remain strict. Enforce the upper bound in the queued GUI guest, then separately exercise native typing, scrolling, pending-save quit, and relaunch with the delayed-write hook. The runner's `--baseline` mode uses the synchronous save API; add only the identical internal writer-injection initializer to the baseline before building it.
 

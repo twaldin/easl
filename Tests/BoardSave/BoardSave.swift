@@ -200,7 +200,7 @@ private enum BoardSaveRegression {
         metrics.monitorMainThread()
         let store = BoardStore(directory: directory.appendingPathComponent("boards"), debounce: 60)
         let board = try await store.load(root: directory.appendingPathComponent("root"))
-        let note = board.create(type: .note, props: .object(["markdown": "save completion attribution"]))
+        let note = board.create(type: .note, props: .object(["markdown": .string("save completion attribution")]))
         try await Task.sleep(for: .milliseconds(100))
         metrics.reset()
         try await Task.sleep(for: .milliseconds(50))
@@ -208,7 +208,7 @@ private enum BoardSaveRegression {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 store.beginFlush([board]) {
-                    Thread.sleep(forTimeInterval: 0.3)
+                    Thread.sleep(forTimeInterval: 1)
                     modalFinished = true
                     if !modal { continuation.resume() }
                 }
@@ -230,12 +230,12 @@ private enum BoardSaveRegression {
         let result = metrics.snapshot()
         try JSONEncoder().encode(result).write(to: directory.appendingPathComponent("metrics.json"), options: .atomic)
         let persisted = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: board.id)))
-        guard persisted.objects.first(where: { $0.id == note.id })?.props["markdown"] == "save completion attribution" else {
+        guard persisted.objects.first(where: { $0.id == note.id })?.props["markdown"]?.string == "save completion attribution" else {
             throw RegressionFailure("completion ran without persisting the note")
         }
-        guard (result["longest"]?["ms"]?.number ?? 0) >= 250,
+        guard (result["longest"]?["ms"]?.number ?? 0) >= 900,
               result["longest"]?["cause"]?.string?.contains("save.complete") == true,
-              (result["counters"]?["save.complete"]?["total"]?["maxMs"]?.number ?? 0) >= 275 else {
+              (result["counters"]?["save.complete"]?["total"]?["maxMs"]?.number ?? 0) >= 950 else {
             throw RegressionFailure("slow completion is not attributed to save.complete: \(result)")
         }
         print("PASS slow save completion is attributed in \(modal ? "modal" : "default") run-loop delivery")
