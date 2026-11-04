@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist optional `contentUpdatedAt` and `contentRev` fields without changing board format 3. Older objects, and objects edited by an older host, safely fall back to `updatedAt`.
+- Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands now return `timeout` after 30 seconds, plus 100 ms for result delivery. Eval, actions, and snapshot keep their callbacks across commits, so a cold page's first command is not falsely cancelled. Commands are never replayed.
 
 ### Added
 

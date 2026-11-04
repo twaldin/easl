@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "4fc4596d99bcbfc4"
+const SchemaHash = "cc47ed6b5bfc584f"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -26,9 +26,9 @@ const (
 	CodeUnsupported = "unsupported"
 	// target exists but cannot act right now (e.g. a terminal tile without an attached surface), or the app is not running: no attached client (client.attach) serves the call, it didn't answer in time, or it disconnected before answering.
 	CodeUnavailable = "unavailable"
-	// agent.wait or browser.wait deadline passed before the requested state.
+	// agent.wait or browser.wait deadline passed before the requested state, or a browser automation JavaScript deadline passed.
 	CodeTimeout = "timeout"
-	// a browser page script failed.
+	// a browser page script failed or its document was replaced before it returned.
 	CodeJsError = "js_error"
 	// unexpected server failure.
 	CodeInternal = "internal"

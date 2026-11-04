@@ -45,6 +45,8 @@ Errors print `code: message` and exit 1 (`not_found: no element matches #go`, `t
 - `eval <tile> --script "…"`: one expression runs in an async function (a promise it returns is awaited, `await` works); statements return their completion value. The page's CSP doesn't apply. Return plain JSON values (`({a: 1})`, not DOM nodes).
 - `screenshot <tile> [--out f.png]`: the tile's viewport, one pixel per CSS pixel, written to `--out` (relative to the cwd) or a new file under `$TMPDIR/easl-renders/`; prints `path`, `width`, `height`. Read the PNG to look at it.
 
+Page JavaScript has a native deadline: the wait's remaining budget, or 30 seconds for other commands, plus 100 ms for result delivery. Only wait conditions are re-checked after commit. Eval, actions, and snapshot keep their callback and deadline across navigation and are never replayed. Process termination or view release ends pending commands with `js_error`.
+
 Every driven page stays live 60 s after each command, as with omp's tool. `board.history` credits what your commands cause to the terminal that opened the tile; on a tile someone else opened they show as `system`.
 Codex's sandbox blocks the socket: run `easl browser` escalated, like every easl command.
 
