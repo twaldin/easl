@@ -25,7 +25,7 @@ The board format is unchanged, still format 3. Objects gain optional `contentUpd
 
 ### Fixed
 
-- Remote-board connections now report a dead SSH relay's exit status and last stderr line even when a write fails first. A relay still running after the short grace, or a Unix socket, keeps the write error.
+- A dead remote relay's own error, such as ssh's, is reported instead of `write failed: Broken pipe` (#232). The relay's exit status and last stderr line survive a write failing first. When a write to a relay that is still running fails, easl reports the connection lost up to 300 ms later, after waiting for the relay's own reason. A still-running relay after that grace, or a Unix socket, keeps the write error.
 - Board saves now encode and atomically write off the main thread, so a slow disk write does not freeze editing. Close and quit wait for the latest queued board state. Metrics count saves taking at least 250 ms even when the UI stays responsive.
 - `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist optional `contentUpdatedAt` and `contentRev` fields without changing board format 3. Older objects, and objects edited by an older host, safely fall back to `updatedAt`.
 - Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands now return `timeout` after 30 seconds, plus 100 ms for result delivery. Eval, actions, and snapshot keep their callbacks across commits, so a cold page's first command is not falsely cancelled. Commands are never replayed.
