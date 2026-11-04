@@ -8,9 +8,9 @@ easl 0.3.6 moves board-save encoding and writes off the main thread, fixing the 
 
 ### easld, the app, and the CLI
 
-Content-age queries and creator filtering need the 0.3.6 host: the app for local boards, or easld for remote boards. Both hosts and the API schema change. The new CLI's `board.stale --mine` uses the new `createdBy` filter; a 0.3.5 host rejects it with `invalid_params: unknown param createdBy`, without naming the version. Ordinary `board.stale` still works on an old host, using its old age rules.
+Content-age queries need the 0.3.6 host: the app for local boards, or easld for remote boards. Both hosts and the API schema change. The new CLI's `board.stale --mine` uses the new `createdBy` filter. A 0.3.5 host rejects it with `invalid_params: unknown param createdBy`, without naming the version. So does a 0.3.5 app forwarding the call to a remote board, even on easld 0.3.6. Ordinary `board.stale` still works on an old host, using its old age rules.
 
-Same-board links and background saves run in the 0.3.6 app and do not need a new easld. The browser fixes also run in the app. The release check exercised the 0.3.6 app with easld 0.3.5 and the 0.3.5 app with easld 0.3.6 through edits and saves. Both CLI versions worked with ordinary `board.stale` and `app.metrics`; the new creator filter was refused by old endpoints.
+Same-board links and background saves run in the 0.3.6 app and do not need a new easld. The browser fixes also run in the app. The release check exercised the 0.3.6 app with easld 0.3.5 and the 0.3.5 app with easld 0.3.6 through edits and saves. The 0.3.5 CLI's ordinary `board.stale` and both CLIs' `app.metrics` worked in every pairing. The new creator filter was refused wherever an old app or easld handled it.
 
 ### Board format
 
