@@ -771,26 +771,54 @@ final class CanvasView: NSScrollView {
         return tile.objectID
     }
 
-    func prepareSelectionClick(_ id: ObjectID, event: NSEvent, wasTyping: Bool) {
+    enum SelectionClick {
+        case user
+        case board
+        case native
+        case extendText(NSTextView, anchor: Int)
+    }
+
+    func selectionClick(_ id: ObjectID, event: NSEvent, hit: NSView) -> SelectionClick {
+        guard event.modifierFlags.contains(.shift) else { return .user }
+        guard focusedTile == id else { return .board }
+        if let editor = window?.firstResponder as? NSTextView {
+            let control = editor.isFieldEditor ? editor.delegate as? NSView : editor
+            if let control, hit === control || hit.isDescendant(of: control) {
+                let range = editor.selectedRange()
+                return .extendText(editor, anchor: editor.selectionAffinity == .upstream ? NSMaxRange(range) : range.location)
+            }
+        }
+        return .native
+    }
+
+    func prepareSelectionClick(_ id: ObjectID, event: NSEvent, decision: SelectionClick) {
         lastClickedTile = id
         guard let html = tiles[id]?.content as? HtmlTile else { return }
-        if event.modifierFlags.contains(.shift) {
-            if !wasTyping { select(id, extend: true) }
-        } else {
+        switch decision {
+        case .board: select(id, extend: true)
+        case .user:
             setSelection([id], cause: .user)
             html.webView?.beginSelectionClick(event)
+        case .native, .extendText: break
         }
     }
 
-    func completeSelectionClick(_ id: ObjectID, event: NSEvent, serial: UInt64, wasTyping: Bool) {
+    func completeSelectionClick(_ id: ObjectID, serial: UInt64, decision: SelectionClick) {
         guard selectionSerial == serial, move?.pressed != id else { return }
-        if event.modifierFlags.contains(.shift) {
-            if !wasTyping {
-                if tiles[id]?.content is HtmlTile { hand(.canvas) }
-                else { select(id, extend: true) }
-            }
-        } else if !(tiles[id]?.content is HtmlTile) {
-            setSelection([id], cause: .user)
+        switch decision {
+        case .board:
+            if tiles[id]?.content is HtmlTile { hand(.canvas) }
+            else { select(id, extend: true) }
+        case .user:
+            if !(tiles[id]?.content is HtmlTile) { setSelection([id], cause: .user) }
+        case .extendText(let editor, let anchor):
+            guard window?.firstResponder === editor else { return }
+            let range = editor.selectedRange()
+            let end = editor.selectionAffinity == .upstream ? range.location : NSMaxRange(range)
+            editor.setSelectedRange(NSRange(location: min(anchor, end), length: abs(end - anchor)),
+                                    affinity: end < anchor ? .upstream : .downstream, stillSelecting: false)
+            editor.scrollRangeToVisible(NSRange(location: end, length: 0))
+        case .native: break
         }
     }
 

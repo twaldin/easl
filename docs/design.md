@@ -64,7 +64,7 @@ With `--own-terminals` (its Linux unit, `easld@.service`, sets it) easld starts 
 | --- | --- |
 | Click | Select to edit, move, drag |
 | Right-click | Context menu |
-| Shift-click | Add/remove from board selection on a title bar, drawing, group label, or another tile's body. Inside the tile that already has typing, extends its native text or line selection without changing board selection. |
+| Shift-click | Add/remove from board selection on a title bar, drawing, group label, or another tile's body. Inside the text editor or code rows that already own typing, extends native text selection without changing board selection. HTML editable fields keep the page's native Shift-selection. |
 | Drag on empty board | Marquee select (box or lasso, a setting): the tiles and drawings it encloses, the groups whose whole region it encloses, and the arrows whose two ends are bound to what it selects (`SelectionScope.marquee`), wherever their route bends |
 | Drag on a tile with the Move tool (M) | Move a selected tile with its selection, or move an unselected tile alone, through the title-bar move pipeline. Selection and typing stay unchanged. Scroll pans the board instead of tile content. The tool stays on for consecutive moves. V or Escape returns to Select and cancels a held drag. Empty board still marquee-selects |
 | Hyper-click (Caps Lock → ⌃⌥⇧⌘ via Karabiner) | Stage/unstage a mention; on a group's title or empty interior, the whole group (the innermost, named by its title: its members with their text and the arrows among them) |
@@ -130,6 +130,8 @@ Command-Escape always returns typing to the board and preserves the current sele
 | Shape | Leaves selection keys on the board. Explicit text editing keeps its native editor. | Commits shape text or cancels an arrow caption. A newly created text shape leaves keys on the board; existing editors retain their restore behavior. |
 
 Keyboard navigation into a note opens its raw Markdown editor immediately, including walkthrough stops. Tab then follows the editor's text behavior; Command-Escape ends editing and leaves the rendered note selected. A confidence-slider click selects its question so subsequent arrows adjust confidence. Links, dismissal and answer buttons retain their control actions.
+
+Shift-click inside the active note editor, code rows, HTML editable field, or question's optional note extends that text selection. The same native responder keeps typing, and board selection stays unchanged. Shift-click on a foreign tile's body instead changes board selection and gives typing to the board, even if one tile remains selected. A plain user click re-enters that tile before a later Shift-click can extend its text. Clicking elsewhere in the active tile does not count as clicking its current text responder.
 
 Delete and Command-A act on text while a terminal, editor, or page owns typing. With the board owning typing, Delete acts on selected objects and Command-A selects the board's objects. Board navigation shortcuts, Command-W, and Command-I keep their window-level priority.
 

@@ -72,7 +72,7 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
-        for name in ["shift-note-text", "shift-html-text", "offscreen-go-note", "heading-go-note",
+        for name in ["shift-note-text", "shift-html-text", "shift-code-text", "shift-question-note-text", "offscreen-go-note", "heading-go-note",
                      "note-command-backspace", "history-back-note", "html-panel-return"] {
             cases.append(Scenario(name: name, baseline:
                 name == "html-panel-return" ? "existing bug regression" : "feature regression"))
@@ -1548,16 +1548,36 @@ private enum SelectionTyping {
     }
 
     private static func exerciseShiftText(_ type: ObjectType, _ f: Fixture) async throws {
-        let object = try await f.create(type)
-        if type == .note {
-            try await enter(object, in: f)
-            guard let editor = f.window.firstResponder as? NSTextView else { throw Failure("note must expose its native editor") }
+        let object = try await f.create(type, height: type == .question ? 420 : 290)
+        let foreign = try await f.create(.image, x: 540, y: 45, width: 300, height: 290)
+        try await click(try f.point(foreign.id, title: true), in: f.window)
+        try f.boardOwns([foreign.id])
+        if type == .code {
+            try await wait("Shift-text code fixture must load its actual source rows") {
+                guard let content = f.canvas.tiles[object.id]?.content else { return false }
+                return descendants(content).compactMap { $0 as? CodeRowsView }.contains { ($0.painter?.rows.entryCount ?? 0) >= 80 }
+            }
+        }
+        let foreignPoint = type == .html ? try await f.pagePoint(object.id, selector: "#field") : try f.point(object.id)
+        try await click(foreignPoint, flags: .shift, in: f.window)
+        try f.boardOwns([foreign.id, object.id])
+        try await click(try f.point(object.id, title: true), in: f.window)
+        try require(f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+            "user re-entry after foreign Shift-selection must give the text tile typing; \(f.diagnostic())")
+        if type == .note || type == .question {
+            if type == .question {
+                try await post([key(48, "\t", in: f.window)])
+            }
+            guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+                throw Failure("\(type.rawValue) must expose its native editor after user re-entry")
+            }
             try await post([key(0, "a", flags: .command, in: f.window)])
             try await typed("abcdef", in: f.window)
-            try require(editor.string == "abcdef", "native Select All and typing must prepare note text")
+            try require(editor.string == "abcdef", "native Select All and typing must prepare \(type.rawValue) text")
             let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
             try require(rect.width > 0 && rect.height > 0, "shift-click character must have native geometry")
-            let point = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
+            let point = try f.checked(f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY)),
+                target: editor, label: "active \(type.rawValue) character 1")
             print("SHIFT before=\(editor.selectedRange()) insertion=\(editor.characterIndexForInsertion(at: editor.convert(point, from: nil))) point=\(point) \(f.diagnostic(point))")
             fflush(nil)
             try require(editor.selectedRange() == NSRange(location: 6, length: 0)
@@ -1565,14 +1585,49 @@ private enum SelectionTyping {
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
             try await click(point, flags: .shift, in: f.window)
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
-                "Shift-click inside the active note must retain its editor and selection; \(f.diagnostic(point))")
+                "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
             print("SHIFT after=\(range) globalFlags=\(NSEvent.modifierFlags.rawValue)")
             fflush(nil)
-            try require(range.length > 0 && NSMaxRange(range) == 6, "native Shift-click must extend note text selection from caret 6; actual=\(range)")
-            let expected = (editor.string as NSString).replacingCharacters(in: range, with: "X")
+            try require(range == NSRange(location: 1, length: 5),
+                "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
+            try require((editor.string as NSString).substring(with: range) == "bcdef",
+                "the native \(type.rawValue) selection must expose exactly bcdef")
             try await typed("X", in: f.window)
-            try require(editor.string == expected, "typing must replace the Shift-clicked note text range")
+            try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
+                "typing must replace exactly the Shift-clicked \(type.rawValue) range and place the caret after aX")
+            if type == .question {
+                try await post([key(36, "\r", in: f.window)])
+                try await wait("Return must submit exactly the edited question note") {
+                    f.board.objects[object.id]?.props["answer"]?["note"]?.string == "aX"
+                }
+            }
+        } else if type == .code {
+            guard let content = f.canvas.tiles[object.id]?.content,
+                  let rows = descendants(content).compactMap({ $0 as? CodeRowsView }).first,
+                  let painter = rows.painter, let segment = painter.rows.segment(0) else {
+                throw Failure("Shift-text code fixture must expose its native first row")
+            }
+            let line = painter.line(segment, cache: rows.cache)
+            let caret = NSPoint(x: painter.x(ofOffset: 6, in: segment, line: line) + 0.1,
+                y: CodePainter.rowTop(0) + CodeMetrics.rowHeight / 2)
+            let extensionPoint = NSPoint(x: painter.x(ofOffset: 1, in: segment, line: line) + 0.1, y: caret.y)
+            try require(rows.position(at: caret) == CodeRows.Position(entry: 0, offset: 6)
+                && rows.position(at: extensionPoint) == CodeRows.Position(entry: 0, offset: 1),
+                "native code geometry must target first-line offsets 6 and 1")
+            try await click(try f.checked(rows.convert(caret, to: nil), target: rows, label: "code caret 6"), in: f.window)
+            try require(f.window.firstResponder === rows && rows.selectedText == nil,
+                "plain code click must establish its native collapsed caret")
+            try await click(try f.checked(rows.convert(extensionPoint, to: nil), target: rows, label: "code Shift insertion 1"),
+                flags: .shift, in: f.window)
+            try require(f.window.firstResponder === rows && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+                "active code Shift-click must retain its exact responder and board selection")
+            try require(rows.selectedText == "et li" && rows.selectedEntries == (0...0),
+                "native code Shift-click must select exactly first-line characters 1 through 5")
+            NSPasteboard.general.clearContents()
+            try await post([key(8, "c", flags: .command, in: f.window)])
+            try require(NSPasteboard.general.string(forType: .string) == "et li",
+                "native Copy must expose exactly the Shift-selected code text")
         } else {
             let web = try await f.web(object.id)
             try await click(try await f.pagePoint(object.id, selector: "#field"), in: f.window)
@@ -1581,19 +1636,31 @@ private enum SelectionTyping {
                 await js(web, "document.getElementById('field').value") as? String == "abcdef"
             }
             let responder = f.window.firstResponder
-            let point = try await f.pagePoint(object.id, selector: "#field")
+            guard let geometry = await js(web, """
+                (() => {
+                  const f = document.getElementById('field'), r = f.getBoundingClientRect(), s = getComputedStyle(f);
+                  return { x: r.left + f.clientLeft + parseFloat(s.paddingLeft) + 1,
+                           y: r.top + f.clientTop + parseFloat(s.paddingTop) + parseFloat(s.fontSize) / 2 };
+                })()
+                """) as? [String: Double], let x = geometry["x"], let y = geometry["y"] else {
+                throw Failure("HTML editable field must expose its native text-start geometry")
+            }
+            let scale = web.pageZoom * web.magnification
+            let point = try f.checked(web.convert(NSPoint(x: CGFloat(x) * scale,
+                y: web.isFlipped ? CGFloat(y) * scale : web.bounds.height - CGFloat(y) * scale), to: nil),
+                target: web, label: "active HTML field insertion 0")
+            try await wait("HTML caret must start at exactly 6 before native Shift-click") {
+                await js(web, "(() => { const f = document.getElementById('field'); return document.activeElement === f && f.selectionStart === 6 && f.selectionEnd === 6 })()") as? Bool == true
+            }
             try await click(point, flags: .shift, in: f.window)
             try require(f.window.firstResponder === responder && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside active HTML must retain its exact responder and selection; \(f.diagnostic(point))")
-            try await wait("native Shift-click must extend HTML text selection") {
-                await js(web, "(() => { const f = document.getElementById('field'); return f.selectionStart < f.selectionEnd && f.selectionEnd === 6 })()") as? Bool == true
-            }
-            guard let expected = await js(web, "(() => { const f = document.getElementById('field'); return f.value.slice(0, f.selectionStart) + 'X' + f.value.slice(f.selectionEnd) })()") as? String else {
-                throw Failure("HTML native selection must be readable")
+            try await wait("native Shift-click must select exactly HTML characters 0 through 5") {
+                await js(web, "(() => { const f = document.getElementById('field'); return document.activeElement === f && f.selectionStart === 0 && f.selectionEnd === 6 && f.value.slice(f.selectionStart, f.selectionEnd) === 'abcdef' })()") as? Bool == true
             }
             try await typed("X", in: f.window)
-            try await wait("typing must replace the Shift-clicked HTML range") {
-                await js(web, "document.getElementById('field').value") as? String == expected
+            try await wait("typing must replace exactly the Shift-clicked HTML range and place the caret after X") {
+                await js(web, "(() => { const f = document.getElementById('field'); return f.value === 'X' && f.selectionStart === 1 && f.selectionEnd === 1 })()") as? Bool == true
             }
         }
     }
@@ -1889,8 +1956,9 @@ private enum SelectionTyping {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
             try await exerciseQuestionHeldReturn(f)
-        } else if name == "shift-note-text" || name == "shift-html-text" {
-            try await exerciseShiftText(name == "shift-note-text" ? .note : .html, f)
+        } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
+            let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
+            try await exerciseShiftText(type, f)
         } else if name == "offscreen-go-note" {
             try await exerciseOffscreenGo(f)
         } else if name == "heading-go-note" {

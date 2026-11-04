@@ -1635,18 +1635,22 @@ final class CanvasWindow: NSWindow {
         if middleDragPans(event) { return }
         let clicked = event.type == .leftMouseDown ? canvas(at: event.locationInWindow) : nil
         let selectionTarget = clicked.flatMap { $0.view.selectionClickTarget(event, hit: $0.hit) }
-        let wasTyping = selectionTarget != nil && clicked?.view.focusedTile == selectionTarget
+        let selectionClick = selectionTarget.flatMap { id in
+            clicked.map { $0.view.selectionClick(id, event: event, hit: $0.hit) }
+        }
         if event.type == .leftMouseDown { boardSelectionSerial = nil }
-        if let selectionTarget { clicked?.view.prepareSelectionClick(selectionTarget, event: event, wasTyping: wasTyping) }
+        if let selectionTarget, let selectionClick {
+            clicked?.view.prepareSelectionClick(selectionTarget, event: event, decision: selectionClick)
+        }
         let selectionSerial = clicked?.view.selectionSerial
-        if selectionTarget != nil, event.modifierFlags.contains(.shift), !wasTyping {
+        if case .board? = selectionClick {
             boardSelectionSerial = selectionSerial
         }
         super.sendEvent(event)
         if event.type == .leftMouseUp { boardSelectionSerial = nil }
-        if let selectionTarget, let selectionSerial {
+        if let selectionTarget, let selectionSerial, let selectionClick {
             let continuesBoardSelection = boardSelectionSerial == selectionSerial && clicked?.view.selectionSerial == selectionSerial
-            clicked?.view.completeSelectionClick(selectionTarget, event: event, serial: selectionSerial, wasTyping: wasTyping)
+            clicked?.view.completeSelectionClick(selectionTarget, serial: selectionSerial, decision: selectionClick)
             if continuesBoardSelection { boardSelectionSerial = clicked?.view.selectionSerial }
         }
     }
