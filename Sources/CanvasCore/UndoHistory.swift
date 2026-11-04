@@ -206,6 +206,21 @@ public final class UndoHistory {
         props(of: object, without: bookkeeping(object))
     }
 
+    static func authoredContentChanged(from before: CanvasObject, to after: CanvasObject, patch: JSONValue? = nil) -> Bool {
+        func ignored(_ key: String) -> Bool {
+            if before.type == .group && key == "members" || before.type == .browser && key == "urlIntent" { return true }
+            guard before.type == .arrow, key == "from" || key == "to" else { return false }
+            return before.props[key]?["object"]?.string == nil && after.props[key]?["object"]?.string == nil
+                && before.props[key]?["point"]?.array?.count == 2 && after.props[key]?["point"]?.array?.count == 2
+        }
+        if let patch = patch?.object {
+            return patch.keys.contains { !ignored($0) && before.props[$0] != after.props[$0] }
+        }
+        guard let old = before.props.object, let new = after.props.object else { return before.props != after.props }
+        return old.contains { !ignored($0.key) && new[$0.key] != $0.value }
+            || new.contains { !ignored($0.key) && old[$0.key] == nil }
+    }
+
     static func props(of object: CanvasObject, without keys: Set<String>) -> JSONValue {
         guard !keys.isEmpty, var props = object.props.object else { return object.props }
         for key in keys { props.removeValue(forKey: key) }
@@ -308,7 +323,7 @@ extension Board {
 
     /// Reverts recorded changes, newest first; returns them as a redo step (oldest first).
     @discardableResult
-    func revert(_ step: [UndoHistory.Change]) -> [UndoHistory.Change] {
+    func revert(_ step: [UndoHistory.Change], restoringContentAge: Bool = false) -> [UndoHistory.Change] {
         var replayed: [UndoHistory.Change] = []
         replay {
             for change in step.reversed() {
@@ -316,10 +331,10 @@ extension Board {
                 case .created(let object):
                     replayed.append(.created(removeLive(object)))
                 case .updated(let before, _):
-                    put(before)
+                    put(before, restoringContentAge: restoringContentAge)
                     replayed.append(change)
                 case .deleted(let object):
-                    put(object)
+                    put(object, restoringContentAge: restoringContentAge)
                     replayed.append(change)
                 case .effect(let effect):
                     effect.undo()
@@ -389,10 +404,12 @@ extension Board {
 
     /// Brings an object back to `target`'s content: in place when it exists, else re-created
     /// with the same id and z (undo of a delete).
-    private func put(_ target: CanvasObject) {
+    private func put(_ target: CanvasObject, restoringContentAge: Bool = false) {
         var object = objects[target.id].map { UndoHistory.restoring(target, onto: $0) } ?? target
+        object.contentUpdatedAt = restoringContentAge ? target.effectiveContentUpdatedAt : object.effectiveContentUpdatedAt
+        object.contentRev = object.rev
         object.updatedAt = Date()
         object.updatedBy = .user
-        restore(object)
+        restore(object, restoringContentAge: restoringContentAge)
     }
 }

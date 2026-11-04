@@ -92,10 +92,7 @@ public enum JSONValue: Codable, Equatable, Sendable {
 }
 
 extension JSONValue {
-    /// An object as its `Codable` form encodes (`JSONValue.encode(object)` gives the same value),
-    /// built without encoding: `props` is already JSON, so the API's board manifests, write
-    /// results and events cost a few dictionary inserts per object rather than a re-parse of
-    /// every prop.
+    /// The API object shape excludes file-only content-age metadata.
     public init(_ object: CanvasObject) {
         var fields: [String: JSONValue] = [
             "id": .string(object.id), "type": .string(object.type.rawValue), "frame": JSONValue(object.frame),

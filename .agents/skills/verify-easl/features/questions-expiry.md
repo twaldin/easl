@@ -10,6 +10,7 @@ Agents post question tiles through the CLI. Users choose an option or write a no
 - `question-archive` hides a closed tile while retaining its answer for CLI reads.
 - `object-expiry` deletes an ordinary transient object at the host deadline.
 - `question-archive-layout` excludes archived questions from geometry while retaining their answers.
+- `board-stale-content` lists content-age cleanup candidates after layout changes and filters them by creator.
 
 ## How to get to it (user POV)
 
@@ -29,6 +30,7 @@ Preconditions: an isolated local or scratch remote board with a live viewer. Set
 - Separately create an ordinary scratch note with `object.create --board "$BOARD" --type note --expires 5s --json '{"props":{"markdown":"Transient verification note"}}'`. Capture it before expiry, then require its disappearance and failed `object.get` after the host deadline. This is deletion, unlike question expiry and archive.
 - After archiving, place a note over the question's former frame. Raw rectangles may overlap, but collision, placement, and graph calculations must exclude the archived question. Exercise placement, group collapse, and arrow avoidance using `conformance/scenarios/archived-layout.json` as the fixture recipe. Run both hosts; disappearance alone does not qualify layout exclusion.
 - For an in-place upgrade, create a note under v0.3.0 with a deadline long enough to finish the upgrade. Record its absolute expiry, ID, and content. Restart the candidate on the same isolated home. Require unchanged data before the original deadline and deletion afterward, without extending expiry.
+- For `board-stale-content`, run `object-cleanup` conformance against the guest app and replay it against scratch easld. Age an authored note past the query threshold, move and resize it, and require `untouched`; editing Markdown must remove that reason. Move a group's members and require the group's content age to stay unchanged. `board.stale --mine` inside a terminal must return only that tile's creations. Close and reopen each host's board and require the same cleanup answer. Open scratch copies with the released app and easld and check that the optional content timestamp is ignored without a format change.
 
 ## Gotchas
 

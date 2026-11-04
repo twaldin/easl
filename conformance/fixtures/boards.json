@@ -1,7 +1,7 @@
 {
   "scenario": "boards",
   "description": "board.open (git repository, errors), board.list (this board), board.export to the default and a given path, read back.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "Swift 6.4 guest app 3161dd190378b82b21dde7db4e8b6093116201b2, easl-stale-content-age-1",
   "steps": [
     {
       "step": "board.open",
@@ -294,6 +294,8 @@
         "id": "<board>",
         "objects": [
           {
+            "contentRev": 1,
+            "contentUpdatedAt": "<time:iso>",
             "createdAt": "<time:iso>",
             "createdBy": {
               "kind": "user"
@@ -341,6 +343,8 @@
         "id": "<board>",
         "objects": [
           {
+            "contentRev": 1,
+            "contentUpdatedAt": "<time:iso>",
             "createdAt": "<time:iso>",
             "createdBy": {
               "kind": "user"

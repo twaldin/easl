@@ -16,6 +16,15 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 			return nil, err
 		}
 	}
+	createdBy, filtered := "", false
+	if value, present := p["createdBy"]; present {
+		var ok bool
+		createdBy, ok = value.(string)
+		if !ok {
+			return nil, invalid("createdBy must be a string")
+		}
+		filtered = true
+	}
 	b, err := r.boardOf(p)
 	if err != nil {
 		return nil, err
@@ -56,5 +65,17 @@ func (r *Router) boardStale(p map[string]any) (any, error) {
 			}
 		}
 	}
-	return map[string]any{"objects": b.Stale(time.Now(), olderThan, exited)}, nil
+	objects := b.Stale(time.Now(), olderThan, exited)
+	if filtered {
+		matching := objects[:0]
+		for _, value := range objects {
+			entry := value.(map[string]any)
+			creator := b.Objects()[entry["id"].(string)].CreatedBy
+			if creator.Kind == "agent" && creator.Tile == createdBy {
+				matching = append(matching, value)
+			}
+		}
+		objects = matching
+	}
+	return map[string]any{"objects": objects}, nil
 }

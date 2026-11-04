@@ -543,6 +543,8 @@ func (b *Board) recreate(o model.Object) {
 	if o.UpdatedBy != nil {
 		intentActor = *o.UpdatedBy
 	}
+	o.ContentUpdatedAt = o.ContentTime()
+	o.ContentRev = o.Rev
 	o.UpdatedAt = time.Now()
 	user := model.Actor{Kind: "user"}
 	o.UpdatedBy = &user

@@ -394,6 +394,8 @@ extension Board {
 
     private func recreate(_ object: CanvasObject) {
         var object = object
+        object.contentUpdatedAt = object.effectiveContentUpdatedAt
+        object.contentRev = object.rev
         object.updatedAt = Date()
         object.updatedBy = .user
         restore(object)

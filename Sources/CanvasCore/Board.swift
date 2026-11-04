@@ -588,8 +588,13 @@ public final class Board {
             throw BoardError.invalidParams("terminal \(id) runs on \(was): a terminal's host can't change (create a terminal on \(now) instead)")
         }
         if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
+        object.contentUpdatedAt = before.effectiveContentUpdatedAt
         object.rev += 1
         object.updatedAt = Date()
+        object.contentRev = object.rev
+        if let props, UndoHistory.authoredContentChanged(from: before, to: object, patch: props) {
+            object.contentUpdatedAt = object.updatedAt
+        }
         object.updatedBy = Actor(caller: caller)
         let credited = actor ?? ActivityActor(caller: caller)
         history.begin()
@@ -697,10 +702,19 @@ public final class Board {
 
     /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
     /// The object gets a revision newer than any it has ever had.
-    func restore(_ object: CanvasObject) {
+    func restore(_ object: CanvasObject, restoringContentAge: Bool = false) {
         var object = object
         let previous = objects[object.id]
+        let contentUpdatedAt: Date
+        if let previous, !restoringContentAge {
+            contentUpdatedAt = UndoHistory.authoredContentChanged(from: previous, to: object)
+                ? object.updatedAt : previous.effectiveContentUpdatedAt
+        } else {
+            contentUpdatedAt = object.effectiveContentUpdatedAt
+        }
         object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
+        object.contentUpdatedAt = contentUpdatedAt
+        object.contentRev = object.rev
         commit(object)
         Metrics.shared.record("board.undo")
         if let previous {
@@ -800,7 +814,7 @@ public final class Board {
                 replayVerb = nil
                 replayActor = .user
             }
-            revert(history.discard(from: mark))
+            revert(history.discard(from: mark), restoringContentAge: true)
             handoffs = handed
             messages = queued
             htmlMessages = pages

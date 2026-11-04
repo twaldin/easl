@@ -1364,6 +1364,8 @@ export type BoardStaleParams = {
   board?: Id;
   /** finite nonnegative duration in seconds, minutes, hours or days; fractions allowed */
   olderThan?: string;
+  /** only objects whose createdBy is agent with this tile id; the creator need not still exist */
+  createdBy?: Id;
 };
 export type BoardStaleResult = {
   objects: StaleObject[];
@@ -2475,7 +2477,7 @@ export interface CanvasApi {
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored local board, open or not, including archived boards whose root directory is gone. The Mac app appends its open remote tabs with remote:true, host, sshTarget, the host's board id and root, title, window and open:true; closing a remote tab removes its row. Local rows are unchanged and have no remote field. Remote rows have no archived, objects, updatedAt, repo or worktrees metadata; root is on the host. easld lists only its own stored boards, unchanged. */
     list(params?: BoardListParams): Promise<BoardListResult>;
-    /** Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events. */
+    /** Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (content time strictly before now minus olderThan), and exited (terminal process confirmed exited). Content time starts at creation and advances when normal prop writes change a value, including undo and redo. The board file stores optional contentUpdatedAt and contentRev; the timestamp applies only when contentRev matches the object's rev, otherwise updatedAt is used. This preserves legacy answers and safely falls back after an older host edits the object. These fields are not sent in API objects or events. Frame, z, parent, expiry, no-op prop writes and group members changes do not count. Arrow free-point coordinates and movement of bound objects are geometry, not content; endpoint binding changes (object, lines, selector or node), detachment, label, style and other arrow props count. Normal terminal lifecycle, agent and title reports and code-follow path, range and history updates count, so recently active tiles are not untouched. Generated browser urlIntent and bookkeeping-only write paths, including page-title reports, computed diagram graphs and code reanchoring, do not count. updatedAt keeps its existing meaning. Optional createdBy limits every reason to objects created by that agent tile, even if the tile is gone. CLI --mine fills createdBy from EASL_TILE_ID. Does not delete objects or change revisions, timestamps, or events. */
     stale(params?: BoardStaleParams): Promise<BoardStaleResult>;
     /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
     open(params: BoardOpenParams): Promise<BoardOpenResult>;

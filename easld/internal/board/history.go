@@ -66,6 +66,27 @@ func sameContent(a, b model.Object) bool {
 	return a.Frame == b.Frame && a.Z == b.Z && a.Parent == b.Parent && sameExpiry(a.Expires, b.Expires) && model.Equal(anyMap(contentProps(a)), anyMap(contentProps(b)))
 }
 
+func sameAuthoredPatch(a, b model.Object, patch map[string]any) bool {
+	freePoint := func(value any) bool {
+		end, _ := value.(map[string]any)
+		_, bound := end["object"].(string)
+		point, _ := end["point"].([]any)
+		return !bound && len(point) == 2
+	}
+	for key := range patch {
+		if (a.Type == model.Group && key == "members") || (a.Type == model.Browser && key == "urlIntent") {
+			continue
+		}
+		if a.Type == model.Arrow && (key == "from" || key == "to") && freePoint(a.Props[key]) && freePoint(b.Props[key]) {
+			continue
+		}
+		if !jsonEqualKey(a.Props, b.Props, key) {
+			return false
+		}
+	}
+	return true
+}
+
 func sameExpiry(a, b *time.Time) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -216,6 +237,8 @@ func (b *Board) put(target model.Object) {
 	if current, ok := b.objects[target.ID]; ok {
 		o = restoring(target, current)
 	}
+	o.ContentUpdatedAt = target.ContentTime()
+	o.ContentRev = o.Rev
 	o.UpdatedAt = time.Now()
 	user := model.Actor{Kind: "user"}
 	o.UpdatedBy = &user

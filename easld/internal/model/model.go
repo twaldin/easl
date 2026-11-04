@@ -209,18 +209,20 @@ func DefaultSize(t ObjectType) (w, h float64) {
 
 // Object is a CanvasObject.
 type Object struct {
-	ID        ObjectID
-	Type      ObjectType
-	Frame     Frame
-	Z         float64
-	Rev       int
-	Parent    ObjectID // "" for none
-	CreatedBy Actor
-	UpdatedBy *Actor
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	Expires   *time.Time
-	Props     map[string]any
+	ID               ObjectID
+	Type             ObjectType
+	Frame            Frame
+	Z                float64
+	Rev              int
+	Parent           ObjectID // "" for none
+	CreatedBy        Actor
+	UpdatedBy        *Actor
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ContentUpdatedAt time.Time
+	ContentRev       int
+	Expires          *time.Time
+	Props            map[string]any
 	// Unknown is a stored object's keys easld doesn't know (written by a newer app); FileJSON
 	// writes them back, the API doesn't report them. Never changed, so copies share it.
 	Unknown map[string]any
@@ -234,7 +236,7 @@ func (o Object) Hidden() bool {
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
-	"updatedBy": true, "createdAt": true, "updatedAt": true, "expires": true, "props": true,
+	"updatedBy": true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "contentRev": true, "expires": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -253,6 +255,14 @@ func (o Object) Clone() Object {
 		c.Expires = &at
 	}
 	return c
+}
+
+// ContentTime trusts content age only while its revision matches the stored object.
+func (o Object) ContentTime() time.Time {
+	if o.ContentRev > 0 && o.ContentRev == o.Rev && !o.ContentUpdatedAt.IsZero() {
+		return o.ContentUpdatedAt
+	}
+	return o.UpdatedAt
 }
 
 // referenceDate is Foundation's reference date: the API encodes dates as seconds since it
@@ -309,6 +319,12 @@ func (o Object) APIJSON() map[string]any {
 // FileJSON is the object as the board file stores it, keys easld doesn't know included.
 func (o Object) FileJSON() map[string]any {
 	m := o.encode(func(t time.Time) any { return FileTime(t) })
+	if !o.ContentUpdatedAt.IsZero() {
+		m["contentUpdatedAt"] = FileTime(o.ContentUpdatedAt)
+	}
+	if o.ContentRev != 0 {
+		m["contentRev"] = float64(o.ContentRev)
+	}
 	for k, v := range o.Unknown {
 		if !ObjectKeys[k] {
 			m[k] = v
@@ -343,6 +359,12 @@ func ObjectFromJSON(v any) (Object, error) {
 	}
 	o.CreatedAt = parseFileTime(m["createdAt"])
 	o.UpdatedAt = parseFileTime(m["updatedAt"])
+	if value, present := m["contentUpdatedAt"]; present && value != nil {
+		o.ContentUpdatedAt = parseFileTime(value)
+	}
+	if value, ok := m["contentRev"].(float64); ok {
+		o.ContentRev = int(value)
+	}
 	if value, present := m["expires"]; present && value != nil {
 		text, ok := value.(string)
 		if !ok {

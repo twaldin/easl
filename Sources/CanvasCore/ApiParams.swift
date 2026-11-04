@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "d3c3ce81363babe6"
+    static let schemaHash = "f8487961b15905c0"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
@@ -24,7 +24,7 @@ enum ApiParams {
         "board.redo": (["board", "viewer", "step"], ["viewer", "step"]),
         "board.history": (["board", "since", "limit", "kinds"], []),
         "board.list": ([], []),
-        "board.stale": (["board", "olderThan"], []),
+        "board.stale": (["board", "olderThan", "createdBy"], []),
         "board.open": (["root", "select"], ["root"]),
         "board.open_remote": (["host", "board", "select"], ["host", "board"]),
         "board.close": (["board", "endSessions"], []),

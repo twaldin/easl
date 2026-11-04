@@ -1,7 +1,7 @@
 {
   "scenario": "object-cleanup",
-  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports leftovers without writing.",
-  "recordedOn": "Swift 6.4 guest app 4cfe90eecf777f7f79e82125f73749c550f01eec",
+  "description": "Object deadlines normalize durations, clear and renew through update/upsert, delete through host events on two connections, and board.stale reports content age after layout moves with an optional creator filter without writing.",
+  "recordedOn": "Swift 6.4 guest app 3161dd190378b82b21dde7db4e8b6093116201b2, easl-stale-content-age-1",
   "steps": [
     {
       "step": "board.open",
@@ -472,13 +472,329 @@
       }
     },
     {
+      "step": "sleep",
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "frame": {
+          "h": 240,
+          "w": 400,
+          "x": 800,
+          "y": 200
+        },
+        "id": "<obj:3>",
+        "z": 10
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:2>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "createdBy": "<obj:2>",
+        "olderThan": "2s"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "objects": [
+            {
+              "createdBy": {
+                "kind": "agent",
+                "tile": "<obj:2>"
+              },
+              "id": "<obj:3>",
+              "key": "cleanup-leftover",
+              "reasons": [
+                "untouched"
+              ],
+              "title": "Leftover",
+              "type": "note",
+              "updatedAt": "<time:number>"
+            }
+          ]
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "createdBy": "obj_nobody",
+        "olderThan": "0s"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "createdBy": null
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params"
+        },
+        "id": "r13",
+        "ok": false
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:3>",
+        "props": {
+          "markdown": "Refreshed task scratch"
+        }
+      },
+      "response": {
+        "id": "r14",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Refreshed task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Refreshed task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "conn": "second",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "agent",
+              "tile": "<obj:2>"
+            },
+            "frame": {
+              "h": 240,
+              "w": 400,
+              "x": 800,
+              "y": 200
+            },
+            "id": "<obj:3>",
+            "props": {
+              "key": "cleanup-leftover",
+              "markdown": "Refreshed task scratch",
+              "title": "Leftover"
+            },
+            "rev": "<rev:3>",
+            "type": "note",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
+      "step": "board.stale",
+      "method": "board.stale",
+      "request": {
+        "board": "<board>",
+        "createdBy": "<obj:2>",
+        "olderThan": "2s"
+      },
+      "response": {
+        "id": "r15",
+        "ok": true,
+        "result": {
+          "objects": []
+        }
+      },
+      "ignored": {
+        "response.error.message": "Validation wording differs between hosts; error codes and no-write behavior are checked."
+      }
+    },
+    {
       "step": "object.delete",
       "method": "object.delete",
       "request": {
         "id": "<obj:2>"
       },
       "response": {
-        "id": "r10",
+        "id": "r16",
         "ok": true,
         "result": {}
       },
@@ -510,7 +826,7 @@
         "board": "<board>"
       },
       "response": {
-        "id": "r11",
+        "id": "r17",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -543,21 +859,24 @@
                 "tile": "<obj:2>"
               },
               "frame": {
-                "h": 180,
-                "w": 300,
-                "x": 400,
-                "y": 0
+                "h": 240,
+                "w": 400,
+                "x": 800,
+                "y": 200
               },
               "id": "<obj:3>",
               "props": {
                 "key": "cleanup-leftover",
-                "markdown": "Task scratch",
+                "markdown": "Refreshed task scratch",
                 "title": "Leftover"
               },
-              "rev": "<rev:1>",
+              "rev": "<rev:3>",
               "type": "note",
               "updatedAt": "<time:number>",
-              "z": 3
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 10
             }
           ],
           "revision": "<board:1>",
@@ -575,7 +894,7 @@
         "board": "<board>"
       },
       "response": {
-        "id": "r12",
+        "id": "r18",
         "ok": true,
         "result": {
           "objects": [
@@ -607,7 +926,7 @@
         "board": "<board>"
       },
       "response": {
-        "id": "r13",
+        "id": "r19",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -640,21 +959,24 @@
                 "tile": "<obj:2>"
               },
               "frame": {
-                "h": 180,
-                "w": 300,
-                "x": 400,
-                "y": 0
+                "h": 240,
+                "w": 400,
+                "x": 800,
+                "y": 200
               },
               "id": "<obj:3>",
               "props": {
                 "key": "cleanup-leftover",
-                "markdown": "Task scratch",
+                "markdown": "Refreshed task scratch",
                 "title": "Leftover"
               },
-              "rev": "<rev:1>",
+              "rev": "<rev:3>",
               "type": "note",
               "updatedAt": "<time:number>",
-              "z": 3
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 10
             }
           ],
           "revision": "<board:1>",
@@ -672,7 +994,7 @@
         "id": "<obj:3>"
       },
       "response": {
-        "id": "r14",
+        "id": "r20",
         "ok": true,
         "result": {}
       },
@@ -705,7 +1027,7 @@
         "olderThan": "0s"
       },
       "response": {
-        "id": "r15",
+        "id": "r21",
         "ok": true,
         "result": {
           "objects": [
@@ -748,7 +1070,7 @@
         "type": "note"
       },
       "response": {
-        "id": "r16",
+        "id": "r22",
         "ok": true,
         "result": {
           "created": true,
@@ -846,7 +1168,7 @@
         "id": "<obj:4>"
       },
       "response": {
-        "id": "r17",
+        "id": "r23",
         "ok": true,
         "result": {
           "object": {
@@ -948,7 +1270,7 @@
         "id": "<obj:4>"
       },
       "response": {
-        "id": "r18",
+        "id": "r24",
         "ok": true,
         "result": {
           "fences": [],
@@ -994,7 +1316,7 @@
         "type": "note"
       },
       "response": {
-        "id": "r19",
+        "id": "r25",
         "ok": true,
         "result": {
           "created": false,
@@ -1118,7 +1440,7 @@
         "error": {
           "code": "not_found"
         },
-        "id": "r20",
+        "id": "r26",
         "ok": false
       },
       "ignored": {
@@ -1144,7 +1466,7 @@
         "type": "note"
       },
       "response": {
-        "id": "r21",
+        "id": "r27",
         "ok": true,
         "result": {
           "object": {
@@ -1255,7 +1577,7 @@
         "error": {
           "code": "not_found"
         },
-        "id": "r22",
+        "id": "r28",
         "ok": false
       },
       "ignored": {
@@ -1269,7 +1591,7 @@
         "board": "<board>"
       },
       "response": {
-        "id": "r23",
+        "id": "r29",
         "ok": true,
         "result": {
           "objects": []

@@ -19,6 +19,13 @@ extension ApiRouter {
     func stale(_ params: JSONValue) async throws -> JSONValue {
         let board = try board(params)
         let olderThan = try ObjectExpiry.duration(params["olderThan"] ?? .string("7d"))
+        let createdBy: ObjectID?
+        if let value = params["createdBy"] {
+            guard let tile = value.string else { throw Failure("invalid_params", "createdBy must be a string tile ID") }
+            createdBy = tile
+        } else {
+            createdBy = nil
+        }
         let observed = board.objects.filter { $0.value.type == .terminal && board.restartingAgents[$0.key] == nil }
         let identities = observed.compactMapValues { board.terminalSessionIdentity($0.id) }
         let sessions = board.terminalSessionStates
@@ -48,7 +55,7 @@ extension ApiRouter {
                 exited.insert(object.id)
             }
         }
-        return board.staleObjects(olderThan: olderThan, exited: exited)
+        return board.staleObjects(olderThan: olderThan, exited: exited, createdBy: createdBy)
     }
 }
 
@@ -91,13 +98,14 @@ extension Board {
         terminalSessionStates[tile]?.observedRunning = false
     }
 
-    public func staleObjects(now: Date = Date(), olderThan: TimeInterval = 7 * 86400, exited: Set<ObjectID> = []) -> JSONValue {
+    public func staleObjects(now: Date = Date(), olderThan: TimeInterval = 7 * 86400, exited: Set<ObjectID> = [], createdBy: ObjectID? = nil) -> JSONValue {
         let cutoff = now.addingTimeInterval(-olderThan)
         let entries = objects.values.sorted { $0.id < $1.id }.compactMap { object -> JSONValue? in
+            if let createdBy, object.createdBy != .agent(tile: createdBy) { return nil }
             var reasons: [JSONValue] = []
             if case .agent(let tile) = object.createdBy, objects[tile]?.type != .terminal { reasons.append(.string("creator-gone")) }
             if let expires = object.expires, expires.date <= now { reasons.append(.string("expired")) }
-            if object.updatedAt < cutoff { reasons.append(.string("untouched")) }
+            if object.effectiveContentUpdatedAt < cutoff { reasons.append(.string("untouched")) }
             if object.type == .terminal, exited.contains(object.id) { reasons.append(.string("exited")) }
             guard !reasons.isEmpty else { return nil }
             let title = object.props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 }

@@ -703,9 +703,9 @@ class BoardApi:
         params = {}
         return self._call("board.list", params, [])
 
-    def stale(self, *, board: "Id" | None = None, older_than: str | None = None) -> dict[str, Any]:
-        """Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (updatedAt strictly before now minus olderThan), and exited (terminal process confirmed exited). Does not delete objects or change revisions, timestamps, or events."""
-        params = {"board": board, "olderThan": older_than}
+    def stale(self, *, board: "Id" | None = None, older_than: str | None = None, created_by: "Id" | None = None) -> dict[str, Any]:
+        """Read-only cleanup candidates, sorted by id. Reasons are creator-gone (agent creator no longer has a terminal on this board), expired (deadline reached), untouched (content time strictly before now minus olderThan), and exited (terminal process confirmed exited). Content time starts at creation and advances when normal prop writes change a value, including undo and redo. The board file stores optional contentUpdatedAt and contentRev; the timestamp applies only when contentRev matches the object's rev, otherwise updatedAt is used. This preserves legacy answers and safely falls back after an older host edits the object. These fields are not sent in API objects or events. Frame, z, parent, expiry, no-op prop writes and group members changes do not count. Arrow free-point coordinates and movement of bound objects are geometry, not content; endpoint binding changes (object, lines, selector or node), detachment, label, style and other arrow props count. Normal terminal lifecycle, agent and title reports and code-follow path, range and history updates count, so recently active tiles are not untouched. Generated browser urlIntent and bookkeeping-only write paths, including page-title reports, computed diagram graphs and code reanchoring, do not count. updatedAt keeps its existing meaning. Optional createdBy limits every reason to objects created by that agent tile, even if the tile is gone. CLI --mine fills createdBy from EASL_TILE_ID. Does not delete objects or change revisions, timestamps, or events."""
+        params = {"board": board, "olderThan": older_than, "createdBy": created_by}
         return self._call("board.stale", params, ["board"])
 
     def open(self, *, root: str, select: bool | None = None) -> dict[str, Any]:

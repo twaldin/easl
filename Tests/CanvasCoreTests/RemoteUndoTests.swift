@@ -15,7 +15,7 @@ extension BoardMirrorTests {
         try await eventually { host.objects[moved.id]?.frame.x == 300 }
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[moved.id]?.frame == moved.frame)
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id]) }
         #expect(!board.history.canUndo && board.history.canRedo)
         _ = await mirror.undo(redo: true).value
         #expect(host.objects[moved.id]?.frame.x == 300)
@@ -46,7 +46,7 @@ extension BoardMirrorTests {
             watcher.close()
         }
         _ = try board.update(moved.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && host.objects[moved.id]?.frame.x == 300 }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && host.objects[moved.id]?.frame.x == 300 }
         let first = try #require(board.nextUndo).id
         _ = await mirror.undo(redo: false).value
         let redo = mirror.undo(redo: true)
@@ -59,14 +59,14 @@ extension BoardMirrorTests {
         _ = await redo.value
         try await eventually {
             host.objects[moved.id]?.frame.x == 700 && host.objects[moved.id]?.props["markdown"] == "after"
-                && board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id]
+                && shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id])
         }
         #expect(board.history.undoSteps.map(\.id) == [first, second])
         #expect(!board.history.canRedo)
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[moved.id]?.frame.x == 300)
         #expect(host.objects[moved.id]?.props["markdown"] == "before")
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id]) }
     }
 
     @Test func rapidUndoAndRedoStayOrderedBeforeALaterPreview() async throws {
@@ -98,7 +98,7 @@ extension BoardMirrorTests {
         }
         _ = try board.update(first.id, frame: Frame(x: 100, y: 0, w: 280, h: 200))
         _ = try board.update(second.id, frame: Frame(x: 500, y: 0, w: 280, h: 200))
-        try await eventually { board.objects[first.id] == host.objects[first.id] && board.objects[second.id] == host.objects[second.id] }
+        try await eventually { shows(board.objects[first.id], host.objects[first.id]) && shows(board.objects[second.id], host.objects[second.id]) }
         let steps = board.history.undoSteps.map(\.id)
         order.withLock { $0 = [] }
         let undoOne = mirror.undo(redo: false)
@@ -117,8 +117,8 @@ extension BoardMirrorTests {
         try await eventually {
             host.objects[first.id]?.frame.x == 100 && host.objects[second.id]?.frame.x == 500
                 && host.objects[first.id]?.props["markdown"] == "latest"
-                && board.objects[first.id] == host.objects[first.id] && other.objects[first.id] == host.objects[first.id]
-                && board.objects[second.id] == host.objects[second.id] && other.objects[second.id] == host.objects[second.id]
+                && shows(board.objects[first.id], host.objects[first.id]) && shows(other.objects[first.id], host.objects[first.id])
+                && shows(board.objects[second.id], host.objects[second.id]) && shows(other.objects[second.id], host.objects[second.id])
         }
         #expect(order.withLock { $0 } == ["board.undo", "board.undo", "board.redo", "board.redo", "object.update"])
         #expect(board.history.undoSteps.map(\.id) == steps + [latest])
@@ -126,7 +126,7 @@ extension BoardMirrorTests {
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[first.id]?.props["markdown"] == "first")
         #expect(host.objects[first.id]?.frame.x == 100)
-        try await eventually { other.objects[first.id] == host.objects[first.id] }
+        try await eventually { shows(other.objects[first.id], host.objects[first.id]) }
     }
 
     @Test func aDelayedReplayReceiptCannotUndoNewerHostDeletionsOrRecreations() async throws {
@@ -161,13 +161,13 @@ extension BoardMirrorTests {
         try host.delete(existing.id)
         try await eventually {
             board.objects[existing.id] == nil && other.objects[existing.id] == nil
-                && board.objects[canonical] == host.objects[canonical] && other.objects[canonical] == host.objects[canonical]
+                && shows(board.objects[canonical], host.objects[canonical]) && shows(other.objects[canonical], host.objects[canonical])
         }
         pending.withLock { $0 }?()
         _ = await undo.value
         #expect(host.objects[canonical]?.props["markdown"] == "created")
-        #expect(board.objects[canonical] == host.objects[canonical])
-        #expect(other.objects[canonical] == host.objects[canonical])
+        #expect(shows(board.objects[canonical], host.objects[canonical]))
+        #expect(shows(other.objects[canonical], host.objects[canonical]))
         #expect(host.objects[existing.id] == nil && board.objects[existing.id] == nil && other.objects[existing.id] == nil)
     }
 
@@ -182,15 +182,15 @@ extension BoardMirrorTests {
         _ = try board.update(moved.id, frame: Frame(x: 300, y: 40, w: 280, h: 200))
         try await eventually { other.objects[moved.id]?.frame.x == 300 }
         _ = try other.update(moved.id, frame: Frame(x: 900, y: 40, w: 280, h: 200), props: .object(["markdown": "other viewer"]))
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && host.objects[moved.id]?.frame.x == 900 }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && host.objects[moved.id]?.frame.x == 900 }
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[moved.id]?.frame == Frame(x: 900, y: 0, w: 280, h: 200))
         #expect(host.objects[moved.id]?.props["markdown"] == "other viewer")
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id]) }
         _ = await mirror.undo(redo: true).value
         #expect(host.objects[moved.id]?.frame == Frame(x: 900, y: 40, w: 280, h: 200))
         #expect(host.objects[moved.id]?.props["markdown"] == "other viewer")
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id]) }
     }
 
     @Test func aHeldPropsEditStillConflictsWithAnInterveningHostEdit() async throws {
@@ -217,14 +217,14 @@ extension BoardMirrorTests {
             watcher.close()
         }
         _ = try board.update(moved.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && host.objects[moved.id]?.frame.x == 300 }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && host.objects[moved.id]?.frame.x == 300 }
         let undo = mirror.undo(redo: false)
         _ = try board.update(moved.id, props: .object(["markdown": "viewer preview"]))
         try await eventually { pending.withLock { $0 != nil } && other.objects[moved.id]?.props["markdown"] == "host edit" }
         #expect(board.objects[moved.id]?.props["markdown"] == "viewer preview")
         pending.withLock { $0 }?()
         _ = await undo.value
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] && other.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) && shows(other.objects[moved.id], host.objects[moved.id]) }
         #expect(host.objects[moved.id]?.frame.x == 0)
         #expect(host.objects[moved.id]?.props["markdown"] == "host edit")
     }
@@ -240,7 +240,7 @@ extension BoardMirrorTests {
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[edited.id]?.frame.x == 0)
         #expect(host.objects[edited.id]?.props["markdown"] == "agent text")
-        try await eventually { board.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { shows(board.objects[edited.id], host.objects[edited.id]) }
     }
 
     @Test func undoFollowsTheGesturesWritesAndHoldsTheOnesMadeAfterIt() async throws {
@@ -337,7 +337,7 @@ extension BoardMirrorTests {
         #expect(board.tray.isEmpty)
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[doomed.id]?.props == doomed.props && host.objects[doomed.id]?.z == doomed.z)
-        #expect(board.objects[doomed.id] == host.objects[doomed.id])
+        #expect(shows(board.objects[doomed.id], host.objects[doomed.id]))
         #expect(board.tray.map(\.target) == [.object(doomed.id)])
     }
 
@@ -386,7 +386,7 @@ extension BoardMirrorTests {
             watcher.close()
         }
         _ = try view.update(edited.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] && host.objects[edited.id]?.frame.x == 300 }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) && host.objects[edited.id]?.frame.x == 300 }
         let session = NoteEditSession(try view.object(edited.id))
         _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
         try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
@@ -403,7 +403,7 @@ extension BoardMirrorTests {
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[edited.id]?.frame == edited.frame)
         #expect(host.objects[edited.id]?.props["markdown"] == "my unsent text")
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] && other.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) && shows(other.objects[edited.id], host.objects[edited.id]) }
     }
 
     @Test func aRecoveryReplyLostAfterApplyDoesNotBlockOlderUndoOrRedo() async throws {
@@ -422,14 +422,14 @@ extension BoardMirrorTests {
         let (mirror, view) = try await mirror()
         defer { mirror.close() }
         _ = try view.update(edited.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] && host.objects[edited.id]?.frame.x == 300 }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) && host.objects[edited.id]?.frame.x == 300 }
         let move = try #require(view.nextUndo).id
         let session = NoteEditSession(try view.object(edited.id))
         _ = try host.update(edited.id, props: .object(["markdown": "theirs"]))
         try await eventually { view.objects[edited.id]?.props["markdown"] == "theirs" }
         #expect(session.keepTheirs(discarding: "mine", on: view))
         _ = await mirror.undo(redo: false).value
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) }
         let applied = try host.object(edited.id)
         #expect(applied.props["markdown"] == "mine")
         _ = await mirror.undo(redo: false).value
@@ -463,7 +463,7 @@ extension BoardMirrorTests {
         #expect(view.history.undoSteps.map(\.id) == undoIDs)
         #expect(view.history.redoSteps.map(\.id) == redoIDs)
         _ = try host.update(edited.id, props: .object(["markdown": .string(redo ? "mine" : "theirs")]))
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) }
         _ = await mirror.undo(redo: redo).value
         #expect(host.objects[edited.id]?.props["markdown"]?.string == (redo ? "theirs" : "mine"))
     }
@@ -497,7 +497,7 @@ extension BoardMirrorTests {
         let refusal = await mirror.undo(redo: redo).value
         #expect(refusal?.hasPrefix("Couldn't") == true)
         #expect(host.objects[edited.id]?.props["markdown"] == "crossed agent write")
-        try await eventually { view.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { shows(view.objects[edited.id], host.objects[edited.id]) }
         #expect(view.history.undoSteps.map(\.id) == undoIDs)
         #expect(view.history.redoSteps.map(\.id) == redoIDs)
     }
@@ -556,7 +556,7 @@ extension BoardMirrorTests {
         #expect(view.objects[edited.id]?.props["markdown"] == "later gesture")
         pending.withLock { $0 }?()
         _ = await recovery.value
-        try await eventually { host.objects[edited.id]?.props["markdown"] == "later gesture" && view.objects[edited.id] == host.objects[edited.id] }
+        try await eventually { host.objects[edited.id]?.props["markdown"] == "later gesture" && shows(view.objects[edited.id], host.objects[edited.id]) }
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[edited.id]?.props["markdown"] == "mine")
     }
@@ -590,7 +590,7 @@ extension BoardMirrorTests {
             }
             _ = try host.replayViewer(mirror.viewer, step: id, redo: false)
         }
-        try await eventually { view.objects[deleted.id] == host.objects[deleted.id] }
+        try await eventually { shows(view.objects[deleted.id], host.objects[deleted.id]) }
         #expect(view.tray.isEmpty)
         let replay = mirror.undo(redo: false)
         _ = try view.update(moved.id, frame: Frame(x: 700, y: 0, w: 280, h: 200))
@@ -628,7 +628,7 @@ extension BoardMirrorTests {
         defer { mirror.close() }
         _ = try board.update(moved.id, frame: Frame(x: 300, y: 0, w: 280, h: 200))
         try await eventually { host.objects[moved.id]?.frame.x == 300 }
-        try await eventually { board.objects[moved.id] == host.objects[moved.id] }
+        try await eventually { shows(board.objects[moved.id], host.objects[moved.id]) }
         _ = await mirror.undo(redo: false).value
         #expect(host.objects[moved.id]?.frame.x == 300)
         #expect(board.history.canUndo)
