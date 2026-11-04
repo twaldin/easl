@@ -47,6 +47,18 @@ Run the default mode in the queued GUI guest for stall-capture changes and relea
 	python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/stall-ci-evidence --ci-timing-report-only
 ```
 
+The native board-save regression uses the same optimized, testing-enabled build:
+
+```sh
+	python3 Tests/BoardSave/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/board-save-evidence
+```
+
+Its injected `Files` writer delays atomic writes by two seconds. The default run requires no main-thread stretch of 50 ms or more, an edit applied during the write, durable latest-state readback, and a recorded `save.slow250`. A nested modal-loop case flushes two pending boards without relying on main-queue task delivery. A child exits at the real atomic rename and must leave the previous board file byte-exact.
+
+CI passes `--ci-timing-report-only` to report the 50 ms upper bound without enforcing shared-runner scheduling. Off-main writes, write duration, latest-state durability, modal-loop completion, and crash atomicity remain strict. Enforce the upper bound in the queued GUI guest, then separately exercise native typing, scrolling, pending-save quit, and relaunch with the delayed-write hook. The runner's `--baseline` mode uses the synchronous save API; add only the identical internal writer-injection initializer to the baseline before building it.
+
+`CanvasCoreTests --filter BoardSaveTests` covers ordered coalescing, checked-save changes without a revision increment, flush-all, close failures, and conditional-write conflicts after successful and failed writes. `BoardAnchorLoadTests.gitSettlementDuringInFlightSaveWritesRefusedAnchorsOutNext` covers anchor settlement crossing an in-flight save.
+
 The following named tests use isolated child processes while the rest of Core stays parallel:
 
 - `identifyingAMacDoesNotHideProtocolFailures` retains its 200 ms protocol deadline without unrelated executor backlog.

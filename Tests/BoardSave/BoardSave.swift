@@ -49,7 +49,7 @@ private enum BoardSaveRegression {
         let editedDuringWrite = editedAt.map { $0 >= started && $0 < saved } ?? false
         let report: JSONValue = .object([
             "saveMs": .number((saved - started) * 1000),
-            "longestMs": .number(longest),
+            "longestMs": result["longest"]?["ms"] ?? .null,
             "withinLimit": .bool(longest < 50),
             "assertsTiming": .bool(!timingReportOnly),
             "editedDuringWrite": .bool(editedDuringWrite),
@@ -102,8 +102,8 @@ private enum BoardSaveRegression {
         }
         let first = try await store.load(root: directory.appendingPathComponent("one"))
         let second = try await store.load(root: directory.appendingPathComponent("two"))
-        first.create(type: .note, props: .object(["markdown": "first pending board"]))
-        second.create(type: .note, props: .object(["markdown": "second pending board"]))
+        first.create(type: .note, props: .object(["markdown": .string("first pending board")]))
+        second.create(type: .note, props: .object(["markdown": .string("second pending board")]))
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.main.async {
                 let mode = RunLoop.Mode(rawValue: "NSModalPanelRunLoopMode")
@@ -122,8 +122,8 @@ private enum BoardSaveRegression {
                 continuation.resume(with: Result {
                     let one = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: first.id)))
                     let two = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: second.id)))
-                    guard one.objects.first?.props["markdown"] == "first pending board",
-                          two.objects.first?.props["markdown"] == "second pending board" else {
+                    guard one.objects.first?.props["markdown"]?.string == "first pending board",
+                          two.objects.first?.props["markdown"]?.string == "second pending board" else {
                         throw RegressionFailure("modal flush returned before every pending board was durable")
                     }
                 })
