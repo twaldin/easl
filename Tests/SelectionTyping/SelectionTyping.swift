@@ -56,6 +56,7 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "terminal-literal-escape", baseline: "existing behavior control"))
         cases.append(Scenario(name: "note-click-caret", baseline: "feature regression"))
         cases.append(Scenario(name: "note-styled-click-caret", baseline: "feature regression"))
+        cases.append(Scenario(name: "note-wrapped-click-caret", baseline: "feature regression"))
         cases.append(Scenario(name: "html-immediate-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-immediate-field-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-click-go-to", baseline: "feature regression"))
@@ -1019,11 +1020,12 @@ private enum SelectionTyping {
         }
     }
 
-    private static func exerciseNoteCaret(_ f: Fixture, styled: Bool = false) async throws {
+    private static func exerciseNoteCaret(_ f: Fixture, styled: Bool = false, wrapped: Bool = false) async throws {
         let object = try await f.create(.note)
+        let prefix = wrapped ? "Prelude.\n\n" + String(repeating: "Wrapped words ", count: 12) : ""
         let renderedText = styled ? "First paragraph and second text." : "First paragraph."
         if styled {
-            _ = try f.board.update(object.id, props: .object(["markdown": "First **paragraph** and _second_ text.\n"]))
+            _ = try f.board.update(object.id, props: .object(["markdown": .string(prefix + "First **paragraph** and _second_ text.\n")]))
         }
         guard let tile = f.canvas.tiles[object.id]?.content as? NoteTile else { throw Failure("note tile is missing") }
         try await wait("prose did not render") {
@@ -1059,7 +1061,7 @@ private enum SelectionTyping {
         guard let editor = f.window.firstResponder as? NSTextView else { throw Failure("note has no native editor") }
         let entrySelection = editor.selectedRange()
         try await typed("CLICK", in: f.window)
-        let expected = styled ? "First **CLICKparagraph** and _second_ text.\n" : "First CLICKparagraph.\n\nSecond paragraph.\n"
+        let expected = styled ? prefix + "First **CLICKparagraph** and _second_ text.\n" : "First CLICKparagraph.\n\nSecond paragraph.\n"
         try require(editor.string == expected,
             "native click must insert immediately before the clicked word; rendered=\(word.location) entry=\(entrySelection) actual=\(editor.string.debugDescription) expected=\(expected.debugDescription)")
         try await post([key(36, "\r", flags: .command, in: f.window)])
@@ -1348,6 +1350,8 @@ private enum SelectionTyping {
             try await exerciseNoteCaret(f)
         } else if name == "note-styled-click-caret" {
             try await exerciseNoteCaret(f, styled: true)
+        } else if name == "note-wrapped-click-caret" {
+            try await exerciseNoteCaret(f, styled: true, wrapped: true)
         } else if name == "html-immediate-key" {
             try await exerciseImmediateHTMLKey(f)
         } else if name == "html-immediate-field-key" {

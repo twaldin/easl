@@ -692,20 +692,35 @@ final class NoteTile: NSView, TileContent {
         let local = display.convert(point, from: self)
         let origin = display.textContainerOrigin
         let inContainer = NSPoint(x: local.x - origin.x, y: local.y - origin.y)
-        let selections = layout.textSelectionNavigation.textSelections(interactingAt: inContainer,
-            inContainerAt: content.documentRange.location, anchors: [], modifiers: [], selecting: false,
-            bounds: display.bounds.offsetBy(dx: -origin.x, dy: -origin.y))
-        guard let location = selections.first?.textRanges.first?.location else { return 0 }
-        let insertion = min(max(0, content.offset(from: content.documentRange.location, to: location)), storage.length)
+        guard let fragment = layout.textLayoutFragment(for: inContainer),
+              let elementRange = fragment.textElement.elementRange else { return 0 }
+        let inFragment = NSPoint(x: inContainer.x - fragment.layoutFragmentFrame.minX,
+                                 y: inContainer.y - fragment.layoutFragmentFrame.minY)
+        var nearestLine: NSTextLineFragment?
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        for line in fragment.textLineFragments {
+            let bounds = line.typographicBounds
+            let distance = max(0, max(bounds.minY - inFragment.y, inFragment.y - bounds.maxY))
+            if distance < nearestDistance {
+                nearestLine = line
+                nearestDistance = distance
+            }
+            if distance == 0 { break }
+        }
+        guard let line = nearestLine else { return 0 }
+        let inLine = NSPoint(x: inFragment.x - line.typographicBounds.minX,
+                             y: inFragment.y - line.typographicBounds.minY)
+        let elementStart = content.offset(from: content.documentRange.location, to: elementRange.location)
+        let insertion = min(max(0, elementStart + line.characterIndex(for: inLine)), storage.length)
         let index = min(insertion, storage.length - 1)
         let position = storage.attribute(.noteSourcePosition, at: index, effectiveRange: nil) as? NoteSourcePosition
             ?? (insertion > 0 ? storage.attribute(.noteSourcePosition, at: min(insertion - 1, storage.length - 1), effectiveRange: nil) as? NoteSourcePosition : nil)
         if let position { return min(max(0, position.sourceOffset(at: insertion)), (text as NSString).length) }
-        guard let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
-              offset < storage.length, let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
+        guard let offset = offset(of: fragment.rangeInElement.location),
+              offset < storage.length, let markdownLine = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
             return 0
         }
-        return sourceOffset(ofLine: line, in: text)
+        return sourceOffset(ofLine: markdownLine, in: text)
     }
 
     private func sourceOffset(ofLine line: Int, in text: String) -> Int {

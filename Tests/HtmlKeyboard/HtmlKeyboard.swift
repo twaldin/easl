@@ -635,16 +635,19 @@ private enum HtmlKeyboard {
             try await click("#field", in: fixture.web, window: fixture.window)
             try await wait(until: { fixture.window.firstResponder === fixture.web },
                            "\(attack.name): a real editable click must retain HTML typing")
-            let before = await js(fixture.web, "document.getElementById('field').value") as? String
+            guard let expected = await js(fixture.web, """
+            (() => { const field = document.getElementById('field');
+              return field.value.slice(0, field.selectionStart) + 'field' + field.value.slice(field.selectionEnd); })()
+            """) as? String else { throw Failure(message: "clicked field has no native selection") }
             typed("field", in: fixture.window)
             var value: String?
             for _ in 0..<200 {
                 value = await js(fixture.web, "document.getElementById('field').value") as? String
-                if value == (before ?? "") + "field" { break }
+                if value == expected { break }
                 try await Task.sleep(for: .milliseconds(25))
             }
-            try require(value == (before ?? "") + "field",
-                        "\(attack.name): the clicked real editable must receive subsequent native text")
+            try require(value == expected,
+                        "\(attack.name): the clicked editable must replace its native selection; actual=\(String(describing: value)) expected=\(expected)")
             try require(fixture.native.string == "", "\(attack.name): editable typing must never reach the previous target")
             check("\(attack.name) keeps native body ownership and normal editable typing")
         }
