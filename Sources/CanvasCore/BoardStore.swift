@@ -209,8 +209,10 @@ public final class BoardStore {
         let saving = Save(board)
         saves[board.id] = saving
         board.onChange = { [weak saving] in
-            saving?.version += 1
-            saving?.onChange?()
+            Metrics.shared.span("save", "save.schedule", detail: saving?.board.id ?? "") {
+                saving?.version += 1
+                saving?.onChange?()
+            }
         }
         return saving
     }

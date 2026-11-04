@@ -230,7 +230,7 @@ private enum BoardSaveRegression {
         let result = metrics.snapshot()
         try JSONEncoder().encode(result).write(to: directory.appendingPathComponent("metrics.json"), options: .atomic)
         let persisted = try BoardStore.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: store.url(for: board.id)))
-        guard persisted.objects.first { $0.id == note.id }?.props["markdown"] == "save completion attribution" else {
+        guard persisted.objects.first(where: { $0.id == note.id })?.props["markdown"] == "save completion attribution" else {
             throw RegressionFailure("completion ran without persisting the note")
         }
         guard (result["longest"]?["ms"]?.number ?? 0) >= 250,
