@@ -246,6 +246,9 @@ public final class NoteRenderer {
             }
             inlines(markup, attributes, into: target)
         case let image as Markdown.Image:
+            if let range = image.range, let source = sourceIndex?.utf16Range(range) {
+                attributes[.noteSourcePosition] = NoteSourcePosition.anchor(source.location)
+            }
             if let source = image.source, let picture = images[source] {
                 let attachment = NoteImageAttachment()
                 attachment.image = picture

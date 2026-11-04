@@ -156,6 +156,18 @@ struct NoteSourcePositionTests {
         #expect(try sourceOffset(rendered, at: words + 2) == raw.range(of: "words").location + 2)
     }
 
+    @Test func imagePlaceholderAndAttachmentMapToTheImageSourceStart() throws {
+        let source = "prefix ![a](https://example.com/a.png)"
+        for loaded in [false, true] {
+            let images = loaded ? ["https://example.com/a.png": NSImage(size: NSSize(width: 1, height: 1))] : [:]
+            let rendered = NoteRenderer(excerpts: [:], images: images, source: source, width: 400)
+                .render(NoteMarkdown.parse(source), placeholder: "")
+            for offset in 7...rendered.length {
+                #expect(try sourceOffset(rendered, at: offset) == 7)
+            }
+        }
+    }
+
     @Test func wrappedTableFragmentsKeepTheirOriginalSourcePositions() throws {
         let source = "| Name | Text |\n|---|---|\n| one | a long cell with **bold** and more words here |\n"
         for width in [CGFloat(180), CGFloat(600)] {
