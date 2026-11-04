@@ -13,7 +13,31 @@ Each version's section is its GitHub release's notes.
 - A fresh native HTML entry survives its matching page load. Native panels restore an unchanged HTML document or a note's editor and selection. A replacement HTML page retains the tile's native key sink until a fresh Return or click, without letting scripts take the keyboard or inheriting the old document's permission.
 - Unhandled keys from typing code, changes or question tiles no longer act on a different programmatically selected tile. First-click note drags select text immediately, rules enter at their Markdown source line, image attachments and unloaded placeholders enter at their source start, and whitespace-only notes or clicks below the last rendered line put the caret at source end.
 - Shift-click inside the text control that already has typing extends its text selection. Shift-click on a different tile still changes board selection and leaves keys on the board.
-- Remote-board connections now report a dead SSH relay's exit status and last stderr line even when a write fails first. A relay still running after the short grace, or a Unix socket, keeps the write error.
+
+## 0.3.6
+
+easl 0.3.6 moves board-save encoding and writes off the main thread, fixing the save path that froze a real board for 19.5 seconds. HTML tiles and notes can now jump to objects on the same board. `board.stale` judges content age rather than layout activity, and browser automation waits for the real document and answers within its timeout.
+
+### easld, the app, and the CLI
+
+Content-age queries need the 0.3.6 host: the app for local boards, or easld for remote boards. Both hosts and the API schema change. The new CLI's `board.stale --mine` uses the new `createdBy` filter. A 0.3.5 host rejects it with `invalid_params: unknown param createdBy`, without naming the version. So does a 0.3.5 app forwarding the call to a remote board, even on easld 0.3.6. Ordinary `board.stale` still works on an old host, using its old age rules.
+
+Same-board links and background saves run in the 0.3.6 app and do not need a new easld. The browser fixes also run in the app. The release check exercised the 0.3.6 app with easld 0.3.5 and the 0.3.5 app with easld 0.3.6 through edits and saves. The 0.3.5 CLI's ordinary `board.stale` and both CLIs' `app.metrics` worked in every pairing. The new creator filter was refused wherever an old app or easld handled it.
+
+### Board format
+
+The board format is unchanged, still format 3. Objects gain optional `contentUpdatedAt` and `contentRev` fields. When those fields are missing or the content revision no longer matches, content-age queries fall back to `updatedAt`.
+
+### Known limits
+
+- A 0.3.5 Mac that saves a board drops the content-age fields, but keeps its objects and props. A 0.3.5 app editing a remote board on easld 0.3.6 keeps the host's content-age metadata.
+- A crash mid-write can leave a complete temporary copy beside the board file. The canonical file stays at its previous complete save.
+- A rare untagged main-thread turn of about 200 to 250 ms was seen during deliberately slowed saves. Its cause remains unproven; the release check did not meet its 50 ms responsiveness gate.
+- CI's native tests run on macOS 27. The runtime release check ran on macOS 26.6.2.
+
+### Fixed
+
+- A dead remote relay's own error, such as ssh's, is reported instead of `write failed: Broken pipe` (#232). The relay's exit status and last stderr line survive a write failing first. When a write to a relay that is still running fails, easl reports the connection lost up to 300 ms later, after waiting for the relay's own reason. A still-running relay after that grace, or a Unix socket, keeps the write error.
 - Board saves now encode and atomically write off the main thread, so a slow disk write does not freeze editing. Close and quit wait for the latest queued board state. Metrics count saves taking at least 250 ms even when the UI stays responsive.
 - `board.stale` now measures content age, so moving or resizing a tile, refitting a group, or changing group membership cannot hide old content. Both hosts persist optional `contentUpdatedAt` and `contentRev` fields without changing board format 3. Older objects, and objects edited by an older host, safely fall back to `updatedAt`.
 - Browser automation waits now answer within their timeout across document replacement. Other page-JavaScript commands now return `timeout` after 30 seconds, plus 100 ms for result delivery. Eval, actions, and snapshot keep their callbacks across commits, so a cold page's first command is not falsely cancelled. Commands are never replayed.
