@@ -53,6 +53,7 @@ final class NoteTile: NSView, TileContent {
     private var diagramGeneration = 0
 
     private var session: NoteEditSession?
+    private var selectionAnchor: Int?
     var isEditing: Bool { session != nil }
 
     init(object: CanvasObject, board: Board, files: HostFiles? = nil) {
@@ -541,12 +542,30 @@ final class NoteTile: NSView, TileContent {
     }
 
     override func mouseDown(with event: NSEvent) {
+        selectionAnchor = nil
         let point = convert(event.locationInWindow, from: nil)
         if let link = link(at: point) {
             open(link, defaultBrowser: event.modifierFlags.contains(.option))
         } else if !event.modifierFlags.contains(.shift) {
             beginEditing(at: point)
+            if isEditing { selectionAnchor = editor.selectedRange().location }
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let anchor = selectionAnchor, isEditing else { return }
+        editor.autoscroll(with: event)
+        let point = editor.convert(event.locationInWindow, from: nil)
+        let insertion = editor.characterIndexForInsertion(at: point)
+        let range = NSRange(location: min(anchor, insertion), length: abs(insertion - anchor))
+        editor.setSelectedRange(range, affinity: insertion < anchor ? .upstream : .downstream, stillSelecting: true)
+        editor.scrollRangeToVisible(NSRange(location: insertion, length: 0))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard selectionAnchor != nil else { return }
+        selectionAnchor = nil
+        editor.setSelectedRange(editor.selectedRange(), affinity: editor.selectionAffinity, stillSelecting: false)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -682,11 +701,18 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func caretOffset(at point: NSPoint, in text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
         guard let storage = display.textStorage, storage.length > 0,
               let layout = display.textLayoutManager, let content = layout.textContentManager else { return 0 }
         let local = display.convert(point, from: self)
         let origin = display.textContainerOrigin
         let inContainer = NSPoint(x: local.x - origin.x, y: local.y - origin.y)
+        if let lastLocation = content.location(content.documentRange.location, offsetBy: storage.length - 1),
+           let lastFragment = layout.textLayoutFragment(for: lastLocation),
+           let lastLine = lastFragment.textLineFragments.last,
+           inContainer.y > lastFragment.layoutFragmentFrame.minY + lastLine.typographicBounds.maxY {
+            return (text as NSString).length
+        }
         guard let fragment = layout.textLayoutFragment(for: inContainer),
               let elementRange = fragment.textElement?.elementRange else { return 0 }
         let inFragment = NSPoint(x: inContainer.x - fragment.layoutFragmentFrame.minX,
@@ -760,6 +786,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func finishEditing(returningFocus: Bool) {
+        selectionAnchor = nil
         session = nil
         hideBanner()
         let hadFocus = window?.firstResponder === editor

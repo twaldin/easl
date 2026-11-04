@@ -869,8 +869,11 @@ final class HtmlTile: NSView, TileContent {
     /// A key the page didn't use can come up the responder chain to the tile; it must not act on
     /// the canvas (a tool's letter, Delete, Return, Esc) while the page has the keyboard.
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty {
+        guard event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return }
+        if event.keyCode == 53 {
             leaveKeyboard()
+        } else if window?.firstResponder === self, KeyboardFocus.entersSelection(keyCode: event.keyCode) {
+            _ = enterKeyboard()
         }
     }
 

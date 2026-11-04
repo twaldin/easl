@@ -74,10 +74,10 @@ final class CanvasDocumentView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
 
     override func keyDown(with event: NSEvent) {
+        guard window?.firstResponder === self else { return super.keyDown(with: event) }
         guard canvas?.remote?.mirror.availability != .closed else { return }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let plain = modifiers.isEmpty
-        // Return hands the keyboard to the one selected tile (Esc in it hands it back).
         if plain, KeyboardFocus.entersSelection(keyCode: event.keyCode), canvas?.enterSelection() == true { return }
         if event.keyCode == 48, plain || modifiers == .shift {
             if canvas?.onTab?(modifiers == .shift) != true { canvas?.cycleSelection(backward: modifiers == .shift) }
@@ -96,9 +96,18 @@ final class CanvasDocumentView: NSView {
     }
 
     override func cancelOperation(_ sender: Any?) { canvas?.escape() }
-    override func deleteBackward(_ sender: Any?) { canvas?.deleteSelection() }
-    override func deleteForward(_ sender: Any?) { canvas?.deleteSelection() }
-    override func selectAll(_ sender: Any?) { canvas?.selectAll() }
+    override func deleteBackward(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.deleteSelection()
+    }
+    override func deleteForward(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.deleteSelection()
+    }
+    override func selectAll(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.selectAll()
+    }
 }
 
 /// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
@@ -213,6 +222,7 @@ final class CanvasView: NSScrollView {
         var pressed: ObjectID
         var extend: Bool
         var doubleClick: Bool
+        var selectsOnRelease: Bool
         var tileOrigins: [ObjectID: NSPoint]
         var drawn: [ObjectID: NSRect]
         var activatedDragDelta: NSSize?
@@ -615,7 +625,7 @@ final class CanvasView: NSScrollView {
         tile.onDrawingMachine = { [weak self] machine in self?.moveDrawing(of: id, to: machine) }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
-        tile.onMoveBegan = { [weak self] event in self?.beginMove(event, pressing: id) }
+        tile.onMoveBegan = { [weak self] event in self?.beginMove(event, pressing: id, selectsOnRelease: true) }
         tile.onMoveDragged = { [weak self] event in self?.dragMove(event) }
         tile.onMoveEnded = { [weak self] event in self?.endMove(event) }
         tile.onMenu = { [weak self, weak tile] event in
@@ -638,7 +648,7 @@ final class CanvasView: NSScrollView {
     private func addGroup(_ object: CanvasObject) {
         guard groups[object.id] == nil, let view = GroupView(object: object) else { return }
         let id = object.id
-        view.onPress = { [weak self] event in self?.beginMove(event, pressing: id) }
+        view.onPress = { [weak self] event in self?.beginMove(event, pressing: id, selectsOnRelease: true) }
         view.onDrag = { [weak self] event in self?.dragMove(event) }
         view.onRelease = { [weak self] event in self?.endMove(event) }
         view.onMenu = { [weak self] in self?.groupMenu(for: id) }
@@ -691,7 +701,7 @@ final class CanvasView: NSScrollView {
     // MARK: Selection
 
     func select(_ id: ObjectID, extend: Bool) {
-        setSelection(extend ? selection.symmetricDifference([id]) : [id], cause: extend || movesTiles() || groups[id] != nil ? .boardGesture : .user)
+        setSelection(extend ? selection.symmetricDifference([id]) : [id], cause: extend || groups[id] != nil ? .boardGesture : .user)
     }
 
     /// Selects `ids`, less any archived question: it isn't on the canvas, so
@@ -888,14 +898,14 @@ final class CanvasView: NSScrollView {
             if let shape = shapeHitTest?(point) {
                 if event.clickCount >= 2 { return event }
                 monitoredMove = true
-                beginMove(event, pressing: shape)
+                beginMove(event, pressing: shape, selectsOnRelease: !movesTiles())
                 return nil
             }
             var view: NSView? = hit
             while let current = view, !(current is TileFrameView) { view = current.superview }
             if movesTiles(), let tile = view as? TileFrameView, hit.isDescendant(of: tile.content) {
                 monitoredMove = true
-                beginMove(event, pressing: tile.objectID)
+                beginMove(event, pressing: tile.objectID, selectsOnRelease: false)
                 return nil
             }
             return event
@@ -959,7 +969,7 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    private func beginMove(_ event: NSEvent, pressing id: ObjectID) {
+    private func beginMove(_ event: NSEvent, pressing id: ObjectID, selectsOnRelease: Bool) {
         let intended = selection.contains(id) ? selection : [id]
         var origins: [ObjectID: NSPoint] = [:]
         var drawn: [ObjectID: NSRect] = [:]
@@ -970,7 +980,7 @@ final class CanvasView: NSScrollView {
                 drawn[id] = rect
             }
         }
-        move = MoveGesture(start: docPoint(event), pressed: id, extend: event.modifierFlags.contains(.shift), doubleClick: event.clickCount >= 2, tileOrigins: origins, drawn: drawn)
+        move = MoveGesture(start: docPoint(event), pressed: id, extend: event.modifierFlags.contains(.shift), doubleClick: event.clickCount >= 2, selectsOnRelease: selectsOnRelease, tileOrigins: origins, drawn: drawn)
     }
 
     private func dragMove(_ event: NSEvent) {
@@ -992,6 +1002,7 @@ final class CanvasView: NSScrollView {
         guard let gesture = move else { return }
         move = nil
         guard let delta = gesture.activatedDragDelta else {
+            guard gesture.selectsOnRelease else { return }
             if tiles[gesture.pressed] != nil { lastClickedTile = gesture.pressed }
             if gesture.doubleClick, !gesture.extend {
                 if groups[gesture.pressed] != nil { enter(group: gesture.pressed) }
@@ -1301,8 +1312,20 @@ final class CanvasView: NSScrollView {
         while let current = view {
             if let html = current as? HtmlWebView {
                 if html.restoreKeyboard(to: previous ?? html) { return }
-                window.makeFirstResponder(window.initialFirstResponder)
-                return
+            }
+            if let html = current as? HtmlTile, html.window === window, !html.isHiddenOrHasHiddenAncestor,
+               html.takeNativeKeyboard() { return }
+            if let note = current as? NoteTile, note.window === window, !note.isHiddenOrHasHiddenAncestor {
+                let editor = previous as? NSTextView
+                let range = editor?.selectedRange()
+                if note.enterKeyboard() {
+                    if let editor, let range, !editor.isHiddenOrHasHiddenAncestor,
+                       NSMaxRange(range) <= (editor.textStorage?.length ?? 0) {
+                        editor.setSelectedRange(range)
+                        editor.scrollRangeToVisible(range)
+                    }
+                    return
+                }
             }
             if let terminal = current as? TerminalTile, terminal.window === window, !terminal.isHiddenOrHasHiddenAncestor {
                 terminal.focus()

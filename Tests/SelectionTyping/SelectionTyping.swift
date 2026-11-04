@@ -64,7 +64,7 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-loading-entry", baseline: "feature regression"))
         cases.append(Scenario(name: "board-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "html-page-reload-entry", baseline: "feature regression"))
-        cases.append(Scenario(name: "html-panel-replacement", baseline: "existing behavior control"))
+        cases.append(Scenario(name: "html-panel-replacement", baseline: "feature regression"))
         cases.append(Scenario(name: "keyboard-neighbor-note", baseline: "feature regression"))
         cases.append(Scenario(name: "keyboard-tab-note", baseline: "feature regression"))
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
@@ -84,6 +84,15 @@ private enum SelectionTyping {
             cases.append(Scenario(name: name, baseline: "feature regression"))
         }
         cases.append(Scenario(name: "question-confidence-from-note", baseline: "existing behavior control"))
+        for name in ["code-programmatic-delete", "code-programmatic-return", "code-programmatic-tab",
+                     "note-first-drag-forward", "note-first-drag-reverse", "note-blank-body-caret",
+                     "move-body-terminal-double-click"] {
+            cases.append(Scenario(name: name, baseline: "feature regression"))
+        }
+        cases.append(Scenario(name: "note-panel-return", baseline: "existing bug regression"))
+        for name in ["browser-interleaved-undo", "html-interleaved-undo"] {
+            cases.append(Scenario(name: name, baseline: "existing behavior control"))
+        }
         return cases
     }
 
@@ -157,11 +166,11 @@ private enum SelectionTyping {
 
     private static var mouseEventNumber = 0
 
-    private static func mouse(_ type: NSEvent.EventType, _ point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent {
+    private static func mouse(_ type: NSEvent.EventType, _ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) -> NSEvent {
         mouseEventNumber += 1
         return NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-            context: nil, eventNumber: mouseEventNumber, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+            context: nil, eventNumber: mouseEventNumber, clickCount: clickCount, pressure: type == .leftMouseUp ? 0 : 1)!
     }
 
     private static var eventBatch = 0
@@ -193,8 +202,9 @@ private enum SelectionTyping {
         fflush(nil)
     }
 
-    private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) async throws {
-        try await post([mouse(.leftMouseDown, point, flags: flags, in: window), mouse(.leftMouseUp, point, flags: flags, in: window)])
+    private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
+        try await post([mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window),
+            mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)])
     }
 
     private static func typed(_ text: String, in window: NSWindow) async throws {
@@ -586,6 +596,85 @@ private enum SelectionTyping {
         try await wait("board-owned gesture must emit no shell bytes before a subsequent positive terminal control") {
             f.read(terminal.id) == before + Data("guard".utf8)
         }
+    }
+
+    private static func exerciseMoveBodyDoubleClick(_ f: Fixture) async throws {
+        let selected = try await f.create(.note, x: 30, y: 90, width: 340, height: 260)
+        let terminal = try await f.create(.terminal, x: 470, y: 90, width: 370, height: 290)
+        try await enter(terminal, in: f)
+        try await typed("ready", in: f.window)
+        try await wait("Move double-click terminal control must receive native input") {
+            f.read(terminal.id) == Data("ready".utf8)
+        }
+        f.window.makeFirstResponder(f.canvas.document)
+        f.canvas.setSelection([selected.id])
+        f.controller.moveTool(nil)
+        try f.boardOwns([selected.id])
+        let responder = f.window.firstResponder
+        let viewport = f.canvas.viewport
+        let point = try f.point(terminal.id)
+        guard let terminalFrame = f.canvas.tiles[terminal.id]?.frame,
+              let selectedFrame = f.canvas.tiles[selected.id]?.frame else { throw Failure("Move click frames missing") }
+        for count in [1, 2] {
+            try await click(point, clickCount: count, in: f.window)
+            try require(f.canvas.selection == [selected.id] && f.window.firstResponder === responder && f.canvas.focusedTile == nil,
+                "Move-tool body click \(count) must preserve the prior selection and exact board typing owner")
+            try require(f.canvas.viewport.zoom == viewport.zoom && f.canvas.viewport.rect == viewport.rect,
+                "neither click of a Move-tool double-click may zoom or pan the viewport")
+            try require(f.board.objects[terminal.id]?.frame == terminal.frame && f.board.objects[selected.id]?.frame == selected.frame
+                && f.canvas.tiles[terminal.id]?.frame == terminalFrame && f.canvas.tiles[selected.id]?.frame == selectedFrame,
+                "a Move-tool double-click without dragging must preserve saved and displayed tile frames")
+        }
+        try await post([key(9, "v", in: f.window)])
+        try f.boardOwns([selected.id])
+        f.controller.selectTool(nil)
+        try await enter(terminal, in: f)
+        try await typed("guard", in: f.window)
+        try await wait("V after a Move-tool double-click must not reach the terminal before its positive input control") {
+            f.read(terminal.id) == Data("readyguard".utf8)
+        }
+    }
+
+    private static func exerciseCodeProgrammatic(_ action: String, _ f: Fixture) async throws {
+        let code = try await f.create(.code, x: 30, y: 90, width: 380, height: 290)
+        let destination = try await f.create(.note, x: 470, y: 90, width: 370, height: 290)
+        guard let content = f.canvas.tiles[code.id]?.content,
+              let rows = descendants(content).compactMap({ $0 as? CodeRowsView }).first else {
+            throw Failure("code navigation fixture has no native rows")
+        }
+        try await wait("code navigation fixture must load its actual source rows") { (rows.painter?.rows.entryCount ?? 0) >= 80 }
+        let point = try f.checked(rows.convert(NSPoint(x: 180, y: rows.bounds.minY + 15), to: nil),
+            target: rows, label: "programmatic-selection code rows")
+        try await click(point, in: f.window)
+        try require(f.window.firstResponder === rows && f.canvas.focusedTile == code.id,
+            "native code row click must establish the exact typing owner")
+        f.canvas.setSelection([destination.id])
+        try require(f.canvas.selection == [destination.id] && f.window.firstResponder === rows && f.canvas.focusedTile == code.id,
+            "programmatic destination selection must preserve native code-row typing")
+        switch action {
+        case "delete":
+            for (code, text) in [(UInt16(51), "\u{7f}"), (UInt16(117), "\u{f728}")] {
+                try await post([key(code, text, in: f.window)])
+                try require(f.board.objects[destination.id] != nil && f.canvas.selection == [destination.id]
+                    && f.window.firstResponder === rows && f.canvas.focusedTile != destination.id,
+                    "native backward and forward Delete forwarded by read-only code rows must not delete the selected destination")
+            }
+        case "return":
+            try await post([key(36, "\r", in: f.window)])
+            try require((f.canvas.tiles[destination.id]?.content as? NoteTile)?.isEditing == false
+                && f.window.firstResponder === rows && f.canvas.selection == [destination.id],
+                "Return unused by code rows must not enter the programmatically selected note")
+        case "tab":
+            try await post([key(48, "\t", in: f.window)])
+            try require(f.canvas.selection == [destination.id] && f.window.firstResponder === rows,
+                "Tab unused by code rows must not cycle the board selection or steal typing")
+        default: throw Failure("unknown code forwarding action")
+        }
+        let before = rows.bounds.minY
+        try await post([key(125, "\u{f701}", in: f.window)])
+        try require(rows.bounds.minY > before && f.window.firstResponder === rows && f.canvas.focusedTile == code.id
+            && f.canvas.selection == [destination.id] && f.board.objects[destination.id] != nil,
+            "subsequent native Down must visibly scroll the original code rows without acting on the destination")
     }
 
     private static func exerciseShiftBody(_ type: ObjectType, single: Bool, _ f: Fixture) async throws {
@@ -1013,8 +1102,8 @@ private enum SelectionTyping {
         try require(f.read(object.id) == before + Data([0x1b]), "Leave Tile must not send a second Escape byte to the terminal")
     }
 
-    private static func exerciseUndo(_ type: ObjectType, _ f: Fixture) async throws {
-        let object = try await f.create(type)
+    private static func exerciseUndo(_ type: ObjectType, _ f: Fixture, interleaved: Bool = false) async throws {
+        let object = try await f.create(type, x: interleaved ? 470 : 30)
         let moved = Frame(x: object.frame.x + 30, y: object.frame.y + 20, w: object.frame.w, h: object.frame.h)
         _ = try f.board.update(object.id, frame: moved)
         try require(f.board.history.canUndo, "fixture must have a board move that erroneous CmdZ could undo")
@@ -1024,13 +1113,47 @@ private enum SelectionTyping {
         try await wait("single field click must transfer native typing") { f.canvas.focusedTile == object.id }
         try await typed("typed", in: f.window)
         try await wait("single click must let native keys edit page text") { await js(web, "document.getElementById('field').value") as? String == "typed" }
+        var editedNote: CanvasObject?
+        var noteEditor: NSTextView?
+        if interleaved {
+            let note = try await f.create(.note, x: 30, y: 45, width: 370, height: 290)
+            try await enter(note, in: f)
+            guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+                throw Failure("interleaved page Undo must edit an actual native note")
+            }
+            try await post([key(0, "a", flags: .command, in: f.window)])
+            try await typed("Keep this note", in: f.window)
+            try require(editor.string == "Keep this note", "native note typing must prepare a distinct undo history after the page edit")
+            try await post([key(36, "\r", flags: .command, in: f.window)])
+            try await wait("the interleaved note edit must commit before returning to the page") {
+                f.board.objects[note.id]?.props["markdown"]?.string == "Keep this note"
+            }
+            editedNote = note
+            noteEditor = editor
+            try await click(try await f.pagePoint(object.id, selector: "#field"), in: f.window)
+            try await wait("native page reentry must retain its original edit after the note edit") {
+                let value = await js(web, "document.getElementById('field').value") as? String
+                return f.canvas.focusedTile == object.id && value == "typed"
+            }
+        }
         try await post([key(6, "z", flags: .command, in: f.window)])
         try await wait("CmdZ must undo page typing") { await js(web, "document.getElementById('field').value") as? String == "" }
         try require(f.board.objects[object.id]?.frame == moved, "page CmdZ must not undo the board move")
+        if let note = editedNote {
+            try require(f.board.objects[note.id]?.props["markdown"]?.string == "Keep this note" && noteEditor?.string == "Keep this note",
+                "page CmdZ must not undo either the saved note content or its native editor text")
+        }
         try await post([key(6, "z", flags: [.command, .shift], in: f.window)])
         try await wait("Shift-CmdZ must redo page typing") { await js(web, "document.getElementById('field').value") as? String == "typed" }
         try require(f.board.objects[object.id]?.frame == moved && f.canvas.focusedTile == object.id,
             "page redo must preserve board position and typing owner")
+        if let note = editedNote {
+            try require(f.board.objects[note.id]?.props["markdown"]?.string == "Keep this note" && noteEditor?.string == "Keep this note",
+                "page redo must restore only page text and leave the interleaved note unchanged")
+            try await enter(note, in: f)
+            try require((f.window.firstResponder as? NSTextView)?.string == "Keep this note",
+                "reopening the note after page undo and redo must show the original committed note edit")
+        }
     }
 
     private static func exerciseEmptyPageUndo(_ type: ObjectType, _ f: Fixture) async throws {
@@ -1111,6 +1234,102 @@ private enum SelectionTyping {
         try await post([key(36, "\r", flags: .command, in: f.window)])
         try await wait("saved markdown must retain the native click's exact insertion position") {
             f.board.objects[object.id]?.props["markdown"]?.string == expected
+        }
+    }
+
+    private static func exerciseFirstNoteDrag(_ f: Fixture, reversed: Bool) async throws {
+        let note = try await f.create(.note)
+        guard let tile = f.canvas.tiles[note.id]?.content as? NoteTile else { throw Failure("drag note missing") }
+        try await wait("first-drag note must expose rendered prose") {
+            descendants(tile).compactMap { $0 as? NSTextView }.contains {
+                !$0.isEditable && !$0.isHiddenOrHasHiddenAncestor && $0.string.contains("First paragraph.")
+            }
+        }
+        guard let text = descendants(tile).compactMap({ $0 as? NSTextView }).first(where: {
+                  !$0.isEditable && !$0.isHiddenOrHasHiddenAncestor && $0.string.contains("First paragraph.")
+              }), let layout = text.textLayoutManager, let content = layout.textContentManager,
+              let start = content.location(content.documentRange.location, offsetBy: reversed ? 15 : 6),
+              let end = content.location(start, offsetBy: 1), let range = NSTextRange(location: start, end: end) else {
+            throw Failure("first prose drag must have native rendered character geometry")
+        }
+        layout.ensureLayout(for: content.documentRange)
+        var down: NSPoint?
+        layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, rect, _, _ in
+            down = text.convert(NSPoint(x: rect.minX + text.textContainerOrigin.x + min(1, rect.width / 10),
+                y: rect.midY + text.textContainerOrigin.y), to: nil)
+            return false
+        }
+        guard let down else { throw Failure("first prose drag anchor did not lay out") }
+        _ = try f.checked(down, target: tile, label: "first prose drag anchor")
+        f.window.makeFirstResponder(f.canvas.document)
+        f.canvas.setSelection([])
+        try await post([mouse(.leftMouseDown, down, in: f.window)])
+        guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+            throw Failure("the first single prose press must open the native editor before dragging")
+        }
+        try require(editor.selectedRange() == NSRange(location: reversed ? 15 : 6, length: 0),
+            "the initial rendered prose press must map to its exact raw-source caret")
+        let rect = editor.firstRect(forCharacterRange: NSRange(location: reversed ? 6 : 15, length: 1), actualRange: nil)
+        try require(rect.width > 0 && rect.height > 0, "native drag destination must have editor character geometry")
+        let up = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + min(1, rect.width / 10), y: rect.midY))
+        _ = try f.checked(up, target: editor, label: "first prose drag destination")
+        var events: [NSEvent] = []
+        for step in 1...8 {
+            let fraction = CGFloat(step) / 8
+            events.append(mouse(.leftMouseDragged, NSPoint(x: down.x + (up.x - down.x) * fraction,
+                y: down.y + (up.y - down.y) * fraction), in: f.window))
+        }
+        events.append(mouse(.leftMouseUp, up, in: f.window))
+        try await post(events)
+        try require(editor.selectedRange() == NSRange(location: 6, length: 9)
+            && f.canvas.selection == [note.id] && f.canvas.focusedTile == note.id,
+            "the first \(reversed ? "reversed" : "forward") prose drag must select exactly paragraph in the native editor")
+        try await typed("X", in: f.window)
+        let expected = "First X.\n\nSecond paragraph.\n"
+        try require(editor.string == expected, "typing after the first prose drag must replace exactly the dragged source range")
+        try await post([key(36, "\r", flags: .command, in: f.window)])
+        try await wait("the first prose drag replacement must save at the same exact source range") {
+            f.board.objects[note.id]?.props["markdown"]?.string == expected
+        }
+    }
+
+    private static func exerciseBlankNoteCaret(_ f: Fixture) async throws {
+        let note = try await f.create(.note)
+        let source = "Final **paragraph**.\n"
+        _ = try f.board.update(note.id, props: .object(["markdown": .string(source)]))
+        guard let tile = f.canvas.tiles[note.id]?.content as? NoteTile else { throw Failure("blank-body note missing") }
+        try await wait("blank-body note must render its final paragraph") {
+            descendants(tile).compactMap { $0 as? NSTextView }.contains {
+                !$0.isEditable && !$0.isHiddenOrHasHiddenAncestor && $0.string.contains("Final paragraph.")
+            }
+        }
+        guard let text = descendants(tile).compactMap({ $0 as? NSTextView }).first(where: {
+                  !$0.isEditable && !$0.isHiddenOrHasHiddenAncestor && $0.string.contains("Final paragraph.")
+              }), let layout = text.textLayoutManager, let content = layout.textContentManager else {
+            throw Failure("blank-body click needs laid-out native prose")
+        }
+        layout.ensureLayout(for: content.documentRange)
+        var bottom: CGFloat = 0
+        layout.enumerateTextLayoutFragments(from: content.documentRange.location, options: [.ensuresLayout]) { fragment in
+            bottom = max(bottom, fragment.layoutFragmentFrame.maxY)
+            return true
+        }
+        try require(bottom > 0, "blank-body target must be below an actual final text fragment")
+        let point = text.convert(NSPoint(x: text.textContainerOrigin.x + 20, y: text.textContainerOrigin.y + bottom + 35), to: nil)
+        _ = try f.checked(point, target: tile, label: "blank note body below final line")
+        f.window.makeFirstResponder(f.canvas.document)
+        f.canvas.setSelection([])
+        try await click(point, in: f.window)
+        guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+            throw Failure("one blank-body click must open the native note editor")
+        }
+        try require(editor.selectedRange() == NSRange(location: (source as NSString).length, length: 0),
+            "blank body below the final rendered fragment must place the caret at raw-source end, after Markdown and the trailing newline")
+        try await typed("TAIL", in: f.window)
+        try require(editor.string == source + "TAIL", "blank-body typing must append at raw-source end rather than prepend at offset zero")
+        try await post([key(36, "\r", flags: .command, in: f.window)])
+        try await wait("blank-body insertion must save at the exact raw-source end") {
+            f.board.objects[note.id]?.props["markdown"]?.string == source + "TAIL"
         }
     }
 
@@ -1367,16 +1586,45 @@ private enum SelectionTyping {
     }
 
     private static func exercisePanelReturn(_ f: Fixture, replacement: Bool = false) async throws {
-        let html = try await f.create(.html)
+        var terminal: CanvasObject?
+        if replacement {
+            let previous = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+            try await enter(previous, in: f)
+            try await typed("ready", in: f.window)
+            try await wait("replacement-panel previous terminal must demonstrably receive native input") {
+                f.read(previous.id) == Data("ready".utf8)
+            }
+            terminal = previous
+        }
+        let html = try await f.create(.html, x: replacement ? 470 : 30)
         try await click(try await f.pagePoint(html.id, selector: "#field"), in: f.window)
         try await wait("HTML field must own typing before opening Go to") { f.canvas.focusedTile == html.id }
         let responder = f.window.firstResponder
+        if replacement {
+            try await typed("old", in: f.window)
+            let web = try await f.web(html.id)
+            try await wait("the old HTML document must have a real native typing grant before replacement") {
+                await js(web, "document.getElementById('field').value") as? String == "old"
+            }
+        }
         try await post([key(35, "p", flags: .command, in: f.window)])
         try await wait("native Command-P must give the navigator its text field") {
             f.window.firstResponder !== responder && f.window.firstResponder !== f.canvas.document
                 && (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
         }
         try require(!f.window.makeFirstResponder(responder), "page-initiated focus while a panel owns typing must stay denied")
+        let panelResponder = f.window.firstResponder
+        let oldWeb = try await f.web(html.id)
+        _ = await js(oldWeb, "document.getElementById('second').focus(); true")
+        try await post([])
+        try await Task.sleep(for: .milliseconds(100))
+        try require(f.window.firstResponder === panelResponder,
+            "a generic page script-focus request must not steal native typing from the navigator")
+        _ = await js(oldWeb, "document.getElementById('field').focus(); true")
+        try await post([])
+        try await Task.sleep(for: .milliseconds(100))
+        try require(f.window.firstResponder === panelResponder,
+            "restoring the original DOM field by script must still leave native typing with the navigator")
         if replacement {
             _ = try f.board.update(html.id, props: .object(["html": .string(page.replacingOccurrences(
                 of: "Selection typing fixture", with: "Replacement while panel owns typing"))]))
@@ -1384,11 +1632,52 @@ private enum SelectionTyping {
             try await wait("the HTML replacement must load while the panel retains typing") {
                 await js(web, "document.getElementById('plain').textContent") as? String == "Replacement while panel owns typing"
             }
+            _ = await js(web, "document.getElementById('second').focus(); true")
+            try await post([])
+            try await Task.sleep(for: .milliseconds(100))
+            try require(f.window.firstResponder === panelResponder,
+                "replacement-page script focus must remain denied while the panel owns keys")
+            _ = await js(web, "document.getElementById('field').focus(); true")
+            try await post([])
+            try await Task.sleep(for: .milliseconds(100))
+            try require(f.window.firstResponder === panelResponder,
+                "preparing the replacement field must not authorize its native page responder")
         }
         try await post([key(53, "\u{1b}", in: f.window)])
         if replacement {
-            try await wait("panel cancellation must not authorize a replacement document") { f.window.firstResponder === f.canvas.document }
-            try f.boardOwns([html.id])
+            guard let tile = f.canvas.tiles[html.id]?.content as? HtmlTile, let terminal else {
+                throw Failure("replacement panel fixtures must retain their native owners")
+            }
+            try await wait("panel cancellation must restore the native HTML key sink without authorizing the replacement page") {
+                f.window.firstResponder === tile && f.canvas.focusedTile == html.id && f.canvas.selection == [html.id]
+            }
+            try require(!f.window.makeFirstResponder(responder) && f.window.firstResponder === tile,
+                "a stale old-page responder grant must not authorize the replacement document")
+            let web = try await f.web(html.id)
+            try await typed("blocked", in: f.window)
+            let blockedField = await js(web, "document.getElementById('field').value") as? String
+            let blockedKeys = await js(web, "document.getElementById('keys').textContent") as? String
+            try require(blockedField == "" && blockedKeys == "" && f.read(terminal.id) == Data("ready".utf8)
+                && f.window.firstResponder === tile && f.canvas.selection == [html.id],
+                "keys owned by the restored HTML root must reach neither the replacement page nor the previous terminal")
+            try await post([key(36, "\r", in: f.window)])
+            try await wait("a fresh native Return on the restored HTML root must explicitly reenter the current page") {
+                guard let current = f.window.firstResponder as? NSView else { return false }
+                return current !== tile && (current === web || current.isDescendant(of: web)) && f.canvas.focusedTile == html.id
+            }
+            try await typed("returned", in: f.window)
+            try await wait("keys after native root Return must reach only the newly authorized replacement field") {
+                let field = await js(web, "document.getElementById('field').value") as? String
+                let keys = await js(web, "document.getElementById('keys').textContent") as? String
+                return field == "returned" && keys == "returned"
+            }
+            try require(f.canvas.selection == [html.id] && f.canvas.focusedTile == html.id,
+                "explicit Return reentry must keep the HTML selection and typing owner")
+            try await enter(terminal, in: f)
+            try await typed("guard", in: f.window)
+            try await wait("neither blocked root keys nor replacement-page keys may reach the previous terminal") {
+                f.read(terminal.id) == Data("readyguard".utf8)
+            }
         } else {
             try await wait("panel cancellation must restore the unchanged HTML responder") { f.window.firstResponder === responder }
             try await typed("returned", in: f.window)
@@ -1397,6 +1686,36 @@ private enum SelectionTyping {
                 await js(web, "document.getElementById('field').value") as? String == "returned"
             }
             try require(f.canvas.selection == [html.id] && f.canvas.focusedTile == html.id, "restoring a panel must preserve selection and HTML typing")
+        }
+    }
+
+    private static func exerciseNotePanelReturn(_ f: Fixture) async throws {
+        let note = try await f.create(.note)
+        try await enter(note, in: f)
+        guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+            throw Failure("note panel fixture must start in an actual native editor")
+        }
+        try await post([key(0, "a", flags: .command, in: f.window)])
+        try await typed("Before panel", in: f.window)
+        try await post([key(0, "a", flags: .command, in: f.window)])
+        try require(editor.string == "Before panel" && editor.selectedRange() == NSRange(location: 0, length: 12),
+            "native note typing and Select All must establish the text range to restore")
+        try await post([key(35, "p", flags: .command, in: f.window)])
+        try await wait("native Command-P must move typing from the note into the navigator") {
+            f.window.firstResponder !== editor && (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
+        }
+        try await post([key(53, "\u{1b}", in: f.window)])
+        try await wait("cancelling the navigator must resume actual note editing with the exact responder and range") {
+            f.window.firstResponder === editor && editor.isEditable && !editor.isHiddenOrHasHiddenAncestor
+                && editor.string == "Before panel" && editor.selectedRange() == NSRange(location: 0, length: 12)
+                && f.canvas.focusedTile == note.id && f.canvas.selection == [note.id]
+                && (f.canvas.tiles[note.id]?.content as? NoteTile)?.isEditing == true
+        }
+        try await typed("After panel", in: f.window)
+        try require(editor.string == "After panel", "typing after panel cancellation must replace the restored note selection")
+        try await post([key(36, "\r", flags: .command, in: f.window)])
+        try await wait("the resumed native note edit must save the replacement text") {
+            f.board.objects[note.id]?.props["markdown"]?.string == "After panel"
         }
     }
 
@@ -1437,12 +1756,18 @@ private enum SelectionTyping {
             try await exerciseOverview(name, f)
         } else if name == "move-body-image" || name == "move-body-diagram" {
             try await exercisePassiveMove(name == "move-body-image" ? .image : .diagram, f)
+        } else if name == "move-body-terminal-double-click" {
+            try await exerciseMoveBodyDoubleClick(f)
+        } else if name.hasPrefix("code-programmatic-") {
+            try await exerciseCodeProgrammatic(String(name.dropFirst("code-programmatic-".count)), f)
         } else if name == "question-confidence" {
             try await exerciseQuestionConfidence(f)
         } else if name == "question-confidence-from-note" {
             try await exerciseQuestionConfidence(f, fromNote: true)
         } else if name == "browser-empty-undo" || name == "html-empty-undo" {
             try await exerciseEmptyPageUndo(name == "browser-empty-undo" ? .browser : .html, f)
+        } else if name == "browser-interleaved-undo" || name == "html-interleaved-undo" {
+            try await exerciseUndo(name == "browser-interleaved-undo" ? .browser : .html, f, interleaved: true)
         } else if name == "title-drag-unselected" || name == "resize-unselected" {
             try await exerciseGeometryGesture(name, f)
         } else if name == "note-scrollbar" || name == "note-scroll" {
@@ -1463,6 +1788,10 @@ private enum SelectionTyping {
             try await exerciseNoteCaret(f, styled: true)
         } else if name == "note-wrapped-click-caret" {
             try await exerciseNoteCaret(f, styled: true, wrapped: true)
+        } else if name == "note-first-drag-forward" || name == "note-first-drag-reverse" {
+            try await exerciseFirstNoteDrag(f, reversed: name == "note-first-drag-reverse")
+        } else if name == "note-blank-body-caret" {
+            try await exerciseBlankNoteCaret(f)
         } else if name == "html-immediate-key" {
             try await exerciseImmediateHTMLKey(f)
         } else if name == "html-immediate-field-key" {
@@ -1493,6 +1822,8 @@ private enum SelectionTyping {
             try await exerciseHistoryBack(f)
         } else if name == "html-panel-return" {
             try await exercisePanelReturn(f)
+        } else if name == "note-panel-return" {
+            try await exerciseNotePanelReturn(f)
         } else if name == "keyboard-tab-note" {
             let terminal = try await f.create(.terminal, x: 20, y: 110, width: 340, height: 230)
             let note = try await f.create(.note, x: 470, y: 110, width: 340, height: 230)
