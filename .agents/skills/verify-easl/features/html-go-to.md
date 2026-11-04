@@ -7,7 +7,7 @@ HTML tiles and notes select and show an open same-board object like a question c
 - `html-go-to-id` covers `canvasKit.goTo({id})` and `<canvas-object id="…">label</canvas-object>`.
 - `html-go-to-key` covers `canvasKit.goTo({key})` and `<canvas-object key="…">label</canvas-object>`, with lookup identical to `object.find`.
 - `html-go-to-keyboard` covers link role, focus, accessible label, and native Enter.
-- `html-go-to-permit` covers the existing document-bound 1.5-second native permit, single consumption, expiry, reload, detach, and inert synthetic input.
+- `html-go-to-permit` covers the existing document-bound 1.5-second native permit, single consumption, expiry, and refusal of load/timer/synthetic calls without a fresh permit.
 - `html-go-to-refusal` covers missing, closed, other-board, malformed, and unknown-field targets, including `zoom`, without changing the view or selection. Promise rejections appear in the component's title.
 - `html-go-to-framing` covers unchanged question-context behavior for visible, far-away, and oversized targets, and Navigate Back.
 - `html-go-to-remote` covers viewer-local navigation on a remote board without a host navigation RPC.

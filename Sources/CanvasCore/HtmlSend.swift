@@ -1,8 +1,8 @@
 import Foundation
 
-/// A page message may start a turn only after easl itself saw a native click or key in that
-/// tile's current document. A DOM event never arms this. One arm authorizes one send, and only
-/// for 1.5 seconds. Document and view changes clear it.
+/// One native gesture permits one page action within 1.5 seconds. Navigation needs a click or
+/// Enter; sends also accept other keys. Any code in this document can spend the permit.
+/// DOM events never arm it. Document and view changes clear it.
 public struct HtmlGesturePermit: Equatable, Sendable {
     public static let lifetime: TimeInterval = 1.5
     public enum Gesture: Equatable, Sendable { case click, enter, otherKey }
@@ -23,8 +23,7 @@ public struct HtmlGesturePermit: Equatable, Sendable {
 
     public var document: Identity { identity }
 
-    /// The tile navigated, reloaded, or its view left the window. The old arm cannot authorize
-    /// a send from the replacement document.
+    /// A replacement document cannot spend the old document's permit.
     public mutating func reset() {
         identity.generation &+= 1
         armedAt = nil
@@ -38,8 +37,7 @@ public struct HtmlGesturePermit: Equatable, Sendable {
         reset()
     }
 
-    /// A native click or key landed in this document. Replaces an unused arm. Does not authorize
-    /// a second send until something consumes this one.
+    /// A native click or key replaces any unused arm.
     public mutating func arm(at time: TimeInterval, gesture: Gesture = .click) {
         self.gesture = gesture
         armedAt = time
@@ -61,7 +59,7 @@ public struct HtmlGesturePermit: Equatable, Sendable {
     }
 }
 
-/// Frame checks for `canvasKit.send`. The page URL, not the page's word, decides.
+/// Live-document checks shared by page sends and object navigation.
 public enum HtmlSendGate {
     public static func isLivePage(originProtocol: String, originHost: String, isMainFrame: Bool, request: URL?, liveURL: URL?, page: URL) -> Bool {
         guard isMainFrame, originProtocol == HtmlKit.scheme else { return false }

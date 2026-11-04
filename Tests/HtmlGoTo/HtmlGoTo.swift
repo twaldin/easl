@@ -133,6 +133,7 @@ private enum HtmlGoTo {
         print("PASS load, timer, and script-dispatched click cannot navigate")
 
         func arm() throws {
+            canvas.setSelection([])
             window.layoutIfNeeded()
             let point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
             guard let hit = window.contentView?.hitTest(window.contentView!.convert(point, from: nil)),
@@ -157,6 +158,7 @@ private enum HtmlGoTo {
             try back(to: before)
         }
         print("PASS id and key navigate, select, and return through Back")
+        canvas.setSelection([])
 
         guard let bounds = try await web.evaluateJavaScript("""
         (() => { const r = document.querySelector('canvas-object[key]').getBoundingClientRect();
@@ -193,6 +195,7 @@ private enum HtmlGoTo {
             try arm()
             _ = try await refused(web, target: lookup)
         }
+        try arm()
         let extraArgumentRefused = try await web.callAsyncJavaScript("""
         try { await canvasKit.goTo({id}, {zoom:'fit'}); return false; }
         catch { return true; }
@@ -200,6 +203,7 @@ private enum HtmlGoTo {
         try require(extraArgumentRefused == true && canvas.viewport.matches(initial), "the removed zoom argument must reject without navigation")
         print("PASS zoom, ambiguous targets, and empty targets are rejected")
 
+        canvas.setSelection([])
         try require(web.takeKeyboard(), "HTML page must take keyboard for Enter")
         NSApp.sendEvent(key("a", code: 0, in: window))
         _ = try await refused(web, target: ["id": target.id])
@@ -226,6 +230,7 @@ private enum HtmlGoTo {
         }
         guard let noteTile = canvas.tiles[note.id]?.content as? NoteTile, let notePoint = noteLinkPoint(noteTile) else { throw Failure(message: "note link disappeared") }
         let noteBefore = canvas.viewport
+        canvas.setSelection([])
         NSApp.sendEvent(mouse(.leftMouseDown, at: notePoint, in: window))
         NSApp.sendEvent(mouse(.leftMouseUp, at: notePoint, in: window))
         try await wait("note link did not navigate") { canvas.selection == [target.id] && canvas.viewport.rect.rect.intersects(target.frame.rect) }

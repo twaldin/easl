@@ -375,26 +375,24 @@ final class HtmlTile: NSView, TileContent {
     /// Decides a `canvasKit.send` at bridge receipt, before the channel's work queue. A refusal
     /// does not consume the permit. Success is whether this document's permit was spent.
     func beginPageSend(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) -> Bool {
-        if hostBoardClosed || board.isClosed { throw .unavailable("host closed this board") }
-        if isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
-        if webView !== self.webView { throw .malformed("not available while the page renders offscreen") }
-        guard HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
-                                      isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {
-            throw .unavailable("not allowed")
-        }
-        return (webView as? HtmlWebView)?.consumeSendPermit(at: time) == true
+        try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false)
     }
 
     func beginPageGoTo(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
+        guard try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: true) else {
+            throw .unavailable("object.goTo requires a fresh native click or Enter")
+        }
+    }
+
+    private func consumePagePermit(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval, forNavigation: Bool) throws(HtmlError) -> Bool {
         guard !hostBoardClosed, !board.isClosed else { throw .unavailable("host closed this board") }
-        guard webView === self.webView,
-              HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
+        if !forNavigation, isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
+        guard webView === self.webView else { throw .malformed("not available while the page renders offscreen") }
+        guard HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
                                      isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {
             throw .unavailable("not allowed")
         }
-        guard (webView as? HtmlWebView)?.consumeSendPermit(at: time, forNavigation: true) == true else {
-            throw .unavailable("object.goTo requires a fresh native click or Enter")
-        }
+        return (webView as? HtmlWebView)?.consumeSendPermit(at: time, forNavigation: forNavigation) == true
     }
 
     // MARK: Snapshots
