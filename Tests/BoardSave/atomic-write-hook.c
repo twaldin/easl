@@ -1,4 +1,3 @@
-#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +24,7 @@ static int save_rename(const char *from, const char *to) {
         fprintf(stderr, "BoardSaveHook end %llu %s\n", clock_gettime_nsec_np(CLOCK_UPTIME_RAW), to);
         fflush(stderr);
     }
-    int (*original)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
-    return original(from, to);
+    return rename(from, to);
 }
 
 __attribute__((used)) static struct {

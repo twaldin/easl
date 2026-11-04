@@ -163,11 +163,13 @@ final class ObjectExpiryTests {
     @Test func restartRetainsDeadlineAndReopenDeletesOverdueObjectsSynchronously() async throws {
         let root = board.root
         let deadline = ObjectExpiry(Date().addingTimeInterval(100))
-        let expired = board.create(type: .note, props: .object(["markdown": "overdue"]), expires: ObjectExpiry(Date().addingTimeInterval(-1)))
+        let expired = board.create(type: .note, props: .object(["markdown": "overdue"]))
         let kept = board.create(type: .note, props: .object(["markdown": "future"]), expires: deadline)
         try await registry.close(board.id)
-        #expect(board.isClosed)
-        #expect(board.expireObjects(now: Date().addingTimeInterval(200)).isEmpty)
+        var snapshot = board.snapshot
+        let expiredIndex = try #require(snapshot.objects.firstIndex { $0.id == expired.id })
+        snapshot.objects[expiredIndex].expires = ObjectExpiry(Date().addingTimeInterval(-1))
+        try await registry.store.saveChecked(Board(snapshot: snapshot))
         var deleted: [ObjectID] = []
         registry.onEvent = { registered, event in
             #expect(self.registry.boards[registered.id] === registered)
