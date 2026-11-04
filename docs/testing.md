@@ -342,6 +342,7 @@ Run `scripts/dev.sh stop` when the test is done, not at the end of the session: 
 swift build --build-system native -j 2 --product Easl
 python3 Tests/BrowserWait/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 python3 Tests/BrowserColdCommands/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+python3 Tests/BrowserColdResponse/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
 ```
 
 The native regression links the production app and serves a dummy sign-in form on loopback.
@@ -357,7 +358,24 @@ snapshot first create an offscreen page through the normal driven presentation p
 No preparatory browser command runs. The test checks returned values and DOM effects, including
 exactly one click, and records raw monotonic timestamps in `results.json` under `--output`
 (default: the build directory's `browser-cold-commands-evidence`).
-Both runners supply disposable homes and never build the app or use a real site.
+All three runners supply disposable homes and never build the app or use a real site.
+
+The held-response regression withholds the first navigation's HTTP headers until native code
+releases them. Cold click, eval, and snapshot must remain pending, then answer from the real
+document. It checks exactly one click, a 200 ms wait that expires before release, a held action
+that expires without running later, and an eval whose 30-second bound includes admission.
+Raw WebKit document URL and readyState samples distinguish the placeholder from the pending
+native URL.
+
+For the production socket path, launch a scratch dev instance in the queued guest, then run:
+
+```sh
+python3 scripts/test-browser-cold-response.py --api-socket "$EASL_DEV_HOME/easl.sock" \
+  --cmux-socket "$EASL_DEV_HOME/cmux.sock" --output /absolute/unused/cold-response.jsonl
+```
+
+This controller holds the first response for a new offscreen tile, sends exactly one click,
+and checks the actual URL, title, and click count after release. It deletes only its own tile.
 
 ### Mixed drawing and tile stacking
 
