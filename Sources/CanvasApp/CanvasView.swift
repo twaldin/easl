@@ -726,7 +726,7 @@ final class CanvasView: NSScrollView {
                 window?.makeFirstResponder(document)
                 return
             }
-            if focusedTile == id { return }
+            if focusedTile == id, !(tile.content is HtmlTile && window?.firstResponder === tile.content) { return }
             tile.setLive(true)
             tile.zoomedOut = false
             if !tile.content.enterKeyboard() { window?.makeFirstResponder(document) }

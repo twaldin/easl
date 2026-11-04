@@ -22,7 +22,8 @@ final class HtmlTile: NSView, TileContent {
     private(set) var hostBoardClosed = false
     private var building = false
     private var acceptingNativeKeyboard = false
-    private var coldKeyboardEntry = false
+    private var pendingKeyboardEntry = false
+    private var uncommittedNavigation: WKNavigation?
     private var loadFailure: NSTextField?
     private var hostImageFailure: NSTextField?
     private var hostImageFailures: [URL: String] = [:]
@@ -228,9 +229,9 @@ final class HtmlTile: NSView, TileContent {
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
-        let coldEntry = coldKeyboardEntry && window?.firstResponder === self
+        let pendingEntry = pendingKeyboardEntry && window?.firstResponder === self
         loadPage(in: web)
-        coldKeyboardEntry = coldEntry && window?.firstResponder === self
+        pendingKeyboardEntry = pendingEntry && window?.firstResponder === self
     }
 
     private func detach() {
@@ -293,7 +294,7 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func loadPage(in web: WKWebView) {
-        coldKeyboardEntry = false
+        pendingKeyboardEntry = false
         (web as? HtmlWebView)?.resetKeyboardAuthorization()
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         hostImageFailures.removeAll()
@@ -301,7 +302,7 @@ final class HtmlTile: NSView, TileContent {
         hostImageFailure = nil
         loadFailure?.removeFromSuperview()
         loadFailure = nil
-        web.load(URLRequest(url: pageURL))
+        uncommittedNavigation = web.load(URLRequest(url: pageURL))
     }
 
     private func showFailure(_ message: String) {
@@ -454,7 +455,7 @@ final class HtmlTile: NSView, TileContent {
     func setHostBoardClosed(_ closed: Bool) {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
-        if closed { coldKeyboardEntry = false }
+        if closed { pendingKeyboardEntry = false }
         if closed {
             suspendAssetWatch()
             (webView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
@@ -775,7 +776,7 @@ final class HtmlTile: NSView, TileContent {
         let previous = self.object
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
         let pageChanged = ["html", "root", "ref"].contains { object.props[$0] != previous.props[$0] }
-        if networkChanged || pageChanged { coldKeyboardEntry = false }
+        if networkChanged || pageChanged { pendingKeyboardEntry = false }
         self.object = object
         if networkChanged, board.isRemote {
             contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
@@ -832,9 +833,13 @@ final class HtmlTile: NSView, TileContent {
 
     func enterKeyboard() -> Bool {
         guard live, !hostBoardClosed else { return false }
-        if webView?.takeKeyboard() == true { return true }
+        let awaitsCommit = webView == nil || uncommittedNavigation != nil
+        if webView?.takeKeyboard() == true {
+            pendingKeyboardEntry = awaitsCommit
+            return true
+        }
         let accepted = takeNativeKeyboard()
-        coldKeyboardEntry = accepted && webView == nil
+        pendingKeyboardEntry = accepted && awaitsCommit
         return accepted
     }
 
@@ -912,10 +917,21 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        let grantColdEntry = coldKeyboardEntry && window?.firstResponder === self
-        coldKeyboardEntry = false
+        guard webView === self.webView else {
+            (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+            return
+        }
+        let matchesEntry = navigation != nil && navigation === uncommittedNavigation
+        let ownsNativeKeyboard = window.map {
+            $0.firstResponder === self || (webView as? HtmlWebView)?.ownsKeyboard(in: $0) == true
+        } ?? false
+        let grantEntry = matchesEntry && pendingKeyboardEntry && ownsNativeKeyboard
+        if matchesEntry {
+            pendingKeyboardEntry = false
+            uncommittedNavigation = nil
+        }
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
-        if grantColdEntry { _ = (webView as? HtmlWebView)?.takeKeyboard() }
+        if grantEntry { _ = (webView as? HtmlWebView)?.takeKeyboard() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -926,7 +942,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        coldKeyboardEntry = false
+        if webView === self.webView { pendingKeyboardEntry = false }
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
         guard !hostBoardClosed, !board.isClosed else { return }
         if webView === self.webView {

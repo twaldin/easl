@@ -60,6 +60,8 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-immediate-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-immediate-field-key", baseline: "feature regression"))
         cases.append(Scenario(name: "html-click-go-to", baseline: "feature regression"))
+        cases.append(Scenario(name: "html-replacement-title", baseline: "feature regression"))
+        cases.append(Scenario(name: "html-loading-entry", baseline: "feature regression"))
         cases.append(Scenario(name: "board-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "keyboard-neighbor-note", baseline: "feature regression"))
         cases.append(Scenario(name: "keyboard-tab-note", baseline: "feature regression"))
@@ -1155,6 +1157,45 @@ private enum SelectionTyping {
         }
     }
 
+    private static func exerciseHTMLReplacementTitle(_ f: Fixture) async throws {
+        let html = try await f.create(.html)
+        try await click(try await f.pagePoint(html.id, selector: "#field"), in: f.window)
+        try await wait("replacement fixture must start with a native HTML typing owner") { f.canvas.focusedTile == html.id }
+        try await typed("old", in: f.window)
+        _ = try f.board.update(html.id, props: .object(["html": .string(page.replacingOccurrences(
+            of: "Selection typing fixture", with: "Replacement document"))]))
+        let web = try await f.web(html.id)
+        try await wait("replacement document must commit before the new title click") {
+            await js(web, "document.getElementById('plain').textContent") as? String == "Replacement document"
+        }
+        try await click(try f.point(html.id, title: true), in: f.window)
+        try await typed("new", in: f.window)
+        try await wait("a fresh title selection must authorize typing in the replacement document") {
+            await js(web, "document.getElementById('keys').textContent") as? String == "new"
+        }
+        try require(f.canvas.selection == [html.id] && f.canvas.focusedTile == html.id,
+            "replacement title entry must retain the selected HTML typing owner")
+    }
+
+    private static func exerciseHTMLLoadingEntry(_ f: Fixture) async throws {
+        _ = try await f.create(.html, x: 30, y: 90, width: 340, height: 260)
+        let object = f.board.create(type: .html, props: .object(["html": .string(page)]),
+            frame: Frame(x: 470, y: 90, w: 440, h: 320))
+        guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("loading HTML tile missing") }
+        let deadline = ContinuousClock.now + .seconds(12)
+        while tile.webView == nil && ContinuousClock.now < deadline { await Task.yield() }
+        guard let web = tile.webView else { throw Failure("loading HTML never attached") }
+        try require(web.backForwardList.currentItem == nil, "loading entry must occur after attachment but before initial commit")
+        f.canvas.setSelection([object.id])
+        try require(tile.enterKeyboard(), "native entry must acquire an attached loading HTML tile")
+        _ = try await f.web(object.id)
+        try await typed("ready", in: f.window)
+        try await wait("initial commit must preserve a native entry made after attachment") {
+            await js(web, "document.getElementById('keys').textContent") as? String == "ready"
+        }
+        try require(f.canvas.focusedTile == object.id, "the completed loading page must retain typing")
+    }
+
     private static func exerciseBoardUndo(_ f: Fixture) async throws {
         let object = try await f.create(.note)
         let moved = Frame(x: object.frame.x + 30, y: object.frame.y + 20, w: object.frame.w, h: object.frame.h)
@@ -1358,6 +1399,10 @@ private enum SelectionTyping {
             try await exerciseImmediateHTMLKey(f, field: true)
         } else if name == "html-click-go-to" {
             try await exerciseClickedHTMLGoTo(f)
+        } else if name == "html-replacement-title" {
+            try await exerciseHTMLReplacementTitle(f)
+        } else if name == "html-loading-entry" {
+            try await exerciseHTMLLoadingEntry(f)
         } else if name == "board-undo-redo" {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {

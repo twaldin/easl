@@ -693,6 +693,8 @@ private enum HtmlKeyboard {
         typed("pending", in: window)
         try require(previous.string == "prior" && board.revision == revision,
                     "pending HTML keys must not edit the previous responder or the board")
+        let offscreen = HtmlWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        tile.webView(offscreen, didCommit: nil)
         let web = try await page(in: tile)
         try await loaded(web)
         try await wait(until: { window.firstResponder === web }, "the original cold document must finish native entry")
