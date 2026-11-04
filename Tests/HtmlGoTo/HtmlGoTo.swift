@@ -132,12 +132,16 @@ private enum HtmlGoTo {
         _ = try await refused(web, target: ["id": target.id])
         print("PASS load, timer, and script-dispatched click cannot navigate")
 
-        func arm() throws {
+        func arm() async throws {
             canvas.setSelection([])
-            window.layoutIfNeeded()
-            let point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
-            guard let hit = window.contentView?.hitTest(window.contentView!.convert(point, from: nil)),
-                  hit === web || hit.isDescendant(of: web) else { throw Failure(message: "gesture point is not inside the live HTML page") }
+            var point = NSPoint.zero
+            try await wait("gesture point is not inside the live HTML page") {
+                window.layoutIfNeeded()
+                guard !web.isLoading, !web.isHiddenOrHasHiddenAncestor else { return false }
+                point = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
+                guard let content = window.contentView, let hit = content.hitTest(content.convert(point, from: nil)) else { return false }
+                return hit === web || hit.isDescendant(of: web)
+            }
             NSApp.sendEvent(mouse(.leftMouseDown, at: point, in: window))
             NSApp.sendEvent(mouse(.leftMouseUp, at: point, in: window))
         }
@@ -150,7 +154,7 @@ private enum HtmlGoTo {
 
         for lookup in [["id": target.id], ["key": "destination"]] {
             let before = canvas.viewport
-            try arm()
+            try await arm()
             let reply = try await call(web, target: lookup)
             try require(reply["id"] as? String == target.id, "goTo must resolve the requested object")
             try require(canvas.selection == [target.id], "goTo must select the destination")
@@ -167,7 +171,13 @@ private enum HtmlGoTo {
             throw Failure(message: "key component has no native click geometry")
         }
         let scale = web.pageZoom * web.magnification
-        let componentPoint = web.convert(NSPoint(x: CGFloat(x) * scale, y: web.isFlipped ? CGFloat(y) * scale : web.bounds.height - CGFloat(y) * scale), to: nil)
+        var componentPoint = NSPoint.zero
+        try await wait("key component is not inside the live HTML page") {
+            window.layoutIfNeeded()
+            componentPoint = web.convert(NSPoint(x: CGFloat(x) * scale, y: web.isFlipped ? CGFloat(y) * scale : web.bounds.height - CGFloat(y) * scale), to: nil)
+            guard let content = window.contentView, let hit = content.hitTest(content.convert(componentPoint, from: nil)) else { return false }
+            return !web.isHiddenOrHasHiddenAncestor && (hit === web || hit.isDescendant(of: web))
+        }
         NSApp.sendEvent(mouse(.leftMouseDown, at: componentPoint, in: window))
         NSApp.sendEvent(mouse(.leftMouseUp, at: componentPoint, in: window))
         try await wait("native canvas-object key click did not navigate") {
@@ -177,14 +187,14 @@ private enum HtmlGoTo {
         print("PASS native canvas-object key click navigates, selects, and records Back")
 
         _ = try await refused(web, target: ["id": target.id])
-        try arm()
+        try await arm()
         try await Task.sleep(for: .milliseconds(1600))
         _ = try await refused(web, target: ["id": target.id])
         print("PASS permits are one-shot and expire")
 
         for lookup in [["id": "obj_missing"], ["key": "missing"], ["id": foreign.id], ["key": "foreign"]] {
             let before = canvas.viewport
-            try arm()
+            try await arm()
             let error = try await refused(web, target: lookup)
             try require(error.contains("not found") || error.contains("no object") || error.contains("notFound"), "missing or foreign target must report lookup failure: \(error)")
             try require(canvas.viewport.matches(before), "failed lookup must not move the view")
@@ -192,10 +202,10 @@ private enum HtmlGoTo {
         print("PASS missing and other-board targets report errors without navigation")
 
         for lookup in [["id": target.id, "zoom": "fit"], ["id": target.id, "key": "destination"], [:]] {
-            try arm()
+            try await arm()
             _ = try await refused(web, target: lookup)
         }
-        try arm()
+        try await arm()
         let extraArgumentRefused = try await web.callAsyncJavaScript("""
         try { await canvasKit.goTo({id}, {zoom:'fit'}); return false; }
         catch { return true; }
@@ -216,7 +226,7 @@ private enum HtmlGoTo {
         print("PASS only native Enter, not ordinary typing, authorizes keyboard navigation")
 
         _ = try board.update(target.id, frame: Frame(x: 6000, y: 6000, w: 2000, h: 1200))
-        try arm()
+        try await arm()
         _ = try await call(web, target: ["id": target.id])
         try require(canvas.viewport.zoom < initial.zoom && canvas.selection == [target.id], "oversized targets must fit exactly like question context links")
         try back(to: initial)
@@ -238,7 +248,7 @@ private enum HtmlGoTo {
         print("PASS native Markdown key link selects, navigates, and supports Back")
 
         canvas.show(initial)
-        try arm()
+        try await arm()
         board.deactivate()
         let closed = try await refused(web, target: ["id": target.id])
         try require(closed.contains("closed"), "closed board must report closure: \(closed)")
