@@ -563,6 +563,14 @@ final class CanvasView: NSScrollView {
         // A web link a note or HTML tile opened (`Board.openLink`): shown like a terminal's.
         (content as? HtmlTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
         (content as? NoteTile)?.onOpenedLink = { [weak self] opened in self?.showOpenedLink(opened, openedFrom: id) }
+        let goToObject: (ObjectID) -> Void = { [weak self] target in
+            self?.navigating {
+                self?.goToShown(target)
+                return nil
+            }
+        }
+        (content as? HtmlTile)?.onGoTo = goToObject
+        (content as? NoteTile)?.onGoTo = goToObject
         // A node the user opened: the pan that shows what it added (never for an agent's expand).
         (content as? DiagramTile)?.onExpanded = { [weak self] tile, added, clicked in self?.revealExpansion(tile: tile, added: added, clicked: clicked) }
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard

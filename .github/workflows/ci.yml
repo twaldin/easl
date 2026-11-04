@@ -63,6 +63,8 @@ jobs:
         run: python3 Tests/TerminalRekey/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native HTML page send trust regression
         run: python3 Tests/HtmlSend/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native HTML and note object navigation regression
+        run: python3 Tests/HtmlGoTo/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native muted video regression
         run: python3 Tests/VideoPlayback/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native note Mermaid regression

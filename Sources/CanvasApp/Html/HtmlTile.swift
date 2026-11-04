@@ -104,6 +104,7 @@ final class HtmlTile: NSView, TileContent {
     /// A web link the user clicked on the page opened or found this browser tile; the canvas
     /// shows it.
     var onOpenedLink: ((ObjectID) -> Void)?
+    var onGoTo: ((ObjectID) -> Void)?
 
     /// `live: false` builds no web view (a page measured offscreen, `measure`).
     init(object: CanvasObject, board: Board, live: Bool = true, files: HostFiles? = nil) {
@@ -337,6 +338,13 @@ final class HtmlTile: NSView, TileContent {
     /// but never act for the user. `mayStartTurn` is the permit the bridge already consumed.
     func handle(_ message: HtmlMessage, rendering: Bool, priority: HostReadPriority = .interactive, mayStartTurn: Bool = false) async throws -> JSONValue {
         guard !hostBoardClosed, !board.isClosed else { throw HtmlError.unavailable("host closed this board") }
+        if case .goTo(let target) = message {
+            guard !rendering else { throw HtmlError.unavailable("not available while the page renders offscreen") }
+            let id = try target.resolve(on: board, from: object.id)
+            guard let onGoTo else { throw HtmlError.unavailable("navigation is unavailable") }
+            onGoTo(id)
+            return .object(["id": .string(id)])
+        }
         if rendering {
             switch message {
             case .rendered:
@@ -345,7 +353,7 @@ final class HtmlTile: NSView, TileContent {
             case .getState(let key):
                 // The page being rendered or measured is this object's (which may not be on the board yet).
                 return HtmlChannel.state(object.props, key: key)
-            case .openCode, .setState, .send:
+            case .openCode, .setState, .send, .goTo:
                 throw HtmlError.malformed("not available while the page renders offscreen")
             default:
                 break
@@ -375,6 +383,18 @@ final class HtmlTile: NSView, TileContent {
             throw .unavailable("not allowed")
         }
         return (webView as? HtmlWebView)?.consumeSendPermit(at: time) == true
+    }
+
+    func beginPageGoTo(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
+        guard !hostBoardClosed, !board.isClosed else { throw .unavailable("host closed this board") }
+        guard webView === self.webView,
+              HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
+                                     isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {
+            throw .unavailable("not allowed")
+        }
+        guard (webView as? HtmlWebView)?.consumeSendPermit(at: time, forNavigation: true) == true else {
+            throw .unavailable("object.goTo requires a fresh native click or Enter")
+        }
     }
 
     // MARK: Snapshots

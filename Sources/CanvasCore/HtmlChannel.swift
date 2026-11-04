@@ -19,9 +19,16 @@ public enum HtmlChannel {
             // A page's messages are queued on this mirror, whose queue the host's integrations
             // never drain: nothing here can hand one to a terminal on the board's host.
             if case .send = message { throw HtmlError.unavailable("canvasKit.send is unsupported on remote boards") }
-            if files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
+            if files == nil {
+                switch message {
+                case .goTo: break
+                default: throw HtmlError.unavailable("host file reader is unavailable")
+                }
+            }
         }
         switch message {
+        case .goTo(let target):
+            return .object(["id": .string(try target.resolve(on: board, from: tile))])
         case .excerpt(let path, let lines, let symbol):
             if let files {
                 let relative = try HtmlKit.boardRelative(path)

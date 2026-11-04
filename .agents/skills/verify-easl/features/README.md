@@ -23,6 +23,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [Graded questions](graded-questions.md) covers correct and wrong answers with optional confidence.
 - [HTML keyboard ownership](html-keyboard.md) covers Return, editable clicks, Escape, autofocus, and document grants.
 - [HTML page messages](html-send.md) covers native Submit notices, explicit labelled inbox reads and answers, inert load/timer sends, consumed gestures, and flood refusals.
+- [HTML and note object links](html-go-to.md) covers strict same-board targets, native click and Enter permission, question-context framing, Navigate Back, remote viewer-local navigation, and performance comparison.
 
 ## Proof and failure reporting
 

@@ -414,6 +414,13 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
         // Consume before any await. The work queue can sit behind other page work, and a second
         // send must not see the same arm.
         var mayStartTurn = false
+        if body["type"] as? String == "object.goTo" {
+            do {
+                try tile.beginPageGoTo(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+            } catch {
+                return (nil, error.description)
+            }
+        }
         if body["type"] as? String == "send" {
             do {
                 mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
@@ -595,12 +602,12 @@ final class HtmlWebView: WKWebView {
 
     /// False when the page is parked, hidden, or not the live tile. A hidden page can still queue
     /// inert data; it cannot spend a permit.
-    func consumeSendPermit(at time: TimeInterval) -> Bool {
+    func consumeSendPermit(at time: TimeInterval, forNavigation: Bool = false) -> Bool {
         guard acceptsSendGestures, isLiveVisible else {
             revokeSendPermit()
             return false
         }
-        return sendPermit.consume(at: time)
+        return sendPermit.consume(at: time, forNavigation: forNavigation)
     }
 
     private var isLiveVisible: Bool {
@@ -624,7 +631,7 @@ final class HtmlWebView: WKWebView {
         case .keyDown:
             guard !event.isARepeat, let window = event.window,
                   let web = webView(owningKeyboardIn: window), web.acceptsSendGestures, web.isLiveVisible else { return }
-            web.sendPermit.arm(at: event.timestamp)
+            web.sendPermit.arm(at: event.timestamp, gesture: event.keyCode == 36 || event.keyCode == 76 ? .enter : .otherKey)
         default:
             break
         }

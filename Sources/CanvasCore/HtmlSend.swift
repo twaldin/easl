@@ -5,6 +5,7 @@ import Foundation
 /// for 1.5 seconds. Document and view changes clear it.
 public struct HtmlGesturePermit: Equatable, Sendable {
     public static let lifetime: TimeInterval = 1.5
+    public enum Gesture: Equatable, Sendable { case click, enter, otherKey }
 
     public struct Identity: Equatable, Sendable {
         public var generation: UInt64
@@ -14,6 +15,7 @@ public struct HtmlGesturePermit: Equatable, Sendable {
     private var identity: Identity
     private var armedAt: TimeInterval?
     private var armedGeneration: UInt64?
+    private var gesture: Gesture = .click
 
     public init(url: String) {
         identity = Identity(generation: 0, url: url)
@@ -38,14 +40,15 @@ public struct HtmlGesturePermit: Equatable, Sendable {
 
     /// A native click or key landed in this document. Replaces an unused arm. Does not authorize
     /// a second send until something consumes this one.
-    public mutating func arm(at time: TimeInterval) {
+    public mutating func arm(at time: TimeInterval, gesture: Gesture = .click) {
+        self.gesture = gesture
         armedAt = time
         armedGeneration = identity.generation
     }
 
     /// True once, if this document still has an arm no older than `lifetime`. Anything else is
     /// false and leaves no authorization behind.
-    public mutating func consume(at time: TimeInterval) -> Bool {
+    public mutating func consume(at time: TimeInterval, forNavigation: Bool = false) -> Bool {
         guard let armedAt, armedGeneration == identity.generation else {
             self.armedAt = nil
             armedGeneration = nil
@@ -54,7 +57,7 @@ public struct HtmlGesturePermit: Equatable, Sendable {
         let age = time - armedAt
         self.armedAt = nil
         armedGeneration = nil
-        return age >= 0 && age <= Self.lifetime
+        return age >= 0 && age <= Self.lifetime && (!forNavigation || gesture == .click || gesture == .enter)
     }
 }
 

@@ -85,6 +85,11 @@
   const loadState = () => state ? Promise.resolve(state) : post({ type: 'state.get' }).then((reply) => (state = reply.value || {}));
 
   const canvasKit = {
+    goTo(target) {
+      if (!target || typeof target !== 'object' || Array.isArray(target)) return Promise.reject(new Error('goTo target must be an object'));
+      if (Object.prototype.hasOwnProperty.call(target, 'type')) return Promise.reject(new Error('unknown goTo target field: type'));
+      return post({ ...target, type: 'object.goTo' });
+    },
     openCode(path, { line, lines, symbol } = {}) {
       const message = { type: 'code.open', path };
       if (lines || line) message.lines = String(lines || line);
@@ -184,7 +189,7 @@
       if (!this.listening) {
         this.listening = true;
         this.addEventListener('click', (event) => {
-          if (event.target.closest('a, canvas-link')) return;
+          if (event.target.closest('a, canvas-link, canvas-object')) return;
           const path = this.getAttribute('path');
           if (!path) return;
           const resolved = this.excerpt && this.excerpt.start > 0 ? `${this.excerpt.start}-${this.excerpt.end}` : this.getAttribute('lines');
@@ -270,6 +275,28 @@
     }
   }
 
+  class CanvasObject extends HTMLElement {
+    connectedCallback() {
+      if (this.listening) return;
+      this.listening = true;
+      whenParsed(() => {
+        if (!this.textContent.trim()) this.textContent = this.getAttribute('id') || this.getAttribute('key') || '';
+      });
+      this.setAttribute('role', 'link');
+      this.tabIndex = 0;
+      const open = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = {};
+        if (this.hasAttribute('id')) target.id = this.getAttribute('id');
+        if (this.hasAttribute('key')) target.key = this.getAttribute('key');
+        canvasKit.goTo(target).catch((error) => { this.title = error.message; });
+      };
+      this.addEventListener('click', open);
+      this.addEventListener('keydown', (event) => { if (event.key === 'Enter') open(event); });
+    }
+  }
+
   // ---- <canvas-decisions key="…" question="…"><canvas-option value="…" label="…">detail</canvas-option> ----
 
   class CanvasDecisions extends HTMLElement {
@@ -322,6 +349,7 @@
 
   customElements.define('canvas-code', CanvasCode);
   customElements.define('canvas-link', CanvasLink);
+  customElements.define('canvas-object', CanvasObject);
   customElements.define('canvas-decisions', CanvasDecisions);
 
   // ---- Mermaid: loaded only when the page has diagrams (it is large) ----
