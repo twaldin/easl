@@ -27,6 +27,8 @@ public final class UndoHistory {
     static let terminalBookkeeping: Set<String> = ["lifecycle", "agent", "title"]
     /// Props a follow tile's agent keeps current with every report (`Board.follow`).
     static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "lastChanges", "history"]
+    static let browserBookkeeping: Set<String> = ["pageTitle"]
+    static let diagramBookkeeping: Set<String> = ["graph"]
 
     /// The props of `object` nobody sets on purpose: a terminal's lifecycle, session and title;
     /// a browser page's own title (`props.pageTitle`, the app's write-back; `title` is the
@@ -34,9 +36,9 @@ public final class UndoHistory {
     static func bookkeeping(_ object: CanvasObject) -> Set<String> {
         switch object.type {
         case .terminal: terminalBookkeeping
-        case .browser: ["pageTitle"]
+        case .browser: browserBookkeeping
         case .code where object.props["followOf"]?.string != nil: followBookkeeping
-        case .diagram: ["graph"]
+        case .diagram: diagramBookkeeping
         default: []
         }
     }
