@@ -27,7 +27,7 @@ Use the release check's 204-object fixture, re-rooted to a recorded scratch dire
 4. Pan empty canvas through native scroll input. Require changed `view.get` viewport coordinates.
 5. Wait for queued writes to finish. Retain `app.metrics`, the app log, board readback, stall records, and an after capture.
 
-Report stretch causes, not only save durations. A turn of at least 50 ms must name a save span or have independent stack evidence identifying non-save work. An untagged turn alone cannot exclude save work. A run with no such turn proves the journey and counters, not the cause of a previous stall.
+Report stretch causes and their span durations. A save span accounts only for its measured milliseconds, not the whole turn; do not sum nested spans twice. For any turn of at least 50 ms, time outside those spans remains unattributed and needs independent stack evidence before calling it non-save work. An untagged turn alone cannot exclude save work. A run with no such turn proves the journey and counters, not the cause of a previous stall.
 
 ## Idle-cost pair
 
