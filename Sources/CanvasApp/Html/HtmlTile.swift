@@ -922,8 +922,8 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
             return
         }
         let matchesEntry = navigation != nil && navigation === uncommittedNavigation
-        let ownsNativeKeyboard = window.map {
-            $0.firstResponder === self || (webView as? HtmlWebView)?.ownsKeyboard(in: $0) == true
+        let ownsNativeKeyboard = (window?.firstResponder as? NSView).map {
+            $0 === self || $0.isDescendant(of: self)
         } ?? false
         let grantEntry = matchesEntry && pendingKeyboardEntry && ownsNativeKeyboard
         if matchesEntry {

@@ -81,6 +81,7 @@ private enum SelectionTyping {
                      "question-confidence", "browser-empty-undo", "html-empty-undo"] {
             cases.append(Scenario(name: name, baseline: "feature regression"))
         }
+        cases.append(Scenario(name: "question-confidence-from-note", baseline: "existing behavior control"))
         return cases
     }
 
@@ -648,7 +649,7 @@ private enum SelectionTyping {
         }
     }
 
-    private static func exerciseQuestionConfidence(_ f: Fixture) async throws {
+    private static func exerciseQuestionConfidence(_ f: Fixture, fromNote: Bool = false) async throws {
         let terminal = try await f.create(.terminal, x: 30, y: 90, width: 340, height: 260)
         let question = try await f.create(.question, x: 470, y: 90, width: 440, height: 320)
         _ = try f.board.update(question.id, props: .object(["askConfidence": true]))
@@ -664,6 +665,14 @@ private enum SelectionTyping {
             .first(where: { $0.accessibilityRole() == .slider }) else { throw Failure("confidence slider disappeared") }
         try await enter(terminal, in: f)
         let before = f.read(terminal.id)
+        if fromNote {
+            try await enter(question, in: f)
+            try await post([key(48, "\t", in: f.window)])
+            try await wait("confidence control must start with its native note field typing") {
+                (f.window.firstResponder as? NSTextView)?.isEditable == true && f.canvas.focusedTile == question.id
+            }
+            try await typed("Draft", in: f.window)
+        }
         let rect = slider.accessibilityFrame()
         let point = f.window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
         _ = try f.checked(point, target: page, label: "question confidence slider")
@@ -1371,6 +1380,8 @@ private enum SelectionTyping {
             try await exercisePassiveMove(name == "move-body-image" ? .image : .diagram, f)
         } else if name == "question-confidence" {
             try await exerciseQuestionConfidence(f)
+        } else if name == "question-confidence-from-note" {
+            try await exerciseQuestionConfidence(f, fromNote: true)
         } else if name == "browser-empty-undo" || name == "html-empty-undo" {
             try await exerciseEmptyPageUndo(name == "browser-empty-undo" ? .browser : .html, f)
         } else if name == "title-drag-unselected" || name == "resize-unselected" {

@@ -239,6 +239,7 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
             return
         }
         if let value = painter?.confidenceValue(at: point) {
+            window?.makeFirstResponder(self)
             setConfidence(value)
         } else if let hit = painter?.hit(point) {
             perform(hit)
