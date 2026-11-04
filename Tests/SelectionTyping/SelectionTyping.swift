@@ -1736,8 +1736,6 @@ private enum SelectionTyping {
         let html = try await f.create(.html, x: 540)
         let point = try await f.pagePoint(html.id, selector: "#field")
         try await click(try f.point(note.id, title: true), in: f.window)
-        let selection = f.canvas.selection
-        let responder = f.window.firstResponder
         let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
             styleMask: [.titled], backing: .buffered, defer: false)
         sheet.isReleasedWhenClosed = false
@@ -1752,6 +1750,8 @@ private enum SelectionTyping {
         try await wait("native sheet must own its text field before the blocked click") {
             f.window.attachedSheet === sheet && sheet.firstResponder is NSTextView
         }
+        let selection = f.canvas.selection
+        let responder = f.window.firstResponder
         let sheetResponder = sheet.firstResponder
         try await click(point, in: f.window)
         try require(f.canvas.selection == selection && f.window.firstResponder === responder,
