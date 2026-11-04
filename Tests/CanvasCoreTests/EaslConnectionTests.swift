@@ -341,7 +341,8 @@ final class EaslConnectionTests {
         }
     }
 
-    @Test func aRelayThatClosesItsInputFirstReportsItsOwnExit() async throws {
+    @Test(arguments: [true, false])
+    func aRelayWriteFailureReportsItsExitUnlessItStaysRunning(_ exits: Bool) async throws {
         let gate = dir.appendingPathComponent("exit")
         let ready = dir.appendingPathComponent("stdin-closed")
         try #require(mkfifo(gate.path, 0o600) == 0)
@@ -369,10 +370,12 @@ final class EaslConnectionTests {
         // Drain the write and its deferred failure before the relay may exit.
         _ = connection.state
         _ = connection.state
-        try #require(Darwin.write(release, "go\n", 3) == 3)
+        if exits { try #require(Darwin.write(release, "go\n", 3) == 3) }
         #expect(await reach(.offline, connection))
-        #expect(connection.relayStatus == 255)
-        #expect(connection.problem == "sh exited with status 255: ssh: connect to host work port 22: Connection refused")
+        #expect(connection.relayStatus == (exits ? 255 : nil))
+        #expect(connection.problem == (exits
+            ? "sh exited with status 255: ssh: connect to host work port 22: Connection refused"
+            : "write failed: Broken pipe"))
     }
 
     /// ssh closes its stdout before it exits with the remote command's status (nc finding no
