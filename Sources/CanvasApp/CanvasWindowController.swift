@@ -1294,7 +1294,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return textUndoManager?.canRedo == true || canvasUndoApplies(redo: true) && board.history.canRedo
         case #selector(navigateBack(_:)): return focusedPage?.webView?.canGoBack ?? canvas.canNavigateBack
         case #selector(navigateForward(_:)): return focusedPage?.webView?.canGoForward ?? canvas.canNavigateForward
-        case #selector(deleteSelection(_:)), #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
+        case #selector(deleteSelection(_:)):
+            if NSApp.currentEvent?.type == .keyDown, canvas.focusedTile != nil { return false }
+            return !selection.isEmpty
+        case #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
         case #selector(groupSelection(_:)): return selection.count >= 2
         case #selector(ungroupSelection(_:)):
             return board.objects.values.contains { $0.type == .group && (selection.contains($0.id) || GroupSpec($0.props)?.members.contains(where: selection.contains) == true) }
@@ -1392,6 +1395,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     /// Native text and pages own their undo history, even when it is empty.
     private var textUndoManager: UndoManager? {
+        if window?.firstResponder is RemoteBrowserTile { return nil }
         if let text = window?.firstResponder as? NSTextView, text.isEditable { return text.undoManager }
         return pageHasKeyboard ? window?.firstResponder?.undoManager : nil
     }
@@ -1618,8 +1622,11 @@ final class CanvasWindow: NSWindow {
         let clicked = event.type == .leftMouseDown ? canvas(at: event.locationInWindow) : nil
         let selectionTarget = clicked.flatMap { $0.view.selectionClickTarget(event, hit: $0.hit) }
         if let selectionTarget { clicked?.view.prepareSelectionClick(selectionTarget, event: event) }
+        let selectionSerial = clicked?.view.selectionSerial
         super.sendEvent(event)
-        if let selectionTarget { clicked?.view.completeSelectionClick(selectionTarget, event: event) }
+        if let selectionTarget, let selectionSerial {
+            clicked?.view.completeSelectionClick(selectionTarget, event: event, serial: selectionSerial)
+        }
     }
 
     override func resignKey() {

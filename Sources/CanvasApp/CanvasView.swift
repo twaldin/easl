@@ -731,7 +731,7 @@ final class CanvasView: NSScrollView {
                 if !tile.content.enterKeyboard() { window?.makeFirstResponder(document) }
             } else {
                 window?.makeFirstResponder(document)
-                _ = enterSelection()
+                whenSelectionIsLive(id) { content in _ = content.enterKeyboard() }
             }
         }
     }
@@ -771,8 +771,8 @@ final class CanvasView: NSScrollView {
     }
 
     /// Native controls and text selections have already had the click.
-    func completeSelectionClick(_ id: ObjectID, event: NSEvent) {
-        guard !event.modifierFlags.contains(.shift),
+    func completeSelectionClick(_ id: ObjectID, event: NSEvent, serial: UInt64) {
+        guard !event.modifierFlags.contains(.shift), selectionSerial == serial,
               selection == [id], !(tiles[id]?.content is HtmlTile) else { return }
         setSelection([id], cause: .user)
     }
@@ -909,6 +909,7 @@ final class CanvasView: NSScrollView {
                 // Let native hit dispatch place the caret or act on a link before entering.
                 lastClickedTile = tile.objectID
                 let extend = event.modifierFlags.contains(.shift)
+                if extend, focusedTile == tile.objectID { return event }
                 setSelection(extend ? selection.symmetricDifference([tile.objectID]) : [tile.objectID],
                              cause: extend ? .boardGesture : .programmatic)
             } else if let tile = view as? TileFrameView, hit !== tile, !event.modifierFlags.contains(.shift) {
@@ -1281,14 +1282,22 @@ final class CanvasView: NSScrollView {
         } else if let rect = landing(id, padding: Self.jumpPadding / magnification) {
             reveal(rect: rect)
         }
-        // On the next turn: a tile just made live builds its view in the liveness pass.
+        whenSelectionIsLive(id) { content in _ = content.enterKeyboard() }
+        return true
+    }
+
+    private func whenSelectionIsLive(_ id: ObjectID, perform: @escaping (TileContent) -> Void) {
         let serial = selectionSerial
         DispatchQueue.main.async { [weak self, weak responder = window?.firstResponder] in
             guard let self, self.selectionSerial == serial, self.window?.firstResponder === responder,
-                  self.selection == [id], let content = self.tiles[id]?.content else { return }
-            _ = content.enterKeyboard()
+                  self.selection == [id], let tile = self.tiles[id] else { return }
+            if !tile.isLive, let rect = self.docFrame(id) {
+                self.apply(Layout.center(rect, in: self.clearArea, zoom: 1, padding: Self.jumpPadding))
+                self.updateScene()
+            }
+            guard tile.isLive, self.selectionSerial == serial, self.window?.firstResponder === responder else { return }
+            perform(tile.content)
         }
-        return true
     }
 
     /// Esc in a tile that has the keyboard (or Leave Tile, ⌘Esc): the canvas takes it back, the
@@ -1304,14 +1313,18 @@ final class CanvasView: NSScrollView {
     static func returnKeyboard(to previous: NSResponder?, in window: NSWindow) {
         var view = previous as? NSView
         while let current = view {
-            if let terminal = current as? TerminalTile, terminal.window === window { return terminal.focus() }
+            if let terminal = current as? TerminalTile, terminal.window === window, !terminal.isHiddenOrHasHiddenAncestor {
+                terminal.focus()
+                if let focused = window.firstResponder as? NSView,
+                   focused === terminal || focused.isDescendant(of: terminal) { return }
+                window.makeFirstResponder(window.initialFirstResponder)
+                return
+            }
             view = current.superview
         }
-        if let previous = previous as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor {
-            window.makeFirstResponder(previous)
-        } else {
-            window.makeFirstResponder(window.initialFirstResponder)
-        }
+        if let previous = previous as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor,
+           window.makeFirstResponder(previous) { return }
+        window.makeFirstResponder(window.initialFirstResponder)
     }
 
     /// The tile holding keyboard focus (a terminal, a code tile's rows, a page, a note being
@@ -1430,15 +1443,27 @@ final class CanvasView: NSScrollView {
         var props: [String: JSONValue] = ["base": .string(base.prop)]
         if let root { props["root"] = .string(root) }
         let spec = ChangesSpec(.object(props)), boardRoot = board.root
+        let serial = selectionSerial
+        weak var responder = window?.firstResponder
         Task { [weak self] in
             let set = await ChangeSet.load(root: boardRoot, spec: spec, highlight: false)
             guard let self else { return }
-            if let existing = self.board.changesTile(root: root, base: base.prop) { return self.go(to: existing) }
+            let cause: KeyboardFocus.SelectionCause = self.selectionSerial == serial && self.window?.firstResponder === responder ? .user : .programmatic
+            if let existing = self.board.changesTile(root: root, base: base.prop) {
+                if cause == .user { self.go(to: existing) }
+                else {
+                    self.reveal(existing)
+                    self.setSelection([existing])
+                }
+                return
+            }
             let full = Board.defaultSize(.changes)
             let compact = set.files.isEmpty ? ChangesMetrics.fit(set, maxWidth: full.w) : nil
             // The pan that shows the new tile is a place ⌘[ comes back from.
             self.navigating {
-                self.showNew(self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) }))
+                let object = self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) })
+                self.reveal(object.id)
+                self.setSelection([object.id], cause: cause)
                 return nil
             }
         }
@@ -1980,8 +2005,8 @@ final class CanvasView: NSScrollView {
     }
 
     /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width; an
-    /// agent's terminal with its follow tile, `landing`), selected, and given the keyboard (a
-    /// terminal focuses; anything else leaves it with the canvas, so Delete, Esc and ⌘G act on it).
+    /// agent's terminal with its follow tile, `landing`), selected, and given the keyboard
+    /// when its tile handles keys.
     func go(to id: ObjectID) {
         guard let rect = landing(id, padding: Self.fitPadding) else { return }
         navigating {
@@ -2009,12 +2034,13 @@ final class CanvasView: NSScrollView {
     /// tile: a long note shows its width with the heading at the top. One Back entry.
     func go(to id: ObjectID, heading line: Int) {
         let from = viewport
-        navigationDepth += 1
-        go(to: id)
-        navigationDepth -= 1
-        DispatchQueue.main.async { [weak self] in
+        guard let rect = landing(id, padding: Self.fitPadding) else { return }
+        fit(rect, readable: true)
+        setSelection([id])
+        window?.makeFirstResponder(document)
+        whenSelectionIsLive(id) { [weak self] content in
             guard let self else { return }
-            if let note = self.tiles[id]?.content as? NoteTile, let heading = note.reveal(heading: line), let frame = self.docFrame(id) {
+            if let note = content as? NoteTile, let heading = note.reveal(heading: line), let frame = self.docFrame(id) {
                 let top = self.document.convert(heading, from: note).minY
                 self.fit(NSRect(x: frame.minX, y: top, width: frame.width, height: max(1, frame.maxY - top)), readable: true)
             }

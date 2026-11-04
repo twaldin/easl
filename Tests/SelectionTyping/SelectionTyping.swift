@@ -30,7 +30,7 @@ private enum SelectionTyping {
         var cases: [Scenario] = []
         for type in typingTypes + boardTypes {
             cases.append(Scenario(name: "click-\(type.rawValue)", baseline:
-                type == .note || type == .html ? "feature regression" : "existing behavior control"))
+                type == .note || type == .html || boardTypes.contains(type) ? "feature regression" : "existing behavior control"))
         }
         for type in typingTypes {
             cases.append(Scenario(name: "title-\(type.rawValue)", baseline:
@@ -60,6 +60,12 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "keyboard-tab-note", baseline: "feature regression"))
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
+        cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
+        for name in ["shift-note-text", "shift-html-text", "offscreen-go-note", "heading-go-note",
+                     "note-command-backspace", "history-back-note", "html-panel-return"] {
+            cases.append(Scenario(name: name, baseline:
+                name == "html-panel-return" ? "existing bug regression" : "feature regression"))
+        }
         return cases
     }
 
@@ -95,18 +101,21 @@ private enum SelectionTyping {
     </script>
     """
 
-    private static func key(_ code: UInt16, _ text: String, flags: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent {
+    private static func key(_ code: UInt16, _ text: String, flags: NSEvent.ModifierFlags = [], isARepeat: Bool = false, in window: NSWindow) -> NSEvent {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
             context: nil, characters: flags.contains(.shift) ? text.uppercased() : text,
             charactersIgnoringModifiers: flags.contains(.shift) ? text.uppercased() : text,
-            isARepeat: false, keyCode: code)!
+            isARepeat: isARepeat, keyCode: code)!
     }
 
+    private static var mouseEventNumber = 0
+
     private static func mouse(_ type: NSEvent.EventType, _ point: NSPoint, flags: NSEvent.ModifierFlags = [], in window: NSWindow) -> NSEvent {
-        NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
+        mouseEventNumber += 1
+        return NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-            context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+            context: nil, eventNumber: mouseEventNumber, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
     }
 
     private static func post(_ events: [NSEvent]) {
@@ -254,6 +263,7 @@ private enum SelectionTyping {
             if type == .html || type == .browser { _ = try await web(object.id) }
             window.layoutIfNeeded()
             window.displayIfNeeded()
+            try await ready(object.id)
             return object
         }
 
@@ -267,16 +277,51 @@ private enum SelectionTyping {
                 ?? (canvas.tiles[id]?.content as? BrowserTile)?.webView)!
         }
 
+        func diagnostic(_ point: NSPoint? = nil) -> String {
+            let hit = point.flatMap { window.contentView?.hitTest($0) }
+            return "selection=\(canvas.selection) focused=\(String(describing: canvas.focusedTile)) responder=\(String(describing: window.firstResponder)) point=\(String(describing: point)) hit=\(String(describing: hit)) viewport=\(canvas.viewport)"
+        }
+
+        func ready(_ id: ObjectID) async throws {
+            try await wait("target \(id) must have laid-out native geometry; \(diagnostic())") {
+                self.window.layoutIfNeeded()
+                self.window.displayIfNeeded()
+                if let group = self.canvas.groups[id] {
+                    guard group.region.width > 0, group.region.height > 0, group.titleRect.width > 0 else { return false }
+                    let point = group.convert(NSPoint(x: group.titleRect.midX, y: group.titleRect.midY), to: nil)
+                    return self.window.contentView?.hitTest(point) === group
+                }
+                if self.board.objects[id]?.type == .shape {
+                    return self.canvas.docFrame(id).map { $0.width > 0 && $0.height > 0 } ?? false
+                }
+                guard let tile = self.canvas.tiles[id], tile.isLive else { return false }
+                return tile.window === self.window && tile.bounds.width > 0 && tile.content.bounds.height > 0
+            }
+        }
+
+        func checked(_ point: NSPoint, target: NSView, label: String) throws -> NSPoint {
+            let hit = window.contentView?.hitTest(point)
+            print("HIT \(label) frame=\(target.frame) bounds=\(target.bounds) \(diagnostic(point))")
+            try require(hit === target || hit?.isDescendant(of: target) == true,
+                "\(label) must be genuinely hittable before its native mouse event; \(diagnostic(point))")
+            return point
+        }
+
         func point(_ id: ObjectID, title: Bool = false) throws -> NSPoint {
             if let group = canvas.groups[id] {
-                return group.convert(NSPoint(x: group.titleRect.midX, y: group.titleRect.midY), to: nil)
+                try require(group.region.width > 0 && group.region.height > 0 && group.titleRect.width > 0,
+                    "group must be laid out before clicking; \(diagnostic()) region=\(group.region)")
+                return try checked(group.convert(NSPoint(x: group.titleRect.midX, y: group.titleRect.midY), to: nil),
+                    target: group, label: "group \(id)")
             }
             if board.objects[id]?.type == .shape, let rect = canvas.docFrame(id) {
-                return canvas.document.convert(NSPoint(x: rect.minX + 2, y: rect.midY), to: nil)
+                return try checked(canvas.document.convert(NSPoint(x: rect.minX + 2, y: rect.midY), to: nil),
+                    target: canvas.document, label: "shape \(id)")
             }
             guard let tile = canvas.tiles[id], tile.isLive else { throw Failure("click target is not a live tile") }
-            return title ? tile.convert(NSPoint(x: 120, y: TileFrameView.titleHeight / 2), to: nil)
+            let point = title ? tile.convert(NSPoint(x: 120, y: TileFrameView.titleHeight / 2), to: nil)
                 : tile.content.convert(NSPoint(x: min(75, tile.content.bounds.width / 2), y: 55 + tile.content.headerHeight), to: nil)
+            return try checked(point, target: tile, label: "\(id) title=\(title)")
         }
 
         func pagePoint(_ id: ObjectID, selector: String) async throws -> NSPoint {
@@ -284,16 +329,17 @@ private enum SelectionTyping {
             guard let rect = await js(web, "document.querySelector('\(selector)').getBoundingClientRect().toJSON()") as? [String: Double],
                   let x = rect["x"], let y = rect["y"] else { throw Failure("missing page click target \(selector)") }
             let scale = web.pageZoom * web.magnification
-            return web.convert(NSPoint(x: CGFloat(x + 10) * scale,
+            let point = web.convert(NSPoint(x: CGFloat(x + 10) * scale,
                 y: web.isFlipped ? CGFloat(y + 10) * scale : web.bounds.height - CGFloat(y + 10) * scale), to: nil)
+            return try checked(point, target: web, label: "\(id) \(selector)")
         }
 
         func read(_ id: ObjectID) -> Data { receipts[id].flatMap { try? Data(contentsOf: $0) } ?? Data() }
 
         func boardOwns(_ selection: Set<ObjectID>) throws {
-            try require(canvas.selection == selection, "selection must be \(selection), got \(canvas.selection)")
-            try require(window.firstResponder === canvas.document, "board must own keys, got \(String(describing: window.firstResponder))")
-            try require(canvas.focusedTile == nil, "no tile may retain typing during a board-owned gesture")
+            try require(canvas.selection == selection, "selection must be \(selection), got \(canvas.selection); \(diagnostic())")
+            try require(window.firstResponder === canvas.document, "board must own keys; \(diagnostic())")
+            try require(canvas.focusedTile == nil, "no tile may retain typing during a board-owned gesture; \(diagnostic())")
         }
 
         func cleanup() async throws {
@@ -357,6 +403,18 @@ private enum SelectionTyping {
         let object = try await f.create(type)
         f.window.makeFirstResponder(f.canvas.document)
         f.canvas.setSelection([])
+        var previous: CanvasObject?
+        var previousBytes = Data()
+        if boardTypes.contains(type) {
+            let terminal = try await f.create(.terminal, x: 560, y: 430, width: 340, height: 220)
+            try await enter(terminal, in: f)
+            typed("ready", in: f.window)
+            try await wait("board-type control terminal must demonstrably receive native bytes before clicking") {
+                f.read(terminal.id) == Data("ready".utf8)
+            }
+            previous = terminal
+            previousBytes = f.read(terminal.id)
+        }
         if action == "reentry" || action == "cmd-escape" {
             try await enter(object, in: f)
             post([key(53, "\u{1b}", flags: .command, in: f.window)])
@@ -374,9 +432,16 @@ private enum SelectionTyping {
             try await assertInput(object, in: f)
         } else {
             try f.boardOwns([object.id])
+            if let previous {
+                try require(f.read(previous.id) == previousBytes, "target click must not emit bytes into the previous terminal")
+            }
             let revision = f.board.revision
             typed("x", in: f.window)
             try f.boardOwns([object.id])
+            if let previous {
+                try require(f.read(previous.id) == previousBytes,
+                    "clicking \(type.rawValue) must revoke previous terminal typing before subsequent keys")
+            }
             try require(f.board.revision == revision, "unhandled typing on a selected \(type.rawValue) must not mutate the board")
         }
     }
@@ -402,7 +467,7 @@ private enum SelectionTyping {
             }
         case "group-selection":
             let group = f.board.create(type: .group, props: .object(["members": .array([.string(terminal.id), .string(other.id)]), "title": "Group selection"]))
-            f.window.layoutIfNeeded()
+            try await f.ready(group.id)
             click(try f.point(group.id), in: f.window)
             try f.boardOwns([group.id])
         case "move-terminal":
@@ -485,7 +550,7 @@ private enum SelectionTyping {
             try require(f.canvas.selection == [target.id], "programmatic navigation must update the selection ring")
         }
         try require(f.window.firstResponder === responder && f.canvas.focusedTile == owner.id,
-            "\(route) must preserve the user's existing \(ownerType.rawValue) typing owner")
+            "\(route) must preserve the user's exact \(ownerType.rawValue) responder \(String(describing: responder)); \(f.diagnostic())")
         if route == "leave-selected" {
             post([key(53, "\u{1b}", flags: .command, in: f.window)])
             try await wait("Command-Escape must leave typing while preserving the programmatic selection") {
@@ -608,7 +673,7 @@ private enum SelectionTyping {
         let point = try await f.pagePoint(html.id, selector: selector)
         post([mouse(.leftMouseDown, point, in: f.window)])
         try require(f.canvas.selection == [html.id] && f.canvas.focusedTile == html.id,
-            "HTML mouse-down must synchronously move selection and typing away from the terminal")
+            "HTML mouse-down must synchronously move selection and typing away from the terminal; \(f.diagnostic(point)) web=\(web)")
         post([mouse(.leftMouseUp, point, in: f.window), key(0, "x", in: f.window)])
         try await wait("the delayed native page click must finish") {
             await js(web, "window.clickFinished === true && \(field ? "document.activeElement?.id === 'second'" : "true")") as? Bool == true
@@ -667,6 +732,148 @@ private enum SelectionTyping {
         try await wait("native Shift-CmdZ must reach the app's board redo menu route") { f.board.objects[object.id]?.frame == moved }
     }
 
+    private static func exerciseShiftText(_ type: ObjectType, _ f: Fixture) async throws {
+        let object = try await f.create(type)
+        if type == .note {
+            try await enter(object, in: f)
+            guard let editor = f.window.firstResponder as? NSTextView else { throw Failure("note must expose its native editor") }
+            post([key(0, "a", flags: .command, in: f.window)])
+            typed("abcdef", in: f.window)
+            try require(editor.string == "abcdef", "native Select All and typing must prepare note text")
+            let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
+            try require(rect.width > 0 && rect.height > 0, "shift-click character must have native geometry")
+            let point = f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
+            click(point, flags: .shift, in: f.window)
+            try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+                "Shift-click inside the active note must retain its editor and selection; \(f.diagnostic(point))")
+            let range = editor.selectedRange()
+            try require(range.length > 0 && NSMaxRange(range) == 6, "native Shift-click must extend note text selection from the existing caret")
+            let expected = (editor.string as NSString).replacingCharacters(in: range, with: "X")
+            typed("X", in: f.window)
+            try require(editor.string == expected, "typing must replace the Shift-clicked note text range")
+        } else {
+            let web = try await f.web(object.id)
+            click(try await f.pagePoint(object.id, selector: "#field"), in: f.window)
+            typed("abcdef", in: f.window)
+            try await wait("HTML text must be ready before Shift-click") {
+                await js(web, "document.getElementById('field').value") as? String == "abcdef"
+            }
+            let responder = f.window.firstResponder
+            let point = try await f.pagePoint(object.id, selector: "#field")
+            click(point, flags: .shift, in: f.window)
+            try require(f.window.firstResponder === responder && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+                "Shift-click inside active HTML must retain its exact responder and selection; \(f.diagnostic(point))")
+            try await wait("native Shift-click must extend HTML text selection") {
+                await js(web, "(() => { const f = document.getElementById('field'); return f.selectionStart < f.selectionEnd && f.selectionEnd === 6 })()") as? Bool == true
+            }
+            guard let expected = await js(web, "(() => { const f = document.getElementById('field'); return f.value.slice(0, f.selectionStart) + 'X' + f.value.slice(f.selectionEnd) })()") as? String else {
+                throw Failure("HTML native selection must be readable")
+            }
+            typed("X", in: f.window)
+            try await wait("typing must replace the Shift-clicked HTML range") {
+                await js(web, "document.getElementById('field').value") as? String == expected
+            }
+        }
+    }
+
+    private static func exerciseOffscreenGo(_ f: Fixture) async throws {
+        let note = f.board.create(type: .note, props: .object(["markdown": "Offscreen note.\n"]),
+            frame: Frame(x: 5000, y: 5000, w: 1800, h: 2000))
+        try require(f.canvas.tiles[note.id]?.isLive != true, "navigation target must start offscreen, not already live")
+        f.canvas.go(to: note.id)
+        try await wait("offscreen user navigation must hand typing to its note") {
+            f.canvas.focusedTile == note.id && (f.window.firstResponder as? NSTextView)?.isEditable == true
+        }
+        let viewport = f.canvas.viewport
+        try require(viewport.zoom < 0.9 && viewport.rect.x <= note.frame.x
+            && viewport.rect.x + viewport.rect.w >= note.frame.x + note.frame.w,
+            "typing handoff must preserve Go to's fit of the oversized note, not recenter at 100%; \(f.diagnostic())")
+        try await assertInput(note, in: f)
+    }
+
+    private static func exerciseHeadingGo(_ f: Fixture) async throws {
+        let note = try await f.create(.note, height: 600)
+        let prefix = (1...40).map { "Paragraph \($0).\n\n" }.joined()
+        let source = prefix + "## Destination\n\nHeading body.\n\n" + String(repeating: "Trailing paragraph.\n\n", count: 60)
+        _ = try f.board.update(note.id, props: .object(["markdown": .string(source)]))
+        f.canvas.go(to: note.id, heading: 81)
+        try await wait("heading Go to must enter the source heading, not the note end") {
+            guard let editor = f.window.firstResponder as? NSTextView else { return false }
+            return f.canvas.focusedTile == note.id && editor.selectedRange() == NSRange(location: (prefix as NSString).length, length: 0)
+        }
+        guard let editor = f.window.firstResponder as? NSTextView else { throw Failure("heading navigation must open editor") }
+        let rect = editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil)
+        let point = f.window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
+        try require(f.canvas.convert(f.canvas.bounds, to: nil).contains(point), "heading caret must be visible in the navigated viewport; \(f.diagnostic(point))")
+        typed("HERE", in: f.window)
+        try require(editor.string == prefix + "HERE" + String(source.dropFirst(prefix.count)), "typing after heading navigation must insert immediately before its source heading")
+    }
+
+    private static func exerciseCommandBackspace(_ f: Fixture) async throws {
+        let note = try await f.create(.note)
+        click(try f.point(note.id), in: f.window)
+        try await wait("single note click must open an editor before the delete shortcut") {
+            f.canvas.focusedTile == note.id && (f.window.firstResponder as? NSTextView)?.isEditable == true
+        }
+        guard let editor = f.window.firstResponder as? NSTextView else { throw Failure("note editor missing") }
+        post([key(0, "a", flags: .command, in: f.window)])
+        typed("keep", in: f.window)
+        post([key(36, "\r", in: f.window)])
+        typed("remove", in: f.window)
+        try require(editor.string == "keep\nremove", "native text setup must replace the note")
+        post([key(51, "\u{8}", flags: .command, in: f.window)])
+        try require(f.board.objects[note.id] != nil, "Command-Backspace in a note must not delete the tile")
+        try require(editor.string == "keep\n" && f.window.firstResponder === editor,
+            "native Command-Backspace must delete to start of line inside the active editor")
+    }
+
+    private static func exerciseHistoryBack(_ f: Fixture) async throws {
+        let first = try await f.create(.note, x: 20, y: 110, width: 340, height: 230)
+        let second = try await f.create(.note, x: 470, y: 110, width: 340, height: 230)
+        try await enter(first, in: f)
+        post([key(124, "\u{f703}", flags: [.command, .option], in: f.window)])
+        try await wait("native neighbor shortcut must first enter the second note") { f.canvas.focusedTile == second.id }
+        post([key(33, "[", flags: .command, in: f.window)])
+        try await wait("native user Back must return both selection and typing to the first note") {
+            f.canvas.selection == [first.id] && f.canvas.focusedTile == first.id
+        }
+        try await assertInput(first, in: f)
+    }
+
+    private static func exercisePanelReturn(_ f: Fixture) async throws {
+        let html = try await f.create(.html)
+        click(try await f.pagePoint(html.id, selector: "#field"), in: f.window)
+        try await wait("HTML field must own typing before opening Go to") { f.canvas.focusedTile == html.id }
+        let responder = f.window.firstResponder
+        post([key(35, "p", flags: .command, in: f.window)])
+        try await wait("native Command-P must give the navigator its text field") {
+            f.window.firstResponder !== responder && f.window.firstResponder !== f.canvas.document
+                && (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
+        }
+        post([key(53, "\u{1b}", in: f.window)])
+        try await wait("closing Go to after page authorization is revoked must return keys to board, never the window") {
+            f.window.firstResponder === f.canvas.document
+        }
+        try f.boardOwns([html.id])
+    }
+
+
+    private static func exerciseQuestionHeldReturn(_ f: Fixture) async throws {
+        let question = try await f.create(.question)
+        try f.board.answerQuestion(question.id, option: "one", note: nil, confidence: nil)
+        f.canvas.setSelection([question.id], cause: .user)
+        try await wait("a selected answered question must take typing without archiving") {
+            f.canvas.focusedTile == question.id && f.board.objects[question.id]?.isHidden == false
+        }
+        post([key(36, "\r", isARepeat: true, in: f.window)])
+        try require(f.board.objects[question.id]?.isHidden == false,
+                    "Return already held before selecting an answered question must not archive it")
+        post([key(36, "\r", in: f.window)])
+        try await wait("a fresh Return must still archive an answered question") {
+            f.board.objects[question.id]?.isHidden == true
+        }
+    }
+
     private static func run(_ name: String, _ f: Fixture) async throws {
         for action in ["click", "title", "reentry", "cmd-escape"] {
             if name.hasPrefix(action + "-"), let type = ObjectType(rawValue: String(name.dropFirst(action.count + 1))) {
@@ -692,6 +899,20 @@ private enum SelectionTyping {
             try await exerciseClickedHTMLGoTo(f)
         } else if name == "board-undo-redo" {
             try await exerciseBoardUndo(f)
+        } else if name == "question-held-return" {
+            try await exerciseQuestionHeldReturn(f)
+        } else if name == "shift-note-text" || name == "shift-html-text" {
+            try await exerciseShiftText(name == "shift-note-text" ? .note : .html, f)
+        } else if name == "offscreen-go-note" {
+            try await exerciseOffscreenGo(f)
+        } else if name == "heading-go-note" {
+            try await exerciseHeadingGo(f)
+        } else if name == "note-command-backspace" {
+            try await exerciseCommandBackspace(f)
+        } else if name == "history-back-note" {
+            try await exerciseHistoryBack(f)
+        } else if name == "html-panel-return" {
+            try await exercisePanelReturn(f)
         } else if name == "keyboard-tab-note" {
             let terminal = try await f.create(.terminal, x: 20, y: 110, width: 340, height: 230)
             let note = try await f.create(.note, x: 470, y: 110, width: 340, height: 230)
@@ -737,6 +958,12 @@ private enum SelectionTyping {
             try await run(name, f)
         } catch { failure = error }
         if let fixture {
+            if failure != nil {
+                print("FAILURE STATE \(fixture.diagnostic())")
+                for (id, group) in fixture.canvas.groups {
+                    print("GROUP \(id) region=\(group.region) frame=\(group.frame) title=\(group.titleRect)")
+                }
+            }
             do { try await fixture.cleanup() }
             catch {
                 FileHandle.standardError.write(Data("FAIL cleanup: \(error)\n".utf8))

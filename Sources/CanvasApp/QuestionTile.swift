@@ -328,7 +328,9 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         let open = spec.status == .open
         switch event.keyCode {
         case 53: return leave()
-        case 36, 76: return open ? confirm() : archive()
+        case 36, 76:
+            guard !event.isARepeat else { return }
+            return open ? confirm() : archive()
         case 48 where open:
             window?.makeFirstResponder(note)
             return

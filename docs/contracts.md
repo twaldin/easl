@@ -415,7 +415,6 @@ protocol TileContent: NSView {
     func showSnapshot(_ show: Bool)                              // view.snapshot: cover Metal/WebKit content
     func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
     func outline(for target: MentionTarget) -> NSRect?           // hover highlight, in this view's coordinates
-    var takesKeyboardFocus: Bool { get }                         // terminal, browser: true; code, note, HTML: false
     var surfaceLuminance: Double? { get }                        // what default-ink drawings over it contrast with (page background, image, terminal theme); nil: the app's own (default); post .tileSurfaceChanged on change
     var accessibleText: AccessibleTextElement? { get }           // VoiceOver's read-only text area while live: code lines (numbered), a terminal's screen; built only when asked (default nil)
     func update(_ object: CanvasObject)                          // a new revision of the backing object

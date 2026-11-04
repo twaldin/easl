@@ -43,7 +43,7 @@ extension CanvasView {
     private func perform(_ move: NavigationHistory.Move) {
         if let reaim = move.reaim { board.restoreAim(reaim) }
         show(move.viewport)
-        if let selected = move.selection, board.objects[selected] != nil { setSelection([selected]) }
+        if let selected = move.selection, board.objects[selected] != nil { setSelection([selected], cause: .user) }
     }
 
     /// A code tile a link, Go to or ⌘-click found already showing the lines, wherever it is:

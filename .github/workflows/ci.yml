@@ -76,10 +76,13 @@ jobs:
       - name: Install zmx for native keyboard regressions
         env:
           ZMX_VERSION: 0.8.1
-          ZMX_SHA256: 1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef
         run: |
-          test "$(uname -m)" = arm64
-          archive="zmx-${ZMX_VERSION}-macos-aarch64.tar.gz"
+          case "$(uname -m)" in
+            arm64) platform=aarch64; ZMX_SHA256=1d86b1c9fba47fa707a6f0e976b20510b07c1c26d0ed010b9414b2a2c5e6beef ;;
+            x86_64) platform=x86_64; ZMX_SHA256=3208578ad91d8a62077772dc8a1369a92033d9e84169bac673ef8542b6ff9707 ;;
+            *) exit 1 ;;
+          esac
+          archive="zmx-${ZMX_VERSION}-macos-${platform}.tar.gz"
           curl -fL -o "$RUNNER_TEMP/$archive" "https://github.com/neurosnap/zmx/releases/download/v${ZMX_VERSION}/$archive"
           printf '%s  %s\n' "$ZMX_SHA256" "$RUNNER_TEMP/$archive" | shasum -a 256 --check
           mkdir -p "$RUNNER_TEMP/native-zmx"

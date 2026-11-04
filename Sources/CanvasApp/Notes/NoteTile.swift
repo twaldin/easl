@@ -695,6 +695,10 @@ final class NoteTile: NSView, TileContent {
               offset < storage.length, let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
             return (text as NSString).length
         }
+        return sourceOffset(ofLine: line, in: text)
+    }
+
+    private func sourceOffset(ofLine line: Int, in text: String) -> Int {
         var current = 1
         var utf16 = 0
         for scalar in text.utf16 {
@@ -1014,14 +1018,15 @@ final class NoteTile: NSView, TileContent {
         return fragment(where: .noteCodeRow, is: NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)).map(rect(of:))
     }
 
-    /// Go to's heading row: where the heading rendered from markdown `line` is, in this view's
-    /// coordinates, the rendered note scrolled to it first when its text overflows the tile.
-    /// Nil while editing, while it holds no text (not live), or with no such heading.
+    /// Enters the raw editor at the heading's source line and returns its visible caret.
     func reveal(heading line: Int) -> NSRect? {
-        guard !isEditing, let found = fragment(where: .noteMarkdownLine, is: line) else { return nil }
-        if display.frame.height > displayScroll.contentSize.height + 1 { display.scroll(textRow(of: found).origin) }
-        let rect = rect(of: found)
-        return rect.isEmpty ? nil : rect
+        display.isSelectable = false
+        guard enterKeyboard(), isEditing, let window else { return nil }
+        let range = NSRange(location: sourceOffset(ofLine: line, in: editor.string), length: 0)
+        editor.setSelectedRange(range)
+        editor.scrollRangeToVisible(range)
+        let screen = editor.firstRect(forCharacterRange: range, actualRange: nil)
+        return convert(window.convertFromScreen(screen), from: nil)
     }
 
 }

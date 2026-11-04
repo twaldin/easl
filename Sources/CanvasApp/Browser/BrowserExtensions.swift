@@ -729,7 +729,10 @@ final class ExtensionHost: NSObject, WKWebExtensionControllerDelegate {
         let size = Board.defaultSize(.browser)
         let object = canvas.board.create(type: .browser, props: .object(props),
                                          frame: canvas.board.place(width: size.w, height: size.h, near: anchor))
-        if configuration.shouldBeActive { canvas.showNew(object) }
+        if configuration.shouldBeActive {
+            canvas.reveal(object.id)
+            canvas.setSelection([object.id])
+        }
         guard let tile = canvas.tiles[object.id]?.content as? BrowserTile else { return completionHandler(nil, nil) }
         open(tile)
         if configuration.shouldBeActive { activate(tile) }
