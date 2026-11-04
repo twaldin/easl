@@ -1218,6 +1218,10 @@ private extension NSTextView {
 
 /// The raw-markdown editor: ⌘↩ commits, Esc (`onCancel`) and losing focus leave it.
 final class NoteEditor: NSTextView {
+    private lazy var editingUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { editingUndoManager }
+
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?
     var onResign: (() -> Void)?

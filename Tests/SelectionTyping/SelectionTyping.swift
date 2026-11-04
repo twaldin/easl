@@ -91,7 +91,7 @@ private enum SelectionTyping {
         }
         cases.append(Scenario(name: "note-panel-return", baseline: "existing bug regression"))
         for name in ["browser-interleaved-undo", "html-interleaved-undo"] {
-            cases.append(Scenario(name: name, baseline: "existing behavior control"))
+            cases.append(Scenario(name: name, baseline: "existing bug regression"))
         }
         return cases
     }

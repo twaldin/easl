@@ -133,6 +133,8 @@ Keyboard navigation into a note opens its raw Markdown editor immediately, inclu
 
 Delete and Command-A act on text while a terminal, editor, or page owns typing. With the board owning typing, Delete acts on selected objects and Command-A selects the board's objects. Board navigation shortcuts, Command-W, and Command-I keep their window-level priority.
 
+Note editors own their text undo history instead of sharing the window's page history. Editing a note between two visits to a page does not redirect that page's Command-Z into the hidden note.
+
 ### easl and drawing
 
 - Native AppKit scene; tiles and committed drawings are sibling NSViews ordered by `(z, id)`. Each drawing view replays its cached `DrawnItem`; `ShapeLayer` owns geometry, routing, tools, and editing. Groups remain background regions. The drawing overlay holds only gestures, selection handles, and editors.
