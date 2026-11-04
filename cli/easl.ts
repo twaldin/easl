@@ -214,7 +214,7 @@ function parseArgs(args: string[], params?: Schema, method?: string): Record<str
     if (!arg.startsWith("--")) usage();
     if (method === "board.stale" && arg === "--mine") {
       const tile = process.env.EASL_TILE_ID;
-      if (!tile) throw new Error("--mine requires EASL_TILE_ID; use --createdBy <tile id> outside a terminal tile");
+      if (!tile) throw new CanvasError("invalid_params", "--mine requires EASL_TILE_ID; use --createdBy <tile id> outside a terminal tile");
       result.createdBy = tile;
       continue;
     }

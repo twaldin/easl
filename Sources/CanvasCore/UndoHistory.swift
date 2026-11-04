@@ -27,8 +27,6 @@ public final class UndoHistory {
     static let terminalBookkeeping: Set<String> = ["lifecycle", "agent", "title"]
     /// Props a follow tile's agent keeps current with every report (`Board.follow`).
     static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "lastChanges", "history"]
-    static let browserBookkeeping: Set<String> = ["pageTitle"]
-    static let diagramBookkeeping: Set<String> = ["graph"]
 
     /// The props of `object` nobody sets on purpose: a terminal's lifecycle, session and title;
     /// a browser page's own title (`props.pageTitle`, the app's write-back; `title` is the
@@ -36,9 +34,9 @@ public final class UndoHistory {
     static func bookkeeping(_ object: CanvasObject) -> Set<String> {
         switch object.type {
         case .terminal: terminalBookkeeping
-        case .browser: browserBookkeeping
+        case .browser: ["pageTitle"]
         case .code where object.props["followOf"]?.string != nil: followBookkeeping
-        case .diagram: diagramBookkeeping
+        case .diagram: ["graph"]
         default: []
         }
     }
@@ -209,9 +207,8 @@ public final class UndoHistory {
     }
 
     static func authoredContentChanged(from before: CanvasObject, to after: CanvasObject, patch: JSONValue? = nil) -> Bool {
-        let skipped = bookkeeping(before)
         func ignored(_ key: String) -> Bool {
-            if skipped.contains(key) || before.type == .group && key == "members" || before.type == .browser && key == "urlIntent" { return true }
+            if before.type == .group && key == "members" || before.type == .browser && key == "urlIntent" { return true }
             guard before.type == .arrow, key == "from" || key == "to" else { return false }
             return before.props[key]?["object"]?.string == nil && after.props[key]?["object"]?.string == nil
                 && before.props[key]?["point"]?.array?.count == 2 && after.props[key]?["point"]?.array?.count == 2

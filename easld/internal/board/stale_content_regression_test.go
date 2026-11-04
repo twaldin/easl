@@ -99,18 +99,19 @@ func TestStaleContentAgeIgnoresGroupMembershipAndLayout(t *testing.T) {
 	assertUntouched(t, b, now, group.ID, false)
 }
 
-func TestStaleContentAgeIgnoresBookkeepingAndNoOpWrites(t *testing.T) {
+func TestStaleContentAgeRefreshesNormalPropsButNotNoOps(t *testing.T) {
 	cases := []struct {
 		name         string
 		typ          model.ObjectType
 		props, patch map[string]any
+		untouched    bool
 	}{
-		{"note no-op", model.Note, map[string]any{"markdown": "draft"}, map[string]any{"markdown": "draft"}},
-		{"terminal", model.Terminal, map[string]any{"name": "shell"}, map[string]any{"title": "busy", "lifecycle": map[string]any{"state": "working"}, "agent": map[string]any{"state": "idle"}}},
-		{"browser", model.Browser, map[string]any{"url": "https://example.com"}, map[string]any{"pageTitle": "Page"}},
-		{"browser URL no-op", model.Browser, map[string]any{"url": "https://example.com"}, map[string]any{"url": "https://example.com"}},
-		{"follow", model.Code, map[string]any{"followOf": "obj_terminal", "path": "old.go"}, map[string]any{"path": "new.go", "range": map[string]any{"start": 2.0, "end": 3.0}, "lastAction": "edit", "lastChanges": []any{}, "history": []any{}}},
-		{"diagram", model.Diagram, map[string]any{"path": "main.go", "symbol": "main"}, map[string]any{"graph": map[string]any{"nodes": []any{}}}},
+		{"note no-op", model.Note, map[string]any{"markdown": "draft"}, map[string]any{"markdown": "draft"}, true},
+		{"terminal", model.Terminal, map[string]any{"name": "shell"}, map[string]any{"title": "busy", "lifecycle": map[string]any{"state": "working"}, "agent": map[string]any{"state": "idle"}}, false},
+		{"browser", model.Browser, map[string]any{"url": "https://example.com"}, map[string]any{"pageTitle": "Page"}, false},
+		{"browser URL no-op", model.Browser, map[string]any{"url": "https://example.com"}, map[string]any{"url": "https://example.com"}, true},
+		{"follow", model.Code, map[string]any{"followOf": "obj_terminal", "path": "old.go"}, map[string]any{"path": "new.go", "range": map[string]any{"start": 2.0, "end": 3.0}, "lastAction": "edit", "lastChanges": []any{}, "history": []any{}}, false},
+		{"diagram", model.Diagram, map[string]any{"path": "main.go", "symbol": "main"}, map[string]any{"graph": map[string]any{"nodes": []any{}}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,12 +119,12 @@ func TestStaleContentAgeIgnoresBookkeepingAndNoOpWrites(t *testing.T) {
 			if _, err := b.Update("obj_old", nil, nil, nil, tc.patch, "", ""); err != nil {
 				t.Fatal(err)
 			}
-			assertUntouched(t, b, now, "obj_old", true)
+			assertUntouched(t, b, now, "obj_old", tc.untouched)
 			z, expiry := 20.0, now.Add(time.Hour)
 			if _, err := b.Update("obj_old", nil, nil, &z, nil, "", "", Expiry{At: &expiry}); err != nil {
 				t.Fatal(err)
 			}
-			assertUntouched(t, b, now, "obj_old", true)
+			assertUntouched(t, b, now, "obj_old", tc.untouched)
 		})
 	}
 }

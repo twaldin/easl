@@ -126,7 +126,7 @@ struct ContentAgeTests {
         #expect(untouched(board) == [note.id])
     }
 
-    @Test func bookkeepingAndArrowRoutingDoNotRefreshButAuthoredEndpointsDo() throws {
+    @Test func normalPropWritesRefreshAgeButArrowRoutingDoesNot() throws {
         let initial = Board(id: "brd_boundaries_age", root: root)
         let terminal = initial.create(type: .terminal, props: .object([:]))
         let browser = initial.create(type: .browser, props: .object(["url": "https://example.com"]))
@@ -137,6 +137,7 @@ struct ContentAgeTests {
         let arrow = initial.create(type: .arrow, props: ArrowSpec(from: .object(left.id), to: .object(right.id)).props)
         let board = try aged(initial)
         let all = Set(initial.objects.keys)
+        let unchanged = all.subtracting([terminal.id, browser.id, follow.id, diagram.id])
         _ = try board.update(terminal.id, props: .object(["title": "reported", "agent": .object(["kind": "codex"]), "lifecycle": .object(["state": "idle"])]))
         _ = try board.update(browser.id, props: .object(["pageTitle": "reported"]))
         _ = try board.update(follow.id, props: .object(["path": "b.swift", "range": .object(["start": 2, "end": 3]), "lastAction": "read", "lastChanges": .array([]), "history": .array([])]))
@@ -145,10 +146,10 @@ struct ContentAgeTests {
         _ = try board.update(left.id, frame: Frame(x: 50, y: 150, w: 200, h: 150))
         _ = board.reported(try board.object(arrow.id))
         #expect(try board.object(arrow.id).props == beforeArrow.props)
-        #expect(untouched(board) == all)
+        #expect(untouched(board) == unchanged)
         try board.delete(right.id)
         #expect(ArrowSpec(try board.object(arrow.id).props)?.to.objectID == nil)
-        #expect(untouched(board) == all.subtracting([right.id, arrow.id]))
+        #expect(untouched(board) == unchanged.subtracting([right.id, arrow.id]))
         #expect(board.undo())
         #expect(ArrowSpec(try board.object(arrow.id).props)?.to.objectID == right.id)
         #expect(!untouched(board).contains(arrow.id))
