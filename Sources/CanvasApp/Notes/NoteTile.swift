@@ -2,10 +2,6 @@ import AppKit
 import CanvasCore
 import Markdown
 
-/// A markdown note with rendered markdown and live code fences. A prose click or user selection
-/// edits the raw markdown; ⌘↩, clicking away or Esc commits. Keyboard entry returns to the canvas,
-/// prose entry to the prompt-target terminal. A conflicting change is overwritten only by an
-/// explicit ⌘↩; Esc keeps theirs, the user's text one ⌘Z away.
 @MainActor
 final class NoteTile: NSView, TileContent {
     static let placeholder = ObjectMeasure.notePlaceholder
@@ -630,7 +626,6 @@ final class NoteTile: NSView, TileContent {
 
     // MARK: Editing
 
-    /// Enters at the first visible rendered text; Esc or ⌘↩ returns to the canvas.
     func enterKeyboard() -> Bool {
         if display.isSelectable { return window?.makeFirstResponder(display) == true }
         if session != nil { return window?.makeFirstResponder(editor) == true }
@@ -693,7 +688,7 @@ final class NoteTile: NSView, TileContent {
         let origin = display.textContainerOrigin
         let inContainer = NSPoint(x: local.x - origin.x, y: local.y - origin.y)
         guard let fragment = layout.textLayoutFragment(for: inContainer),
-              let elementRange = fragment.textElement.elementRange else { return 0 }
+              let elementRange = fragment.textElement?.elementRange else { return 0 }
         let inFragment = NSPoint(x: inContainer.x - fragment.layoutFragmentFrame.minX,
                                  y: inContainer.y - fragment.layoutFragmentFrame.minY)
         var nearestLine: NSTextLineFragment?
@@ -1043,7 +1038,6 @@ final class NoteTile: NSView, TileContent {
         return fragment(where: .noteCodeRow, is: NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)).map(rect(of:))
     }
 
-    /// Enters the raw editor at the heading's source line and returns its visible caret.
     func reveal(heading line: Int) -> NSRect? {
         guard enterKeyboard(), isEditing, let window else { return nil }
         let range = NSRange(location: sourceOffset(ofLine: line, in: editor.string), length: 0)

@@ -830,7 +830,6 @@ final class HtmlTile: NSView, TileContent {
         return hovered.rect.intersection(bounds)
     }
 
-    /// Native ownership stays in this tile while its sandboxed page is being built.
     func enterKeyboard() -> Bool {
         guard live, !hostBoardClosed else { return false }
         if webView?.takeKeyboard() == true { return true }

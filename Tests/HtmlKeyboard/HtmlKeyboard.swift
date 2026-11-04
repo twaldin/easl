@@ -5,8 +5,6 @@ import ObjectiveC.runtime
 @testable import CanvasApp
 @testable import CanvasCore
 
-/// Real HTML body clicks take native typing synchronously. Page-initiated DOM focus never
-/// takes native typing, and later native actions cannot be reversed by page callbacks.
 @main
 @MainActor
 private enum HtmlKeyboard {

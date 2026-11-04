@@ -821,7 +821,6 @@ final class TileFrameView: NSView {
         if resizeGrip.contains(local) { return self }
         // A zoomed-out card is one handle: click selects, drag moves, double-click focuses.
         if !isLive || zoomedOut, bounds.contains(local) { return self }
-        // Title clicks select on release; title drags only move. Its controls act without selection.
         if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width,
                              machineControlWidth: machineControl.isHidden ? 0 : machineControl.frame.width) == .handle { return self }
         return super.hitTest(point)

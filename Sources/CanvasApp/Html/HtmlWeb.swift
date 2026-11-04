@@ -447,7 +447,6 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
     }
 }
 
-/// Native user selection authorizes an HTML page, never its scripts or load-time autofocus.
 final class HtmlWebView: WKWebView {
     /// One monitor for every HTML web view. `mouseDown` on this class misses WebKit's descendant
     /// views, so a click in the page would never arm a permit.

@@ -218,7 +218,6 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         }
     }
 
-    /// Links navigate without typing; answering and dismissal keep their control behavior.
     func handlesSelectionClick(_ event: NSEvent) -> Bool {
         let point = page.convert(event.locationInWindow, from: nil)
         if let text = painter?.question, text.rect.contains(point), text.link(at: point) != nil { return true }
@@ -228,8 +227,6 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
         return true
     }
 
-    /// A press on the page: on the question's text it selects or follows a link once it is
-    /// released or dragged (`TextPress`); on a control it acts at once.
     fileprivate func pressed(_ event: NSEvent, at point: NSPoint) {
         if let text = painter?.question, text.rect.contains(point) {
             if text.link(at: point) == nil { window?.makeFirstResponder(self) }
@@ -317,7 +314,6 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
 
     // MARK: Keyboard
 
-    /// Open or closed, user selection gives it the keyboard; links preserve the prior owner.
     override var acceptsFirstResponder: Bool { true }
 
     /// Open: 1–9 pick the options in order, Return answers, Tab goes to the note, and on a
