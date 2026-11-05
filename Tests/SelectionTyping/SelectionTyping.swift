@@ -1641,14 +1641,62 @@ private enum SelectionTyping {
             try require(editor.selectedRange() == NSRange(location: 6, length: 0)
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
-            try await click(point, flags: .shift, in: f.window)
-            try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
-                "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
-            let range = editor.selectedRange()
-            try require(range == NSRange(location: 1, length: 5),
-                "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
-            try require((editor.string as NSString).substring(with: range) == "bcdef",
-                "the native \(type.rawValue) selection must expose exactly bcdef")
+            do {
+                var previousRange = editor.selectedRange()
+                var records = ["SELECTION_CHANGE initial=\(previousRange) editor=\(ObjectIdentifier(editor)) class=\(Swift.type(of: editor)) intended=\(point)"]
+                var firstBadStack: [String]?
+                var extendedStacks: [[String]] = []
+                var gesturePassed = false
+                let observer = NotificationCenter.default.addObserver(
+                    forName: NSTextView.didChangeSelectionNotification, object: editor, queue: nil
+                ) { notification in
+                    let receiver = (notification.object as? NSTextView).map { ObjectIdentifier($0) }
+                    MainActor.assumeIsolated {
+                        let range = editor.selectedRange()
+                        if range == NSRange(location: 1, length: 5) { extendedStacks.append(Thread.callStackSymbols) }
+                        let firstBad = range == NSRange(location: 0, length: 1) && firstBadStack == nil
+                        if firstBad { firstBadStack = Thread.callStackSymbols }
+                        let event = NSApp.currentEvent
+                        let mouseDetails: String
+                        switch event?.type {
+                        case .leftMouseDown?, .leftMouseUp?, .leftMouseDragged?,
+                             .rightMouseDown?, .rightMouseUp?, .rightMouseDragged?,
+                             .otherMouseDown?, .otherMouseUp?, .otherMouseDragged?:
+                            mouseDetails = "clickCount=\(event!.clickCount) eventNumber=\(event!.eventNumber)"
+                        default:
+                            mouseDetails = "clickCount=n/a eventNumber=n/a"
+                        }
+                        let clip = editor.enclosingScrollView?.contentView
+                        records.append("SELECTION_CHANGE previous=\(previousRange) range=\(range) firstBad=\(firstBad) receiver=\(String(describing: receiver)) editor=\(ObjectIdentifier(editor)) class=\(Swift.type(of: editor)) responder=\(String(describing: f.window.firstResponder.map { ObjectIdentifier($0) })) affinity=\(editor.selectionAffinity.rawValue) uptime=\(ProcessInfo.processInfo.systemUptime)")
+                        records.append("SELECTION_CHANGE eventType=\(String(describing: event?.type)) flags=\(String(describing: event?.modifierFlags.rawValue)) location=\(String(describing: event?.locationInWindow)) window=\(String(describing: event?.windowNumber)) timestamp=\(String(describing: event?.timestamp)) \(mouseDetails) globalFlags=\(NSEvent.modifierFlags.rawValue) buttons=\(NSEvent.pressedMouseButtons) pointer=\(NSEvent.mouseLocation)")
+                        records.append("SELECTION_CHANGE frame=\(editor.frame) bounds=\(editor.bounds) visible=\(editor.visibleRect) windowFrame=\(editor.convert(editor.bounds, to: nil)) clipFrame=\(String(describing: clip?.frame)) clipBounds=\(String(describing: clip?.bounds))")
+                        previousRange = range
+                    }
+                }
+                defer {
+                    NotificationCenter.default.removeObserver(observer)
+                    if !gesturePassed {
+                        records.forEach { print($0) }
+                        for (index, stack) in extendedStacks.enumerated() {
+                            print("SELECTION_CHANGE {1,5} notification stack \(index):\n\(stack.joined(separator: "\n"))")
+                        }
+                        if let firstBadStack {
+                            print("SELECTION_CHANGE first {0,1} synchronous notification stack:\n\(firstBadStack.joined(separator: "\n"))")
+                        } else {
+                            print("SELECTION_CHANGE missing fact: no notification observed the first transition to {0,1}; final=\(editor.selectedRange()). The selection setter boundary is not captured.")
+                        }
+                    }
+                }
+                try await click(point, flags: .shift, in: f.window)
+                try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+                    "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
+                let range = editor.selectedRange()
+                try require(range == NSRange(location: 1, length: 5),
+                    "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
+                try require((editor.string as NSString).substring(with: range) == "bcdef",
+                    "the native \(type.rawValue) selection must expose exactly bcdef")
+                gesturePassed = true
+            }
             try await typed("X", in: f.window)
             try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
                 "typing must replace exactly the Shift-clicked \(type.rawValue) range and place the caret after aX")
