@@ -32,7 +32,7 @@ final class ProbeTicket {
 @MainActor
 struct NativeEventProbe {
     static var sequence = 0
-    static func dispatch(_ events: [NSEvent], pid: Bool = false) async throws {
+    static func dispatch(_ events: [NSEvent], pid: Bool = false, hid: Bool = false) async throws {
         sequence += 1
         let token = sequence
         let ticket = ProbeTicket()
@@ -40,8 +40,8 @@ struct NativeEventProbe {
             ticket.continuation = continuation
             ticket.monitor = NSEvent.addLocalMonitorForEvents(matching: [.applicationDefined, .leftMouseUp, .flagsChanged]) { event in
                 MainActor.assumeIsolated {
-                    if (!pid && event.type == .applicationDefined && event.subtype.rawValue == 197 && event.data1 == token)
-                        || (pid && event.type == events.last?.type) {
+                    if (!pid && !hid && event.type == .applicationDefined && event.subtype.rawValue == 197 && event.data1 == token)
+                        || ((pid || hid) && event.type == events.last?.type) {
                         ticket.finish()
                     }
                 }
@@ -51,10 +51,11 @@ struct NativeEventProbe {
                 ticket.finish(NSError(domain: "EventDeliveryDeadline", code: token))
             }
             for event in events {
-                if pid { event.cgEvent!.postToPid(getpid()) }
+                if hid { event.cgEvent!.post(tap: .cghidEventTap) }
+                else if pid { event.cgEvent!.postToPid(getpid()) }
                 else { NSApp.postEvent(event, atStart: false) }
             }
-            if !pid {
+            if !pid && !hid {
                 NSApp.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero,
                     modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                     windowNumber: 0, context: nil, subtype: 197, data1: token, data2: 0)!, atStart: false)
@@ -70,7 +71,7 @@ struct NativeEventProbe {
     }
     static func run() async {
         print("OS \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        for route in ["plain-batch", "plain-separated", "override-batch", "override-separated"] {
+        for route in ["plain-app", "plain-cg-wrapped", "plain-hid-mouse", "plain-hid-all"] {
             let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 300),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
@@ -83,6 +84,12 @@ struct NativeEventProbe {
             window.makeKeyAndOrderFront(nil)
             window.makeFirstResponder(editor)
             do {
+                let hidMouse = route.hasPrefix("plain-hid-")
+                let hidFlags = route == "plain-hid-all"
+                if hidMouse && !CGPreflightPostEventAccess() {
+                    print("UNAVAILABLE route=\(route) postEventAccess=false")
+                    continue
+                }
                 for letter in "abcdef" {
                     try await dispatch([key(0, String(letter), window: window), key(0, String(letter), type: .keyUp, window: window)])
                 }
@@ -92,29 +99,26 @@ struct NativeEventProbe {
                 let quartz = CGPoint(x: screenPoint.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screenPoint.y)
                 let warp = CGWarpMouseCursorPosition(route == "app-queue-warp" ? quartz : CGPoint(x: 5, y: 5))
                 print("BEFORE route=\(route) text=\(editor.string) range=\(editor.selectedRange()) insertion=\(editor.characterIndexForInsertion(at: editor.convert(point, from: nil))) key=\(window.isKeyWindow) warp=\(warp.rawValue)")
-                let pidFlags = route == "pid-flags-and-mouse"
-                try await dispatch([key(56, type: .flagsChanged, flags: .shift, window: window)], pid: pidFlags)
+                try await dispatch([key(56, type: .flagsChanged, flags: .shift, window: window)], hid: hidFlags)
                 var events: [NSEvent] = []
                 for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                     let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: .shift,
                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                         context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
-                    if route == "cg-wrapped" || route.hasPrefix("pid-") {
-                        let cg = event.cgEvent!.copy()!
+                    if route == "plain-cg-wrapped" {
+                        events.append(NSEvent(cgEvent: event.cgEvent!)!)
+                    } else if hidMouse {
+                        let cg = CGEvent(mouseEventSource: nil,
+                            mouseType: type == .leftMouseDown ? .leftMouseDown : .leftMouseUp,
+                            mouseCursorPosition: quartz, mouseButton: .left)!
                         cg.flags = .maskShift
-                        if route.hasPrefix("pid-") {
-                            cg.location = quartz
-                            cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
-                            cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
-                        }
+                        cg.setIntegerValueField(.mouseEventClickState, value: 1)
                         events.append(NSEvent(cgEvent: cg)!)
                     } else { events.append(event) }
                 }
                 print("EVENT route=\(route) window=\(events[0].windowNumber) point=\(events[0].locationInWindow) flags=\(events[0].modifierFlags.rawValue)")
-                let batch = route.hasSuffix("batch")
-                if batch { events.append(key(56, type: .flagsChanged, window: window)) }
-                try await dispatch(events)
-                if !batch { try await dispatch([key(56, type: .flagsChanged, window: window)]) }
+                try await dispatch(events, hid: hidMouse)
+                try await dispatch([key(56, type: .flagsChanged, window: window)], hid: hidFlags)
                 print("RESULT route=\(route) range=\(editor.selectedRange()) entries=\((editor as? ProbeTextView)?.mouseEntries ?? 0) global=\(NSEvent.modifierFlags.rawValue)")
             } catch {
                 print("UNAVAILABLE route=\(route) error=\(error)")
