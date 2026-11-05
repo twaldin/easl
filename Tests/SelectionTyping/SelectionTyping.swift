@@ -24,6 +24,27 @@ private enum SelectionTyping {
         let baseline: String
     }
 
+    @MainActor
+    private final class MenuTrackingObserver: NSObject {
+        var began = false
+        var ended = false
+        private var menu: NSMenu?
+
+        @objc func didBegin(_ notification: Notification) {
+            guard let menu = notification.object as? NSMenu else { return }
+            self.menu = menu
+            began = true
+            RunLoop.main.perform(inModes: [.eventTracking]) { [weak self] in
+                MainActor.assumeIsolated { self?.menu?.cancelTrackingWithoutAnimation() }
+            }
+        }
+
+        @objc func didEnd(_ notification: Notification) {
+            ended = true
+            menu = nil
+        }
+    }
+
     private static let typingTypes: [ObjectType] = [.terminal, .note, .html, .browser, .code, .changes, .question]
     private static let boardTypes: [ObjectType] = [.image, .video, .diagram, .group, .shape]
     private static var scenarios: [Scenario] {
@@ -1260,28 +1281,16 @@ private enum SelectionTyping {
             f.canvas.setSelection(multi ? [target.id, other.id] : [target.id])
             f.window.makeFirstResponder(f.canvas.document)
         }
-        var began = false
-        var ended = false
+        let tracking = MenuTrackingObserver()
         let center = NotificationCenter.default
-        let begin = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { notification in
-            MainActor.assumeIsolated {
-                guard let menu = notification.object as? NSMenu else { return }
-                began = true
-                RunLoop.main.perform(inModes: [.eventTracking]) {
-                    MainActor.assumeIsolated { menu.cancelTrackingWithoutAnimation() }
-                }
-            }
-        }
-        let end = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { _ in
-            MainActor.assumeIsolated { ended = true }
-        }
-        defer {
-            center.removeObserver(begin)
-            center.removeObserver(end)
-        }
+        center.addObserver(tracking, selector: #selector(MenuTrackingObserver.didBegin(_:)),
+                           name: NSMenu.didBeginTrackingNotification, object: nil)
+        center.addObserver(tracking, selector: #selector(MenuTrackingObserver.didEnd(_:)),
+                           name: NSMenu.didEndTrackingNotification, object: nil)
+        defer { center.removeObserver(tracking) }
         let point = try f.point(target.id, title: true)
         try await post([mouse(.rightMouseDown, point, in: f.window), mouse(.rightMouseUp, point, in: f.window)])
-        try require(began && ended, "a real native context menu must track and cancel without executing a command")
+        try require(tracking.began && tracking.ended, "a real native context menu must track and cancel without executing a command")
         if multi {
             try f.boardOwns([target.id, other.id])
             try await typed("x", in: f.window)
