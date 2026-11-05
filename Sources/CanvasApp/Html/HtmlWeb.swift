@@ -448,6 +448,9 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 }
 
 final class HtmlWebView: WKWebView {
+    private lazy var pageUndoManager = UndoManager()
+    override var undoManager: UndoManager? { pageUndoManager }
+
     /// One monitor for every HTML web view. `mouseDown` on this class misses WebKit's descendant
     /// views, so a click in the page would never arm a permit.
     private static var sendMonitor: Any?

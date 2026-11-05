@@ -117,9 +117,13 @@ private enum SelectionTyping {
         for name in ["browser-interleaved-undo", "html-interleaved-undo"] {
             cases.append(Scenario(name: name, baseline: "existing bug regression"))
         }
+        for name in ["html-html-page-undo", "html-browser-page-undo", "browser-browser-page-undo"] {
+            cases.append(Scenario(name: name, baseline: "feature regression"))
+        }
         for name in ["note-escape-prompt", "note-command-return-prompt", "note-escape-board", "note-command-return-board",
                      "note-escape-no-prompt", "note-command-return-no-prompt",
                      "menu-cancel-note", "menu-cancel-terminal", "menu-cancel-selected-note", "menu-cancel-multi", "menu-cancel-preserved-multi",
+                     "menu-cancel-group", "menu-cancel-preserved-group-multi",
                      "navigator-select-note", "html-cold-no-buffer"] {
             cases.append(Scenario(name: name, baseline: "feature regression"))
         }
@@ -1291,10 +1295,11 @@ private enum SelectionTyping {
         let point = try f.point(target.id, title: true)
         try await post([mouse(.rightMouseDown, point, in: f.window), mouse(.rightMouseUp, point, in: f.window)])
         try require(tracking.began && tracking.ended, "a real native context menu must track and cancel without executing a command")
-        if multi {
-            try f.boardOwns([target.id, other.id])
+        if multi || type == .group {
+            let expected: Set<ObjectID> = multi ? [target.id, other.id] : [target.id]
+            try f.boardOwns(expected)
             try await typed("x", in: f.window)
-            try f.boardOwns([target.id, other.id])
+            try f.boardOwns(expected)
         } else {
             try await assertInput(target, in: f)
         }
@@ -1414,6 +1419,44 @@ private enum SelectionTyping {
             try require((f.window.firstResponder as? NSTextView)?.string == "Keep this note",
                 "reopening the note after page undo and redo must show the original committed note edit")
         }
+    }
+
+    private static func exercisePageUndoIsolation(_ firstType: ObjectType, _ secondType: ObjectType, _ f: Fixture) async throws {
+        let first = try await f.create(firstType, x: 20, y: 90, width: 370, height: 320)
+        let second = try await f.create(secondType, x: 470, y: 90, width: 370, height: 320)
+        let firstWeb = try await f.web(first.id)
+        let secondWeb = try await f.web(second.id)
+        func assertPages(_ firstText: String, _ secondText: String, _ message: String) async throws {
+            let a = await js(firstWeb, "document.getElementById('field').value") as? String
+            let b = await js(secondWeb, "document.getElementById('field').value") as? String
+            try require(a == firstText && b == secondText, "\(message): expected \(firstText.debugDescription), \(secondText.debugDescription); got \(String(describing: a)), \(String(describing: b))")
+        }
+        try await click(try await f.pagePoint(first.id, selector: "#field"), in: f.window)
+        try await wait("first page must have native typing") { f.canvas.focusedTile == first.id }
+        try await typed("alpha", in: f.window)
+        try await wait("first page must contain its own edit") { await js(firstWeb, "document.getElementById('field').value") as? String == "alpha" }
+        try await click(try await f.pagePoint(second.id, selector: "#field"), in: f.window)
+        try await wait("second page must have native typing") { f.canvas.focusedTile == second.id }
+        try await post([key(6, "z", flags: .command, in: f.window)])
+        try await assertPages("alpha", "", "Undo in an untouched page must not change another page")
+        try await typed("beta", in: f.window)
+        try await wait("second page must contain a separate edit") { await js(secondWeb, "document.getElementById('field').value") as? String == "beta" }
+        try await post([key(6, "z", flags: .command, in: f.window)])
+        try await wait("second page Undo must remove only its edit") { await js(secondWeb, "document.getElementById('field').value") as? String == "" }
+        try await assertPages("alpha", "", "Undo must stay in the typing page")
+        try await post([key(6, "z", flags: .command, in: f.window)])
+        try await assertPages("alpha", "", "Exhausted page Undo must not fall through to another page")
+        try await post([key(6, "z", flags: [.command, .shift], in: f.window)])
+        try await wait("second page Redo must restore its own edit") { await js(secondWeb, "document.getElementById('field').value") as? String == "beta" }
+        try await assertPages("alpha", "beta", "Redo must stay in the typing page")
+        try await click(try await f.pagePoint(first.id, selector: "#field"), in: f.window)
+        try await wait("first page reentry must restore its typing") { f.canvas.focusedTile == first.id }
+        try await post([key(6, "z", flags: .command, in: f.window)])
+        try await wait("first page Undo must retain its own history") { await js(firstWeb, "document.getElementById('field').value") as? String == "" }
+        try await assertPages("", "beta", "First page Undo must preserve the other page")
+        try await post([key(6, "z", flags: [.command, .shift], in: f.window)])
+        try await wait("first page Redo must restore its own edit") { await js(firstWeb, "document.getElementById('field').value") as? String == "alpha" }
+        try await assertPages("alpha", "beta", "Each page must retain independent redo")
     }
 
     private static func exerciseEmptyPageUndo(_ type: ObjectType, _ f: Fixture) async throws {
@@ -2279,9 +2322,12 @@ private enum SelectionTyping {
                 try await exerciseNoteReturn(f, board: name.hasSuffix("-board"), confirmed: name.hasPrefix("note-command-return-"))
             }
         } else if name.hasPrefix("menu-cancel-") {
-            try await exerciseMenuCancellation(f, type: name == "menu-cancel-terminal" ? .terminal : .note,
+            try await exerciseMenuCancellation(f, type: name.contains("-group") ? .group : name == "menu-cancel-terminal" ? .terminal : .note,
                 selected: name == "menu-cancel-selected-note", multi: name.hasSuffix("-multi"),
-                preserveTyping: name == "menu-cancel-preserved-multi")
+                preserveTyping: name.hasPrefix("menu-cancel-preserved-"))
+        } else if name.hasSuffix("-page-undo") {
+            try await exercisePageUndoIsolation(name.hasPrefix("browser-") ? .browser : .html,
+                name.contains("-browser-") ? .browser : .html, f)
         } else if name == "navigator-select-note" {
             try await exerciseNavigatorSelection(f)
         } else if name == "html-cold-no-buffer" {
@@ -2382,9 +2428,6 @@ private enum SelectionTyping {
         if let fixture {
             if failure != nil {
                 print("FAILURE STATE \(fixture.diagnostic())")
-                for (id, group) in fixture.canvas.groups {
-                    print("GROUP \(id) region=\(group.region) frame=\(group.frame) title=\(group.titleRect)")
-                }
             }
             do { try await fixture.cleanup() }
             catch {

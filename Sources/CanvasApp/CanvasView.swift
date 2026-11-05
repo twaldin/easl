@@ -1326,8 +1326,6 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Esc in a tile that has the keyboard (or Leave Tile, ⌘Esc): the canvas takes it back, the
-    /// tile stays selected.
     func leaveTile() {
         selectionSerial &+= 1
         window?.makeFirstResponder(document)
@@ -1757,7 +1755,7 @@ final class CanvasView: NSScrollView {
     }
 
     private func groupMenu(for id: ObjectID) -> NSMenu {
-        if !selection.contains(id) { setSelection([id]) }
+        setSelection(selection.contains(id) ? selection : [id], cause: .boardGesture)
         let menu = NSMenu()
         menu.addItem(MenuAction.item("Enter Group") { [weak self] in self?.enter(group: id) })
         menu.addItem(MenuAction.item("Ungroup") { [weak self] in self?.ungroupSelection() })

@@ -137,7 +137,7 @@ The macOS 27 synthesized-native-HID regression compares the question note with a
 
 Delete and Command-A act on text while a terminal, editor, or page owns typing. With the board owning typing, Delete acts on selected objects and Command-A selects the board's objects. Board navigation shortcuts, Command-W, and Command-I keep their window-level priority.
 
-Note editors own their text undo history instead of sharing the window's page history. Editing a note between two visits to a page does not redirect that page's Command-Z into the hidden note.
+Each note editor, HTML page, and browser page owns its text undo history. Command-Z in an untouched page, or after that page's edits are exhausted, does not undo another page or a hidden note. Returning to a page retains that page's own undo and redo.
 
 ### easl and drawing
 

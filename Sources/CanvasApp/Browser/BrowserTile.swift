@@ -1471,6 +1471,9 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
+    private lazy var pageUndoManager = UndoManager()
+    override var undoManager: UndoManager? { pageUndoManager }
+
     /// A click or key press reached the page: this Mac's user's, or a viewer's streamed one
     /// (`SurfaceEventQueue.isSynthesized`).
     var onUserInput: ((NSEvent) -> Void)?

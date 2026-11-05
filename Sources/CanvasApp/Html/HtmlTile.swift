@@ -857,8 +857,6 @@ final class HtmlTile: NSView, TileContent {
         webView?.beginSelectionClick(event)
     }
 
-    /// Esc in the page, or the page parked while it had the keyboard: the canvas takes it back,
-    /// the tile stays selected (`CanvasView.leaveTile`). Only when the keyboard is in this tile.
     private func leaveKeyboard() {
         guard let canvas = enclosingScrollView as? CanvasView, let responder = window?.firstResponder as? NSView,
               responder === self || responder.isDescendant(of: self) else { return }
