@@ -19,6 +19,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 - [HTML and video tiles](html-video.md) covers live HTML, native playback, seeking, and remote controls.
 - [Questions and expiry](questions-expiry.md) covers CLI creation, native answers, cancellation, expiry, and archive retention.
 - [Note math](note-math.md) covers native inline and display formulas, source fallback, and literal code.
+- [Delegated text measurement](text-measurement.md) covers exact size parity, off-main layout, and remote layout checks during native terminal input.
 - [Note Mermaid](note-mermaid.md) covers isolated rendering, preparation and render deadlines, centred image layers, cold launch, hostile inputs, and process cleanup.
 - [Graph diagrams](graph-diagrams.md) covers authored knowledge, statuses, source badges, and expanded detail.
 - [Graded questions](graded-questions.md) covers correct and wrong answers with optional confidence.
