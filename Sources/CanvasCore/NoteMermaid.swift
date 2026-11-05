@@ -42,6 +42,21 @@ public enum NoteMermaid {
         case fallback(String)
     }
 
+    enum Measurement: Sendable {
+        case size(CGSize)
+        case fallback(String)
+    }
+
+    static func measure(_ fences: [Fence]) async -> [Int: Measurement] {
+        let outcomes = await service.resolve(fences)
+        return outcomes.mapValues {
+            switch $0 {
+            case .image(let image): .size(image.size)
+            case .fallback(let reason): .fallback(reason)
+            }
+        }
+    }
+
     public static func appearance(_ value: NSAppearance = NSAppearance.currentDrawing()) -> Appearance {
         value.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
     }
@@ -75,10 +90,10 @@ public enum NoteMermaid {
     }
 
     private static let service = Service()
-    static let maxOccurrences = 20
-    static let maxSourceBytes = 50 * 1024
-    static let maxDimension = 8192
-    static let maxPixels = 4 * 1024 * 1024
+    nonisolated static let maxOccurrences = 20
+    nonisolated static let maxSourceBytes = 50 * 1024
+    nonisolated static let maxDimension = 8192
+    nonisolated static let maxPixels = 4 * 1024 * 1024
     static let cacheBytes = 32 * 1024 * 1024
     static let preparationTimeout: Duration = .seconds(10)
     static let renderTimeout: Duration = .seconds(2)
@@ -86,32 +101,32 @@ public enum NoteMermaid {
     private static let maxConsumers = 256
     private static let maxCacheEntries = 512
 
-    static func isMermaid(_ block: CodeBlock) -> Bool {
+    nonisolated static func isMermaid(_ block: CodeBlock) -> Bool {
         block.language?.trimmingCharacters(in: .whitespacesAndNewlines) == "mermaid"
     }
 
-    static func listMarkerWidth(ordered: Bool, checkbox: Bool) -> CGFloat {
+    nonisolated static func listMarkerWidth(ordered: Bool, checkbox: Bool) -> CGFloat {
         ordered ? 22 : (checkbox ? 20 : 14)
     }
 
-    static func effectiveWidth(_ width: CGFloat, indent: CGFloat) -> Int? {
+    nonisolated static func effectiveWidth(_ width: CGFloat, indent: CGFloat) -> Int? {
         guard width.isFinite, width > 0 else { return nil }
         let available = width - 2 * ObjectMeasure.noteLineFragmentPadding - indent - 4
         guard available >= 1 else { return nil }
         return Int(min(CGFloat(maxDimension), available).rounded(.down))
     }
 
-    private struct Fence {
+    struct Fence: Sendable {
         let line: Int
         let admission: Admission
     }
 
-    private enum Admission {
+    enum Admission: Sendable {
         case key(Key)
         case fallback(String)
     }
 
-    private static func fences(in document: Document, width: CGFloat, appearance: Appearance) -> [Fence] {
+    nonisolated static func fences(in document: Document, width: CGFloat, appearance: Appearance) -> [Fence] {
         var result: [Fence] = []
         var occurrences = 0
         func walk(_ markup: Markup, indent: CGFloat) {

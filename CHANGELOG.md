@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes.
 ### Fixed
 
 - Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
+- Delegated text measurement now parses and lays out notes, text shapes, labels, arrow captions, and code captions off the Mac's main thread. `layout.check` keeps terminal input responsive without changing measured sizes. Mermaid resolution and SwiftMath view sizing remain on main; only their dimensions enter worker layout.
 
 ## 0.3.6
 

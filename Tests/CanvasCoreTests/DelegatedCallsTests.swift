@@ -89,6 +89,38 @@ final class DelegatedCallsTests {
         return nil
     }
 
+    @Test(.timeLimit(.minutes(2))) func textMeasurementKeepsMainResponsiveAndMatchesMainThreadLayout() async throws {
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("text-measure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let executable = CommandLine.arguments[0]
+        let result = await offPool {
+            Result {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: executable)
+                process.arguments = ["--text-measure-regression", "--output", output.path]
+                process.standardInput = FileHandle.nullDevice
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = pipe
+                try process.run()
+                let bytes = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                return (process.terminationStatus, String(decoding: bytes, as: UTF8.self))
+            }
+        }
+        let (status, log) = try result.get()
+        try #require(status == 0, "\(log)")
+        let decoder = JSONDecoder()
+        let sizes = try decoder.decode(JSONValue.self, from: Data(contentsOf: output.appendingPathComponent("sizes.json")))
+        #expect(sizes["heavy"]?["sizes"]?.array?.count == 200)
+        let report = try decoder.decode(JSONValue.self, from: Data(contentsOf: output.appendingPathComponent("report.json")))
+        #expect((report["timerCallbacksInsideBatch"]?.int ?? 0) > 0)
+        #expect(report["failures"]?.array == [])
+        for counter in ["main.stretch50", "main.stretch250"] {
+            #expect((report["metrics"]?["counters"]?[counter]?["total"]?["n"]?.int ?? 0) == 0)
+        }
+    }
+
     @Test func sincePromptReadsWhatFollowedThisViewersLastPrompt() async throws {
         let calls = delegated()
         let early = await answer(calls, "agent.read", .object(["target": .string(terminal), "since": "prompt"]))
