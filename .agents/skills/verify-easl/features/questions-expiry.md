@@ -11,6 +11,7 @@ Agents post question tiles through the CLI. Users choose an option or write a no
 - `object-expiry` deletes an ordinary transient object at the host deadline.
 - `question-archive-layout` excludes archived questions from geometry while retaining their answers.
 - `board-stale-content` lists content-age cleanup candidates after layout changes and filters them by creator.
+- `question-needs-you-refresh` preserves needs-you membership and ordering without decoding closed questions on every board change.
 
 ## How to get to it (user POV)
 
@@ -31,6 +32,20 @@ Preconditions: an isolated local or scratch remote board with a live viewer. Set
 - After archiving, place a note over the question's former frame. Raw rectangles may overlap, but collision, placement, and graph calculations must exclude the archived question. Exercise placement, group collapse, and arrow avoidance using `conformance/scenarios/archived-layout.json` as the fixture recipe. Run both hosts; disappearance alone does not qualify layout exclusion.
 - For an in-place upgrade, create a note under v0.3.0 with a deadline long enough to finish the upgrade. Record its absolute expiry, ID, and content. Restart the candidate on the same isolated home. Require unchanged data before the original deadline and deletion afterward, without extending expiry.
 - For `board-stale-content`, run `object-cleanup` conformance against the guest app and replay it against scratch easld. Age an authored note past the query threshold, move and resize it, and require `untouched`; editing Markdown must remove that reason. Move a group's members and require the group's content age to stay unchanged. `board.stale --mine` inside a terminal must return only that tile's creations. Close and reopen each host's board and require the same cleanup answer. Open scratch copies with the released app and easld and check that the optional content timestamp is ignored without a format change.
+
+## Check needs-you refresh cost
+
+Run `swift run -j 2 CanvasCoreTests --filter NeedsYouDerivationTests` for the fixed 320-question corpus, seven `now` values around expiry boundaries, terminal and marker precedence, and 100 unrelated remote changes. Its debug-only date observer bounds each derivation to one expiry parse per open question with a string deadline. Closed-question dates and answer dates must not be parsed.
+
+For native proof, follow the guest launch, Doctor, capture, and cleanup procedures. Use release bundles and a 300-question fixture (below) on guest-local scratch easld over loopback SSH.
+
+1. Create all 300 questions with `keep: true` so automatic archiving does not change the fixture. Keep 12 questions open. Split the remaining 288 between answered, cancelled, and expired, and explicitly archive three quarters of those. Retain answer timestamps and fractional future expiry timestamps. Keep one real terminal visible and a second terminal running `/bin/cat` and reporting `blocked`, so the tab shows a dot without a shell prompt clearing the synthetic agent state.
+2. Capture the selected remote tab, its needs-you dot, and the window's count. Record the fixture hash, selected window, executable hash, and source revision.
+3. Activate only the owned guest app with `open -a "$EASL_DEV_HOME/easl.app"`. Click the terminal body with native input and prove a harmless command reaches the shell before resetting viewer `app.metrics`; a replay receipt alone is not text-delivery proof. Start `scripts/dev.sh input key a --repeat 100 --interval 20 --window "$WINDOW"` inside a harmless shell command. While keys arrive, create 100 unrelated notes through the host socket. Creation refreshes both the title and the open-asks count; updates to existing notes do neither.
+4. Require 100 successful host creates, a fresh viewer state containing all 100 notes, the burst-completion log, and exact shell readback of all 100 typed characters. Read metrics after the final turn closes. Retain `main.stretch50` and `main.stretch250` total counts and maxima, `longest`, and key counters. Delete the created notes outside the measured interval.
+5. Alternate base and fix for five pairs with identical starting fixture bytes and geometry. Capture outside the measured intervals. Inspect exported native PNGs and confirm unchanged dot and title count. Exercise Command-J and the navigator separately, checking the waiting question's identity against the host readback.
+
+No wall-clock threshold belongs in the permanent core regression. Native stretch counts describe this workload, not every source of main-thread stalls.
 
 ## Gotchas
 
