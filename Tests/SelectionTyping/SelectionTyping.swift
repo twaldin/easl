@@ -204,8 +204,9 @@ private enum SelectionTyping {
     private static func systemShiftClick(_ point: NSPoint, flags: NSEvent.ModifierFlags, clickCount: Int, in window: NSWindow) async throws {
         guard NSApp.isActive, window.isKeyWindow, CGPreflightPostEventAccess(),
               let screen = NSScreen.screens.first,
-              let pressed = key(56, "", type: .flagsChanged, flags: flags, in: window).cgEvent,
-              let released = key(56, "", type: .flagsChanged, in: window).cgEvent else {
+              let source = CGEventSource(stateID: .combinedSessionState),
+              let pressed = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: true),
+              let released = CGEvent(keyboardEventSource: source, virtualKey: 56, keyDown: false) else {
             throw Failure("system Shift-click requires the active test window and Post Event access")
         }
         @MainActor func deliver(_ events: [CGEvent], _ label: String, until matches: @escaping @MainActor (NSEvent) -> Bool) async throws {
@@ -231,17 +232,19 @@ private enum SelectionTyping {
         try await deliver([pressed], "AppKit must receive system Shift before the mouse") {
             $0.type == .flagsChanged && $0.keyCode == 56 && $0.modifierFlags.contains(.shift)
         }
+        try require(CGEventSource.keyState(.combinedSessionState, key: 56),
+            "system Shift-click must hold the native Shift key, not just its event flags")
         let screenPoint = window.convertPoint(toScreen: point)
         let quartzPoint = CGPoint(x: screenPoint.x, y: screen.frame.maxY - screenPoint.y)
         try require(CGWarpMouseCursorPosition(quartzPoint) == .success,
             "system Shift-click must place the hardware pointer at its native text receiver")
         var events: [CGEvent] = []
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-            guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
+            guard let event = CGEvent(mouseEventSource: source, mouseType: type,
                 mouseCursorPosition: quartzPoint, mouseButton: .left) else {
                 throw Failure("system Shift mouse event could not be created")
             }
-            event.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+            event.flags.formUnion(CGEventFlags(rawValue: UInt64(flags.rawValue)))
             event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
             events.append(event)
         }
@@ -252,8 +255,10 @@ private enum SelectionTyping {
         try await deliver([released], "AppKit must receive system Shift release") {
             $0.type == .flagsChanged && $0.keyCode == 56 && !$0.modifierFlags.contains(.shift)
         }
+        try require(!NSEvent.modifierFlags.contains(.shift)
+            && !CGEventSource.keyState(.combinedSessionState, key: 56),
+            "system Shift release must restore keyboard modifiers and native key state")
         releasePending = false
-        try require(!NSEvent.modifierFlags.contains(.shift), "system Shift release must restore keyboard modifiers")
     }
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
