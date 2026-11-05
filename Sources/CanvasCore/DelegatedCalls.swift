@@ -383,6 +383,7 @@ final class DelegatedCalls {
                         }
                         guard let bounds else { return nil }
                         let attachment = NSTextAttachment()
+                        attachment.image = NSImage(size: bounds.size)
                         attachment.bounds = bounds
                         return attachment
                     }
