@@ -295,14 +295,12 @@ private enum SelectionTyping {
 
     private static func drag(_ start: NSPoint, _ end: NSPoint, in window: NSWindow) async throws {
         try await post([mouse(.leftMouseDown, start, in: window)])
-        var events: [NSEvent] = []
         for step in 1...8 {
             let fraction = CGFloat(step) / 8
-            events.append(mouse(.leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * fraction,
-                y: start.y + (end.y - start.y) * fraction), in: window))
+            try await post([mouse(.leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * fraction,
+                y: start.y + (end.y - start.y) * fraction), in: window)])
         }
-        events.append(mouse(.leftMouseUp, end, in: window))
-        try await post(events)
+        try await post([mouse(.leftMouseUp, end, in: window)])
     }
 
     private static func scroll(_ point: NSPoint, in window: NSWindow) async throws {

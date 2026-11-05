@@ -294,6 +294,8 @@ Run the complete registry in the claimed GUI guest against optimized, testing-en
 
 The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes the leading modifier before creating later-timestamped mouse events. On macOS 27, a hit inside the native text editor that already owns typing uses system event delivery. It places the hardware pointer at the receiver, posts through the HID event tap, and acknowledges Shift, mouse-up in its own window, and Shift release. It requires the active test window and Post Event access; missing permission fails instead of falling back. Board-selection gestures, other receivers, and earlier macOS use app-local event dispatch. No fixed delay substitutes for delivery, and neither path drains the run loop synchronously.
 
+Native drags acknowledge each dispatched mouse event before posting the next, so motion is not synthesized as one queued batch. The tests retain exact world-space movement assertions.
+
 For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Build each revision's optimized objects, then invoke the frozen runner explicitly:
 
 ```sh
