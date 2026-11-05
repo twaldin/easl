@@ -1660,6 +1660,14 @@ private enum SelectionTyping {
         try await typed("abcdef", in: window)
         try require(editor.string == "abcdef" && editor.selectedRange() == NSRange(location: 6, length: 0),
             "plain question-note control must start with abcdef and caret 6")
+        let caretRect = editor.firstRect(forCharacterRange: NSRange(location: 6, length: 0), actualRange: nil)
+        let caretPoint = window.convertPoint(fromScreen: NSPoint(x: caretRect.minX + 1, y: caretRect.midY))
+        try require(caretRect.height > 0
+            && editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
+            "plain control caret placement must target native insertion 6")
+        try await click(caretPoint, in: window)
+        try require(editor.selectedRange() == NSRange(location: 6, length: 0),
+            "plain control must establish caret 6 through its mouse receiver")
         let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
         try require(rect.width > 0 && rect.height > 0, "plain control character 1 must have native geometry")
         let point = window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
@@ -1723,6 +1731,15 @@ private enum SelectionTyping {
             try await post([key(0, "a", flags: .command, in: f.window)])
             try await typed("abcdef", in: f.window)
             try require(editor.string == "abcdef", "native Select All and typing must prepare \(type.rawValue) text")
+            let caretRect = editor.firstRect(forCharacterRange: NSRange(location: 6, length: 0), actualRange: nil)
+            let caretPoint = try f.checked(f.window.convertPoint(fromScreen: NSPoint(x: caretRect.minX + 1, y: caretRect.midY)),
+                target: editor, label: "active \(type.rawValue) caret 6")
+            try require(caretRect.height > 0
+                && editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
+                "native caret placement must target insertion 6")
+            try await click(caretPoint, in: f.window)
+            try require(editor.selectedRange() == NSRange(location: 6, length: 0),
+                "native \(type.rawValue) mouse receiver must establish caret 6")
             let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
             try require(rect.width > 0 && rect.height > 0, "shift-click character must have native geometry")
             let point = try f.checked(f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY)),
