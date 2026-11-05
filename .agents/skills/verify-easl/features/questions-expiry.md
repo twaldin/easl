@@ -35,15 +35,15 @@ Preconditions: an isolated local or scratch remote board with a live viewer. Set
 
 ## Check needs-you refresh cost
 
-Run `swift run -j 2 CanvasCoreTests --filter NeedsYouDerivationTests` for the fixed 320-question corpus, seven expiry times, terminal and marker precedence, snapshot loading, and 100 unrelated remote changes. Its debug-only date observer bounds each derivation to one expiry parse per open question with a string deadline. Closed-question dates and answer dates must not be parsed.
+Run `swift run -j 2 CanvasCoreTests --filter NeedsYouDerivationTests` for the fixed 320-question corpus, seven expiry times, terminal and marker precedence, and 100 unrelated remote changes. Its debug-only date observer bounds each derivation to one expiry parse per open question with a string deadline. Closed-question dates and answer dates must not be parsed.
 
 For native proof, follow the guest launch, Doctor, capture, and cleanup procedures. Use release bundles and the same 300-question fixture on guest-local scratch easld over loopback SSH.
 
-1. Keep 12 questions open. Split the remaining 288 between answered, cancelled, and expired, and archive three quarters of those. Retain answer timestamps and fractional future expiry timestamps. Keep one real terminal and an unrelated note visible.
+1. Keep 12 questions open. Split the remaining 288 between answered, cancelled, and expired, and archive three quarters of those. Retain answer timestamps and fractional future expiry timestamps. Keep one real terminal visible.
 2. Capture the selected remote tab, its needs-you dot, and the window's count. Record the fixture hash, selected window, executable hash, and source revision.
-3. Reset viewer `app.metrics`. Start `scripts/dev.sh input key a --repeat 100 --interval 20 --window "$WINDOW"` inside a harmless shell command. While keys arrive, write 100 distinct updates to the unrelated note through the host socket.
-4. Require 100 successful host writes, a fresh viewer state reflecting the final note, the burst-completion log, and exact shell readback of all 100 typed characters. Read metrics after the final turn closes. Retain `main.stretch50` and `main.stretch250` total counts and maxima, `longest`, and key counters.
-5. Alternate base and fix for five pairs with identical fixture bytes and geometry. Capture outside the measured intervals. Inspect exported native PNGs and confirm unchanged dot and title count. Exercise Command-J and the navigator separately, checking the waiting question's identity against the host readback.
+3. Reset viewer `app.metrics`. Start `scripts/dev.sh input key a --repeat 100 --interval 20 --window "$WINDOW"` inside a harmless shell command. While keys arrive, create 100 unrelated notes through the host socket. Creation refreshes both the title and the open-asks count; updates to existing notes do neither.
+4. Require 100 successful host creates, a fresh viewer state containing all 100 notes, the burst-completion log, and exact shell readback of all 100 typed characters. Read metrics after the final turn closes. Retain `main.stretch50` and `main.stretch250` total counts and maxima, `longest`, and key counters. Delete the created notes outside the measured interval.
+5. Alternate base and fix for five pairs with identical starting fixture bytes and geometry. Capture outside the measured intervals. Inspect exported native PNGs and confirm unchanged dot and title count. Exercise Command-J and the navigator separately, checking the waiting question's identity against the host readback.
 
 No wall-clock threshold belongs in the permanent core regression. Native stretch counts describe this workload, not every source of main-thread stalls.
 

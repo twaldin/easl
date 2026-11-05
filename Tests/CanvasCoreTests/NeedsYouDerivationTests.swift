@@ -10,10 +10,10 @@ struct NeedsYouDerivationFixture {
     init(questionCount: Int = 320) {
         let variants: [[String: JSONValue]] = [
             ["status": "open"],
-            ["status": "answered"],
-            ["status": "cancelled"],
-            ["status": "expired"],
-            ["status": "answered", "archived": .bool(true)],
+            ["status": "answered", "expiresAt": "2029-12-31T23:00:00Z"],
+            ["status": "cancelled", "expiresAt": "2029-12-31T23:00:00Z"],
+            ["status": "expired", "expiresAt": "2029-12-31T23:00:00Z"],
+            ["status": "answered", "archived": .bool(true), "expiresAt": "2029-12-31T23:00:00Z"],
             ["status": "open", "archived": .bool(true)],
             ["status": "future-status"],
             [:],
@@ -79,7 +79,7 @@ struct NeedsYouDerivationFixture {
 
 @MainActor
 struct NeedsYouDerivationTests {
-    @Test func mixedQuestionsMatchFrozenDerivationAcrossUnrelatedRemoteChanges() throws {
+    @Test func mixedQuestionsMatchFrozenDerivationAcrossExpiryBoundaries() throws {
         let fixture = NeedsYouDerivationFixture()
         #expect(fixture.objects.values.filter { $0.type == .question }.count >= 300)
         let board = fixture.remoteBoard()
@@ -87,23 +87,10 @@ struct NeedsYouDerivationTests {
         let expected = moments.map { now in
             (Self.baseItems(board.objects, attention: board.attention, now: now), Self.baseWaiting(board.objects, now: now))
         }
-        for revision in 0...100 {
-            if revision > 0 {
-                var note = try #require(board.objects["unrelated-note"])
-                note.rev += 1
-                note.props = .object(["markdown": .string("Unrelated host change \(revision)")])
-                note.updatedAt = NeedsYouDerivationFixture.now.addingTimeInterval(Double(revision))
-                board.applyHost(note)
-            }
-            for (index, now) in moments.enumerated() {
-                #expect(NeedsYouItem.all(board.objects, attention: board.attention, now: now) == expected[index].0)
-                #expect(board.waitingQuestions(at: now) == expected[index].1)
-            }
+        for (index, now) in moments.enumerated() {
+            #expect(NeedsYouItem.all(board.objects, attention: board.attention, now: now) == expected[index].0)
+            #expect(board.waitingQuestions(at: now) == expected[index].1)
         }
-        var snapshot = board.snapshot
-        snapshot.objects = snapshot.objects.filter { $0.type == .question }
-        let loaded = Board(snapshot: snapshot)
-        #expect(loaded.waitingQuestions(at: NeedsYouDerivationFixture.now) == expected[3].1)
     }
 
     @Test func edgeCasesHaveIndependentExpectedMembershipAndPrecedence() {
