@@ -309,11 +309,10 @@ public struct NeedsYouItem: Equatable, Sendable {
         var items: [NeedsYouItem] = []
         for object in objects.values {
             let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
-            let question = object.type == .question ? QuestionSpec(object.props) : nil
             if state == LifecycleState.blocked.rawValue {
                 items.append(NeedsYouItem(id: object.id, reason: .blocked, message: object.props["lifecycle"]?["message"]?.string, frame: object.frame))
-            } else if let question, question.isWaiting(at: now) {
-                items.append(NeedsYouItem(id: object.id, reason: .question, message: question.question, frame: object.frame))
+            } else if object.type == .question, QuestionSpec.isWaiting(object.props, at: now) {
+                items.append(NeedsYouItem(id: object.id, reason: .question, message: object.props["question"]?.string ?? "", frame: object.frame))
             } else if let marker = attention[object.id] {
                 items.append(NeedsYouItem(id: object.id, reason: .marked, message: marker.message, frame: object.frame))
             } else if state == LifecycleState.done.rawValue, object.props["lifecycle"]?["seen"]?.bool != true {

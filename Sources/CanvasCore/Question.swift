@@ -146,8 +146,9 @@ public struct QuestionSpec: Equatable, Sendable {
     }
 
     /// Still waiting on the user at `now`: open, and not past `expiresAt`.
-    public func isWaiting(at now: Date) -> Bool {
-        status == .open && (expiresAt.map { $0 > now } ?? true)
+    public static func isWaiting(_ props: JSONValue, at now: Date) -> Bool {
+        guard status(of: props) == .open else { return false }
+        return props["expiresAt"]?.string.flatMap(date).map { $0 > now } ?? true
     }
 
     /// When the app archives this question: `archiveAfter` past `updatedAt`, its last write. Nil
@@ -623,7 +624,7 @@ extension Board {
 
     /// Questions still waiting on the user, oldest first (the board's open-asks count).
     public func waitingQuestions(at now: Date = Date()) -> [CanvasObject] {
-        objects.values.filter { $0.type == .question && QuestionSpec($0.props).isWaiting(at: now) }
+        objects.values.filter { $0.type == .question && QuestionSpec.isWaiting($0.props, at: now) }
             .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
     }
 }
