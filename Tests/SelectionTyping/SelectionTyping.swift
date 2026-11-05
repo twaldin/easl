@@ -119,7 +119,7 @@ private enum SelectionTyping {
         }
         for name in ["note-escape-prompt", "note-command-return-prompt", "note-escape-board", "note-command-return-board",
                      "note-escape-no-prompt", "note-command-return-no-prompt",
-                     "menu-cancel-note", "menu-cancel-terminal", "menu-cancel-selected-note", "menu-cancel-multi",
+                     "menu-cancel-note", "menu-cancel-terminal", "menu-cancel-selected-note", "menu-cancel-multi", "menu-cancel-preserved-multi",
                      "navigator-select-note", "html-cold-no-buffer"] {
             cases.append(Scenario(name: name, baseline: "feature regression"))
         }
@@ -1271,7 +1271,7 @@ private enum SelectionTyping {
         try f.boardOwns([note.id, other.id])
     }
 
-    private static func exerciseMenuCancellation(_ f: Fixture, type: ObjectType, selected: Bool = false, multi: Bool = false) async throws {
+    private static func exerciseMenuCancellation(_ f: Fixture, type: ObjectType, selected: Bool = false, multi: Bool = false, preserveTyping: Bool = false) async throws {
         let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
         let target = try await f.create(type, x: 470, y: 110, width: 370, height: 310)
         let other = try await f.create(.note, x: 470, y: 460, width: 370, height: 180)
@@ -1279,7 +1279,7 @@ private enum SelectionTyping {
         let before = f.read(terminal.id)
         if selected || multi {
             f.canvas.setSelection(multi ? [target.id, other.id] : [target.id])
-            f.window.makeFirstResponder(f.canvas.document)
+            if !preserveTyping { f.window.makeFirstResponder(f.canvas.document) }
         }
         let tracking = MenuTrackingObserver()
         let center = NotificationCenter.default
@@ -2280,7 +2280,8 @@ private enum SelectionTyping {
             }
         } else if name.hasPrefix("menu-cancel-") {
             try await exerciseMenuCancellation(f, type: name == "menu-cancel-terminal" ? .terminal : .note,
-                selected: name == "menu-cancel-selected-note", multi: name == "menu-cancel-multi")
+                selected: name == "menu-cancel-selected-note", multi: name.hasSuffix("-multi"),
+                preserveTyping: name == "menu-cancel-preserved-multi")
         } else if name == "navigator-select-note" {
             try await exerciseNavigatorSelection(f)
         } else if name == "html-cold-no-buffer" {

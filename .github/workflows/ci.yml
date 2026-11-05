@@ -74,6 +74,7 @@ jobs:
           swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
           python3 Tests/NoteMermaidChurn/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --ci-timing-report-only
       - name: Install zmx for native keyboard regressions
+        id: install-zmx
         if: ${{ !cancelled() }}
         env:
           ZMX_VERSION: 0.8.1
@@ -89,12 +90,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/native-zmx"
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/native-zmx"
           echo "$RUNNER_TEMP/native-zmx" >> "$GITHUB_PATH"
+      - name: Build native selection and typing regression
+        id: selection-typing-build
+        if: ${{ !cancelled() && steps.install-zmx.outcome == 'success' }}
+        run: swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
       - name: Native selection and typing regression
         id: selection-typing
-        if: ${{ !cancelled() }}
-        run: |
-          swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-          python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/selection-typing"
+        if: ${{ !cancelled() && steps.selection-typing-build.outcome == 'success' }}
+        run: python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/selection-typing"
       - name: Preserve selection and typing evidence
         if: always() && steps.selection-typing.outcome != 'skipped'
         uses: actions/upload-artifact@v4

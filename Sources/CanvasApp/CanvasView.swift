@@ -1641,7 +1641,7 @@ final class CanvasView: NSScrollView {
     // MARK: Context menus
 
     func objectMenu(for id: ObjectID, at point: NSPoint? = nil) -> NSMenu {
-        if !selection.contains(id) || selection.count == 1 { setSelection([id], cause: .user) }
+        setSelection(selection.contains(id) ? selection : [id], cause: .user)
         let count = selection.count
         let menu = NSMenu()
         if focusedTile == id {
