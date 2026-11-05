@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import CanvasCore
 
@@ -144,38 +145,22 @@ struct NeedsYouDerivationTests {
         let dateBound = board.objects.values.filter {
             $0.type == .question && QuestionSpec.status(of: $0.props) == .open && $0.props["expiresAt"]?.string != nil
         }.count
-        let count = DateParseCount()
+        let count = OSAllocatedUnfairLock(initialState: 0)
         for revision in 1...100 {
             var note = try #require(board.objects["unrelated-note"])
             note.rev += 1
             note.props = .object(["markdown": .string("Host change \(revision)")])
-            board.applyHost(note)
-            let before = count.value
-            QuestionSpec.$observeDateParsing.withValue({ count.parsed() }) {
+            let before = count.withLock { $0 }
+            QuestionSpec.$observeDateParsing.withValue({ count.withLock { $0 += 1 } }) {
+                board.applyHost(note)
                 #expect(NeedsYouItem.all(board.objects, attention: board.attention, now: now) == expectedItems)
                 #expect(board.waitingQuestions(at: now) == expectedWaiting)
             }
-            #expect(count.value - before <= 2 * dateBound,
+            #expect(count.withLock { $0 } - before <= 2 * dateBound,
                     "Each caller may parse one expiry per open question, never closed-question or answer dates")
         }
     }
 
-    private final class DateParseCount: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-
-        func parsed() {
-            lock.lock()
-            count += 1
-            lock.unlock()
-        }
-
-        var value: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return count
-        }
-    }
     #endif
 
     // Frozen full-decoding derivation from 4aa97b02, deliberately independent of the optimized path.

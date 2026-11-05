@@ -8,7 +8,7 @@ Each version's section is its GitHub release's notes.
 
 - Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
 - Delegated text measurement now parses and lays out notes, text shapes, labels, arrow captions, and code captions off the Mac's main thread. `layout.check` keeps terminal input responsive without changing measured sizes. Mermaid resolution and SwiftMath view sizing remain on main; only their dimensions enter worker layout.
-- Needs-you refreshes now check question status before parsing expiry and skip full question decoding. Local and remote board changes no longer re-parse closed questions' answer dates for window title counts, the open-asks count, the navigator, or ⌘J.
+- Local and remote board refreshes now check whether questions are waiting without decoding options, context, or answers. Window title and open-asks counts skip closed questions' date parsing.
 
 ## 0.3.6
 
