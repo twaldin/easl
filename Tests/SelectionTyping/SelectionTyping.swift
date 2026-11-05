@@ -207,16 +207,6 @@ private enum SelectionTyping {
               let released = key(56, "", type: .flagsChanged, in: window).cgEvent else {
             throw Failure("system Shift-click requires the active test window and Post Event access")
         }
-        let trace = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseDown, .leftMouseUp]) { event in
-            MainActor.assumeIsolated {
-                let editor = window.firstResponder as? NSTextView
-                let insertion = editor.map { $0.characterIndexForInsertion(at: $0.convert(event.locationInWindow, from: nil)) }
-                print("SYSTEM_SHIFT type=\(event.type.rawValue) key=\(event.type == .flagsChanged ? Int(event.keyCode) : -1) flags=\(event.modifierFlags.rawValue) global=\(NSEvent.modifierFlags.rawValue) range=\(String(describing: editor?.selectedRange())) window=\(event.windowNumber) point=\(event.locationInWindow) intended=\(point) insertion=\(String(describing: insertion)) editor=\(String(describing: editor.map { String(describing: type(of: $0)) }))")
-                fflush(nil)
-            }
-            return event
-        }
-        defer { if let trace { NSEvent.removeMonitor(trace) } }
         @MainActor func deliver(_ events: [CGEvent], _ label: String, until matches: @escaping @MainActor (NSEvent) -> Bool) async throws {
             var observed = false
             guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp], handler: { event in
@@ -240,12 +230,10 @@ private enum SelectionTyping {
         try await deliver([pressed], "AppKit must receive system Shift before the mouse") {
             $0.type == .flagsChanged && $0.keyCode == 56 && $0.modifierFlags.contains(.shift)
         }
-        if let editor = window.firstResponder as? NSTextView {
-            print("SYSTEM_SHIFT after-leading range=\(editor.selectedRange()) insertion=\(editor.characterIndexForInsertion(at: editor.convert(point, from: nil))) editorFrame=\(editor.frame) clipBounds=\(String(describing: editor.enclosingScrollView?.contentView.bounds))")
-            fflush(nil)
-        }
         let screenPoint = window.convertPoint(toScreen: point)
         let quartzPoint = CGPoint(x: screenPoint.x, y: screen.frame.maxY - screenPoint.y)
+        try require(CGWarpMouseCursorPosition(quartzPoint) == .success,
+            "system Shift-click must place the hardware pointer at its native text receiver")
         var events: [CGEvent] = []
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
