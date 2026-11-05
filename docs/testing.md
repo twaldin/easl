@@ -293,7 +293,13 @@ Run the complete registry in the claimed GUI guest against optimized, testing-en
 
 The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes its leading `flagsChanged` event, then creates and posts the mouse events with later timestamps. Queueing both modifier transitions together failed to deliver the leading transition in the active text-editor fixture. No sleep or synchronous run-loop drain establishes delivery.
 
-For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Run those same files against each revision's optimized objects with `--harness-source /absolute/scratch/final-harness.swift` and separate output directories. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
+For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Build each revision's optimized objects, then invoke the frozen runner explicitly:
+
+```sh
+	python3 /absolute/scratch/final-run.py --resources /path/to/revision --bin-path /path/to/optimized/bin --harness-source /absolute/scratch/final-harness.swift --output /absolute/scratch/revision-evidence
+```
+
+Use a separate output directory for each revision. `--resources` supplies that revision's schema, fixtures, and cleanup script instead of resolving them relative to the copied runner. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
 
 ## Native browsing-data regression
 

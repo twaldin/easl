@@ -90,7 +90,7 @@ jobs:
           echo "$RUNNER_TEMP/native-zmx" >> "$GITHUB_PATH"
       - name: Native selection and typing regression
         id: selection-typing
-        run: python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/selection-typing"
+        run: python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --harness-source Tests/SelectionTyping/NativeTextDiagnostic.swift --output "${{ runner.temp }}/selection-typing"
       - name: Preserve selection and typing evidence
         if: always() && steps.selection-typing.outcome != 'skipped'
         uses: actions/upload-artifact@v4
