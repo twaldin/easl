@@ -282,6 +282,19 @@ The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, Bun 1.4.
 
 In `agent-gui`, use the already-authorized CuaDriver with both the dev process PID and its window ID, as the recipe shows. Capture before and after a visible change, then inspect both PNGs for changed terminal output and advancing HTML or browser content. A new file or in-process `view.snapshot` is not GUI proof. Do not pursue a native SSH Screen Recording grant.
 
+## Native selection and typing regression
+
+Run the complete registry in the claimed GUI guest against optimized, testing-enabled app objects:
+
+```sh
+	swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/selection-typing-evidence
+```
+
+The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes its leading `flagsChanged` event before posting the mouse batch. Posting the press and release together can coalesce the modifier transition while a text editor has typing. No sleep or synchronous run-loop drain establishes delivery.
+
+For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Run those same files against each revision's optimized objects with `--harness-source /absolute/scratch/final-harness.swift` and separate output directories. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
+
 ## Native browsing-data regression
 
 Build with `swift build --build-system native -j 2 --product Easl -Xswiftc -enable-testing`, then run `python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"` in the queued guest. It uses an isolated home and reads back real cookies from the default, local, remote-only, and closed-board-only profile stores after confirming the native sheet. The latter two stores are absent from the supplied local profile names and the in-memory named-store cache. CI runs the same fixture.

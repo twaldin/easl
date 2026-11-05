@@ -189,11 +189,6 @@ private enum SelectionTyping {
                   MainActor.assumeIsolated {
                       if event.type == .applicationDefined, event.subtype.rawValue == 27183, event.data1 == batch {
                           delivered = true
-                      } else if events.contains(where: {
-                          $0.type == event.type && $0.windowNumber == event.windowNumber
-                              && ($0.timestamp == event.timestamp || event.type == .leftMouseDown || event.type == .leftMouseUp)
-                      }) {
-                          print("NATIVE batch=\(batch) type=\(event.type.rawValue) flags=\(event.modifierFlags.rawValue) point=\(event.locationInWindow)")
                       }
                   }
                   return event
@@ -203,16 +198,25 @@ private enum SelectionTyping {
         NSApp.postEvent(marker, atStart: false)
         try await wait("AppKit did not dispatch native event batch \(batch)") { delivered }
         await MainTurns.next()
-        print("QUEUED batch=\(batch) events=\(events.map { $0.type.rawValue })")
-        fflush(nil)
     }
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
         let down = mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window)
         let up = mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)
         if flags.contains(.shift) {
-            try await post([key(56, "", type: .flagsChanged, flags: flags, in: window), down, up,
-                key(56, "", type: .flagsChanged, in: window)])
+            var shiftObserved = false
+            guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { event in
+                MainActor.assumeIsolated {
+                    if event.windowNumber == window.windowNumber, event.modifierFlags.contains(.shift) {
+                        shiftObserved = true
+                    }
+                }
+                return event
+            }) else { throw Failure("native Shift modifier monitor could not be installed") }
+            defer { NSEvent.removeMonitor(monitor) }
+            try await post([key(56, "", type: .flagsChanged, flags: flags, in: window)])
+            try await wait("AppKit must dispatch Shift before its mouse batch") { shiftObserved }
+            try await post([down, up, key(56, "", type: .flagsChanged, in: window)])
         } else {
             try await post([down, up])
         }
@@ -313,8 +317,6 @@ private enum SelectionTyping {
             try await wait("isolated dispatch fixture must be active with a key board window") {
                 NSApp.isActive && self.window.isKeyWindow
             }
-            print("DISPATCH app=\(type(of: NSApp!)) active=\(NSApp.isActive) key=\(window.isKeyWindow) delegate=\(String(describing: NSApp.delegate)) responder=\(String(describing: window.firstResponder))")
-            fflush(nil)
         }
 
         func create(_ type: ObjectType, x: Double = 30, y: Double = 45, width: Double = 450, height: Double = 290) async throws -> CanvasObject {
@@ -356,8 +358,6 @@ private enum SelectionTyping {
             }
             let object = board.create(type: type, props: props, frame: Frame(x: x, y: y, w: width, h: height))
             try require(board.objects[object.id]?.type == type, "created fixture must retain its real object identity")
-            print("OBJECT board=\(board.id) id=\(object.id) type=\(type.rawValue) frame=\(object.frame)")
-            fflush(nil)
             if type == .terminal {
                 receipts[object.id] = root.appendingPathComponent("input-\(terminals.count).bin")
                 terminals.append(object)
@@ -393,13 +393,7 @@ private enum SelectionTyping {
         func diagnostic(_ point: NSPoint? = nil) -> String {
             let hit = point.flatMap { self.hit($0) }
             let objects = board.objects.values.sorted { $0.id < $1.id }.map { "\($0.id):\($0.type.rawValue)" }
-            let mouseDispatch = Mirror(reflecting: window).children
-                .filter { $0.label == "dispatchingSelectionMouse" || $0.label == "boardSelectionSerial" }
-                .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
-            let selectionDispatch = Mirror(reflecting: canvas).children
-                .filter { $0.label == "selectionSerial" || $0.label == "move" }
-                .map { "\($0.label ?? "?")=\(String(describing: $0.value))" }
-            return "board=\(board.id) objects=\(objects) selection=\(canvas.selection) focused=\(String(describing: canvas.focusedTile)) responder=\(String(describing: window.firstResponder)) point=\(String(describing: point)) hit=\(String(describing: hit)) viewport=\(canvas.viewport) dispatch=\(mouseDispatch + selectionDispatch)"
+            return "board=\(board.id) objects=\(objects) selection=\(canvas.selection) focused=\(String(describing: canvas.focusedTile)) responder=\(String(describing: window.firstResponder)) point=\(String(describing: point)) hit=\(String(describing: hit)) viewport=\(canvas.viewport)"
         }
 
         func ready(_ id: ObjectID) async throws {
@@ -421,7 +415,6 @@ private enum SelectionTyping {
 
         func checked(_ point: NSPoint, target: NSView, label: String) throws -> NSPoint {
             let hit = hit(point)
-            print("HIT \(label) frame=\(target.frame) bounds=\(target.bounds) \(diagnostic(point))")
             try require(hit === target || hit?.isDescendant(of: target) == true,
                 "\(label) must be genuinely hittable before its native mouse event; \(diagnostic(point))")
             return point
@@ -1341,8 +1334,6 @@ private enum SelectionTyping {
         guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
             throw Failure("the first single prose press must open the native editor before dragging")
         }
-        print("CARET rendered=\(reversed ? 15 : 6) received=\(String(describing: receivedInsertion)) selected=\(editor.selectedRange()) point=\(down)")
-        fflush(nil)
         try require(receivedInsertion == (reversed ? 15 : 6),
             "the dispatched prose press must hit its intended rendered insertion; actual=\(String(describing: receivedInsertion))")
         try require(editor.selectedRange() == NSRange(location: reversed ? 15 : 6, length: 0),
@@ -1586,8 +1577,6 @@ private enum SelectionTyping {
             try require(rect.width > 0 && rect.height > 0, "shift-click character must have native geometry")
             let point = try f.checked(f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY)),
                 target: editor, label: "active \(type.rawValue) character 1")
-            print("SHIFT before=\(editor.selectedRange()) insertion=\(editor.characterIndexForInsertion(at: editor.convert(point, from: nil))) point=\(point) \(f.diagnostic(point))")
-            fflush(nil)
             try require(editor.selectedRange() == NSRange(location: 6, length: 0)
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
@@ -1595,8 +1584,6 @@ private enum SelectionTyping {
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
-            print("SHIFT after=\(range) globalFlags=\(NSEvent.modifierFlags.rawValue)")
-            fflush(nil)
             try require(range == NSRange(location: 1, length: 5),
                 "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
             try require((editor.string as NSString).substring(with: range) == "bcdef",
