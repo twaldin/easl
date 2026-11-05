@@ -70,12 +70,13 @@ struct NativeEventProbe {
     }
     static func run() async {
         print("OS \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        for route in ["app-queue", "app-queue-warp", "cg-wrapped", "pid-mouse", "pid-flags-and-mouse"] {
+        for route in ["plain-batch", "plain-separated", "override-batch", "override-separated"] {
             let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 300),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             defer { window.close() }
-            let editor = ProbeTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+            let frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+            let editor: NSTextView = route.hasPrefix("plain") ? NSTextView(frame: frame) : ProbeTextView(frame: frame)
             editor.isRichText = false
             editor.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
             window.contentView = editor
@@ -110,9 +111,11 @@ struct NativeEventProbe {
                     } else { events.append(event) }
                 }
                 print("EVENT route=\(route) window=\(events[0].windowNumber) point=\(events[0].locationInWindow) flags=\(events[0].modifierFlags.rawValue)")
-                try await dispatch(events, pid: route.hasPrefix("pid-"))
-                try await dispatch([key(56, type: .flagsChanged, window: window)], pid: pidFlags)
-                print("RESULT route=\(route) range=\(editor.selectedRange()) entries=\(editor.mouseEntries) global=\(NSEvent.modifierFlags.rawValue)")
+                let batch = route.hasSuffix("batch")
+                if batch { events.append(key(56, type: .flagsChanged, window: window)) }
+                try await dispatch(events)
+                if !batch { try await dispatch([key(56, type: .flagsChanged, window: window)]) }
+                print("RESULT route=\(route) range=\(editor.selectedRange()) entries=\((editor as? ProbeTextView)?.mouseEntries ?? 0) global=\(NSEvent.modifierFlags.rawValue)")
             } catch {
                 print("UNAVAILABLE route=\(route) error=\(error)")
             }
