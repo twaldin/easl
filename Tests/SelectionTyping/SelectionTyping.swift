@@ -201,8 +201,6 @@ private enum SelectionTyping {
     }
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
-        let down = mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window)
-        let up = mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)
         if flags.contains(.shift) {
             var shiftObserved = false
             guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { event in
@@ -216,9 +214,12 @@ private enum SelectionTyping {
             defer { NSEvent.removeMonitor(monitor) }
             try await post([key(56, "", type: .flagsChanged, flags: flags, in: window)])
             try await wait("AppKit must dispatch Shift before its mouse batch") { shiftObserved }
+            let down = mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window)
+            let up = mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)
             try await post([down, up, key(56, "", type: .flagsChanged, in: window)])
         } else {
-            try await post([down, up])
+            try await post([mouse(.leftMouseDown, point, flags: flags, clickCount: clickCount, in: window),
+                mouse(.leftMouseUp, point, flags: flags, clickCount: clickCount, in: window)])
         }
     }
 

@@ -291,7 +291,7 @@ Run the complete registry in the claimed GUI guest against optimized, testing-en
 	python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/selection-typing-evidence
 ```
 
-The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes its leading `flagsChanged` event before posting the mouse batch. Posting the press and release together can coalesce the modifier transition while a text editor has typing. No sleep or synchronous run-loop drain establishes delivery.
+The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes its leading `flagsChanged` event, then creates and posts the mouse events with later timestamps. Queueing both modifier transitions together failed to deliver the leading transition in the active text-editor fixture. No sleep or synchronous run-loop drain establishes delivery.
 
 For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Run those same files against each revision's optimized objects with `--harness-source /absolute/scratch/final-harness.swift` and separate output directories. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
 
@@ -510,7 +510,7 @@ The Kitty consumer emits a startup banner before its `READY` line. The fixture f
 
 Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Record selection and typing, then drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and the same selection and typing. Repeat moving an unselected tile while another terminal or text tile owns typing.
 
-Shift-click the second tile and drag either body. One ⌘Z must restore both frames. Escape during a held drag must restore the preview without committing it. After release, Select must be active. With Move on, scroll over each body and require board pan rather than content scroll.
+Shift-click the second tile and drag either body. One ⌘Z must restore both frames. After a normal release, Move must remain active for the next drag. Escape during a held drag must restore the preview without committing it and return to Select. V or Escape also returns an idle Move tool to Select. With Move on, scroll over each body and require board pan rather than content scroll.
 
 Check hidden-terminal focus separately. Leave a typing terminal with Command-Escape, then pan it out until it becomes a card. Press M and pan it back into view. Neither selection nor typing changes during those gestures, and the terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
 
