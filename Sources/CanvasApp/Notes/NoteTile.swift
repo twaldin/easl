@@ -804,13 +804,13 @@ final class NoteTile: NSView, TileContent {
 
     private var canvas: CanvasView? { enclosingScrollView as? CanvasView }
 
-    /// Keyboard focus goes back to the canvas with the note selected after an edit started with
-    /// Return, else to where prompts go.
     private func returnFocus() {
         if enteredByKeyboard, let canvas {
             canvas.leaveTile()
-        } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
-            terminal.focus()
+        } else if let canvas, let target = canvas.promptTarget, canvas.tiles[target]?.content is TerminalTile {
+            canvas.setSelection([target], cause: .user)
+        } else if let canvas {
+            canvas.leaveTile()
         } else {
             window?.makeFirstResponder(nil)
         }

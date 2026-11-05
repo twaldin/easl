@@ -96,6 +96,12 @@ private enum SelectionTyping {
         for name in ["browser-interleaved-undo", "html-interleaved-undo"] {
             cases.append(Scenario(name: name, baseline: "existing bug regression"))
         }
+        for name in ["note-escape-prompt", "note-command-return-prompt", "note-escape-board", "note-command-return-board",
+                     "note-escape-no-prompt", "note-command-return-no-prompt",
+                     "menu-cancel-note", "menu-cancel-terminal", "menu-cancel-selected-note", "menu-cancel-multi",
+                     "navigator-select-note", "html-cold-no-buffer"] {
+            cases.append(Scenario(name: name, baseline: "feature regression"))
+        }
         return cases
     }
 
@@ -1092,6 +1098,9 @@ private enum SelectionTyping {
                 "options": [], "context": .array([.object(["object": .string(target.id)])])]), caller: nil)
             questionSource = f.board.create(type: .question, props: props, frame: Frame(x: 450, y: 110, w: 440, h: 360))
         }
+        let guardTerminal = route == "open-url" && ownerType != .terminal
+            ? try await f.create(.terminal, x: 20, y: 480, width: 340, height: 180) : nil
+        let guardBytes = guardTerminal.map { f.read($0.id) }
         try await enter(owner, in: f)
         if route == "same-selection" {
             f.canvas.setSelection([target.id])
@@ -1102,7 +1111,7 @@ private enum SelectionTyping {
         }
         let responder = f.window.firstResponder
         let note = responder as? NSTextView
-        let originalNote = note?.string
+        let expectedNote = note.map { ($0.string as NSString).replacingCharacters(in: $0.selectedRange(), with: "x") }
         let originalBytes = f.read(owner.id)
         switch route {
         case "set-selection", "leave-selected": f.canvas.setSelection([target.id])
@@ -1115,15 +1124,36 @@ private enum SelectionTyping {
             router.showOpenedLink = { [weak canvas = f.canvas] _, opened, source in
                 canvas?.showOpenedLink(opened, openedFrom: source)
             }
-            var sockets: [Int32] = [-1, -1]
-            try require(socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0, "API fixture needs a real local socket pair")
-            defer { for fd in sockets { Darwin.close(fd) } }
-            let connection = SocketServer.Connection(fd: sockets[0])
-            let reply = await router.handle(.object(["id": "open-url", "method": "view.open_url",
-                "params": .object(["board": .string(f.board.id), "url": .string(url.absoluteString)])]), connection: connection)
-            try require(reply?["ok"] == .bool(true) && reply?["result"]?["existing"] == .bool(true)
-                && reply?["result"]?["object"]?["id"]?.string == existing.id,
-                "real view.open_url dispatch must reuse the already-open browser")
+            let socketPath = "/tmp/easl-select-\(UUID().uuidString.prefix(8)).sock"
+            let server = SocketServer(path: socketPath) { request, connection in
+                await router.handle(request, connection: connection)
+            }
+            try server.start()
+            defer { server.stop() }
+            guard let resources = AppPaths.resources else { throw Failure("real API CLI requires recorded app resources") }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["bun", resources.appendingPathComponent("cli/easl.ts").path, "view.open_url",
+                "--board", f.board.id, "--url", url.absoluteString]
+            var environment = ProcessInfo.processInfo.environment
+            environment["EASL_SOCKET"] = socketPath
+            environment["EASL_TILE_ID"] = nil
+            environment["EASL_BOARD_ID"] = f.board.id
+            process.environment = environment
+            let output = Pipe()
+            process.standardOutput = output
+            let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do { try process.run() }
+                catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+            try require(status == 0, "the shipped easl view.open_url CLI must succeed over the real socket")
+            let reply = try JSONDecoder().decode(JSONValue.self, from: output.fileHandleForReading.readDataToEndOfFile())
+            try require(reply["existing"] == .bool(true) && reply["object"]?["id"]?.string == existing.id,
+                "the external CLI must reuse the already-open browser through real API dispatch")
             try require(f.canvas.selection == [existing.id], "view.open_url's existing-tile route must update selection")
         case "question-link":
             guard let source = questionSource, let tile = f.canvas.tiles[source.id]?.content as? QuestionTile,
@@ -1160,12 +1190,151 @@ private enum SelectionTyping {
         case .terminal:
             try await wait("typing after programmatic navigation left its terminal") { f.read(owner.id) == originalBytes + Data("x".utf8) }
         case .note:
-            try require(note?.string != originalNote && note?.string.contains("x") == true, "typing after navigation must edit the previous note")
+            try require(note?.string == expectedNote, "typing after navigation must replace exactly the previous note's native selection")
         case .html:
             let web = try await f.web(owner.id)
             try await wait("typing after navigation left its HTML owner") { await js(web, "document.getElementById('field').value") as? String == "x" }
         default: throw Failure("unsupported previous owner")
         }
+        if let guardTerminal {
+            try require(f.read(guardTerminal.id) == guardBytes,
+                "real external selection and subsequent typing must leave the non-owning terminal bytes unchanged")
+        }
+    }
+
+    private static func exerciseNoteReturn(_ f: Fixture, board: Bool, confirmed: Bool) async throws {
+        let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+        let note = try await f.create(.note, x: 470, y: 110, width: 370, height: 310)
+        try await enter(terminal, in: f)
+        f.canvas.promptTarget = terminal.id
+        let before = f.read(terminal.id)
+        try await click(try f.point(note.id, title: board), in: f.window)
+        guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+            throw Failure("note return trial must start in the native prose editor")
+        }
+        let expected = (editor.string as NSString).replacingCharacters(in: editor.selectedRange(), with: "saved")
+        try await typed("saved", in: f.window)
+        try require(editor.string == expected, "note draft must contain exactly the native insertion")
+        try await post([confirmed ? key(36, "\r", flags: .command, in: f.window) : key(53, "\u{1b}", in: f.window)])
+        try await wait("note completion must commit its exact draft") {
+            f.board.objects[note.id]?.props["markdown"]?.string == expected
+        }
+        if board {
+            try f.boardOwns([note.id])
+            try await typed("x", in: f.window)
+            try f.boardOwns([note.id])
+        } else {
+            try require(f.canvas.selection == [terminal.id] && f.canvas.focusedTile == terminal.id,
+                "returning prose typing to the prompt terminal must select that terminal")
+            try await assertInput(terminal, in: f)
+        }
+        try require(f.read(terminal.id) == before + (board ? Data() : Data("x".utf8)),
+            "note completion must send only the positive typing control to the prompt terminal")
+    }
+
+    private static func exerciseNoteReturnWithoutPrompt(_ f: Fixture, confirmed: Bool) async throws {
+        let note = try await f.create(.note, x: 20, y: 110, width: 370, height: 310)
+        let other = try await f.create(.note, x: 470, y: 110, width: 370, height: 310)
+        try await click(try f.point(note.id), in: f.window)
+        guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
+            throw Failure("a note without a prompt terminal must enter native editing")
+        }
+        let expected = (editor.string as NSString).replacingCharacters(in: editor.selectedRange(), with: "saved")
+        try await typed("saved", in: f.window)
+        try await post([confirmed ? key(36, "\r", flags: .command, in: f.window) : key(53, "\u{1b}", in: f.window)])
+        try await wait("note completion without a prompt terminal must save the native draft") {
+            f.board.objects[note.id]?.props["markdown"]?.string == expected
+        }
+        try f.boardOwns([note.id])
+        try await post([key(0, "a", flags: .command, in: f.window)])
+        try f.boardOwns([note.id, other.id])
+    }
+
+    private static func exerciseMenuCancellation(_ f: Fixture, type: ObjectType, selected: Bool = false, multi: Bool = false) async throws {
+        let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+        let target = try await f.create(type, x: 470, y: 110, width: 370, height: 310)
+        let other = try await f.create(.note, x: 470, y: 460, width: 370, height: 180)
+        try await enter(terminal, in: f)
+        let before = f.read(terminal.id)
+        if selected || multi {
+            f.canvas.setSelection(multi ? [target.id, other.id] : [target.id])
+            f.window.makeFirstResponder(f.canvas.document)
+        }
+        var began = false
+        var ended = false
+        let center = NotificationCenter.default
+        let begin = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { notification in
+            MainActor.assumeIsolated {
+                guard let menu = notification.object as? NSMenu else { return }
+                began = true
+                RunLoop.main.perform(inModes: [.eventTracking]) {
+                    MainActor.assumeIsolated { menu.cancelTrackingWithoutAnimation() }
+                }
+            }
+        }
+        let end = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { _ in
+            MainActor.assumeIsolated { ended = true }
+        }
+        defer {
+            center.removeObserver(begin)
+            center.removeObserver(end)
+        }
+        let point = try f.point(target.id, title: true)
+        try await post([mouse(.rightMouseDown, point, in: f.window), mouse(.rightMouseUp, point, in: f.window)])
+        try require(began && ended, "a real native context menu must track and cancel without executing a command")
+        if multi {
+            try f.boardOwns([target.id, other.id])
+            try await typed("x", in: f.window)
+            try f.boardOwns([target.id, other.id])
+        } else {
+            try await assertInput(target, in: f)
+        }
+        try require(f.read(terminal.id) == before,
+            "menu cancellation must not leak text to the previous terminal")
+    }
+
+    private static func exerciseNavigatorSelection(_ f: Fixture) async throws {
+        let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+        let note = try await f.create(.note, x: 470, y: 110, width: 370, height: 310)
+        _ = try f.board.update(note.id, props: .object(["title": "UniqueNavigatorDestination"]))
+        try await enter(terminal, in: f)
+        let before = f.read(terminal.id)
+        try await post([key(35, "p", flags: .command, in: f.window)])
+        try await wait("Command-P must open the real navigator field") {
+            (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
+        }
+        try await typed("UniqueNavigatorDestination", in: f.window)
+        try await post([key(36, "\r", in: f.window)])
+        try await assertInput(note, in: f)
+        try require(f.read(terminal.id) == before, "navigator search, Return and destination typing must not reach the old terminal")
+    }
+
+    private static func exerciseColdHTMLNoBuffer(_ f: Fixture) async throws {
+        let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+        try await enter(terminal, in: f)
+        let before = f.read(terminal.id)
+        let html = f.board.create(type: .html, props: .object(["html": .string(page)]),
+            frame: Frame(x: 470, y: 110, w: 440, h: 310))
+        f.window.layoutIfNeeded()
+        guard let tile = f.canvas.tiles[html.id]?.content as? HtmlTile, tile.webView == nil else {
+            throw Failure("cold input trial must run before asynchronous WebKit construction")
+        }
+        let point = try f.point(html.id, title: true)
+        NSApp.sendEvent(mouse(.leftMouseDown, point, in: f.window))
+        NSApp.sendEvent(mouse(.leftMouseUp, point, in: f.window))
+        try require(f.canvas.selection == [html.id] && f.window.firstResponder === tile,
+            "real title selection must synchronously give the cold HTML tile native ownership")
+        NSApp.sendEvent(key(0, "x", in: f.window))
+        let web = try await f.web(html.id)
+        try await wait("cold HTML must transfer native ownership to its built page") { f.canvas.focusedTile == html.id && f.window.firstResponder !== tile }
+        let pendingKeys = await js(web, "document.getElementById('keys').textContent") as? String
+        try require(pendingKeys == "",
+            "input dropped before WebKit exists must never be held and replayed after construction")
+        try await typed("y", in: f.window)
+        try await wait("constructed HTML must receive the positive native typing control") {
+            await js(web, "document.getElementById('keys').textContent") as? String == "y"
+        }
+        try require(f.read(terminal.id) == before, "cold and subsequent HTML input must leave previous terminal bytes unchanged")
     }
 
     private static func exerciseLiteralEscape(_ f: Fixture) async throws {
@@ -2094,6 +2263,19 @@ private enum SelectionTyping {
             let suffix = String(name.dropFirst("preserve-".count))
             guard let dash = suffix.firstIndex(of: "-"), let owner = ObjectType(rawValue: String(suffix[..<dash])) else { throw Failure("invalid owner scenario") }
             try await exercisePreservation(owner, route: String(suffix[suffix.index(after: dash)...]), f)
+        } else if name.hasPrefix("note-escape-") || name.hasPrefix("note-command-return-") {
+            if name.hasSuffix("-no-prompt") {
+                try await exerciseNoteReturnWithoutPrompt(f, confirmed: name.hasPrefix("note-command-return-"))
+            } else {
+                try await exerciseNoteReturn(f, board: name.hasSuffix("-board"), confirmed: name.hasPrefix("note-command-return-"))
+            }
+        } else if name.hasPrefix("menu-cancel-") {
+            try await exerciseMenuCancellation(f, type: name == "menu-cancel-terminal" ? .terminal : .note,
+                selected: name == "menu-cancel-selected-note", multi: name == "menu-cancel-multi")
+        } else if name == "navigator-select-note" {
+            try await exerciseNavigatorSelection(f)
+        } else if name == "html-cold-no-buffer" {
+            try await exerciseColdHTMLNoBuffer(f)
         } else if name == "terminal-literal-escape" {
             try await exerciseLiteralEscape(f)
         } else if name == "note-click-caret" {
