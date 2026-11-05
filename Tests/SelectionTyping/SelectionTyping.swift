@@ -1732,9 +1732,17 @@ private enum SelectionTyping {
             && scroll.frame.height == height && scroll.hasVerticalScroller && scroll.autohidesScrollers
             && (!short || scroll.scrollerStyle == .overlay),
             "\(label) must use the configured plain native editor outside easl routing")
-        try await typed("abcdef", in: window)
-        try require(editor.string == "abcdef" && editor.selectedRange() == NSRange(location: 6, length: 0),
-            "\(label) must start with abcdef and caret 6")
+        let suffix = short ? "" : "\nsecond line"
+        try await typed(short ? "abcdef" : "abcdef\rsecond line", in: window)
+        try require(editor.string == "abcdef" + suffix, "\(label) must prepare its exact native text")
+        let caretRect = editor.firstRect(forCharacterRange: NSRange(location: 6, length: 0), actualRange: nil)
+        let caretPoint = window.convertPoint(fromScreen: NSPoint(x: caretRect.minX + 1, y: caretRect.midY))
+        try require(caretRect.height > 0
+            && editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
+            "\(label) caret geometry must target insertion 6")
+        try await click(caretPoint, in: window)
+        try require(editor.selectedRange() == NSRange(location: 6, length: 0),
+            "\(label) native mouse receiver must establish caret 6")
         let point = try shiftGlyphPoint(editor, in: window, label: label)
         try await clickShiftGlyph(point, editor: editor, in: window, label: label)
         let range = editor.selectedRange()
@@ -1747,7 +1755,7 @@ private enum SelectionTyping {
         try await typed("X", in: window)
         print("PLAIN_NOTE_CONTROL \(label) replacement=\(editor.string.debugDescription) caret=\(editor.selectedRange()) diagnosticOnly=\(short)")
         if !short {
-            try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
+            try require(editor.string == "aX" + suffix && editor.selectedRange() == NSRange(location: 2, length: 0),
                 "plain multiline native typing must replace exactly bcdef with X and leave caret 2")
         }
     }
