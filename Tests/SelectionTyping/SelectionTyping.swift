@@ -200,8 +200,65 @@ private enum SelectionTyping {
         await MainTurns.next()
     }
 
+    private static func systemShiftClick(_ point: NSPoint, flags: NSEvent.ModifierFlags, clickCount: Int, in window: NSWindow) async throws {
+        guard NSApp.isActive, window.isKeyWindow, CGPreflightPostEventAccess(),
+              let screen = NSScreen.screens.first,
+              let pressed = key(56, "", type: .flagsChanged, flags: flags, in: window).cgEvent,
+              let released = key(56, "", type: .flagsChanged, in: window).cgEvent else {
+            throw Failure("system Shift-click requires the active test window and Post Event access")
+        }
+        @MainActor func deliver(_ events: [CGEvent], _ label: String, until matches: @escaping @MainActor (NSEvent) -> Bool) async throws {
+            var observed = false
+            guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseUp], handler: { event in
+                MainActor.assumeIsolated {
+                    if matches(event) { observed = true }
+                }
+                return event
+            }) else { throw Failure("system input monitor could not be installed") }
+            defer { NSEvent.removeMonitor(monitor) }
+            for event in events { event.post(tap: .cghidEventTap) }
+            try await wait(label) { observed }
+            await MainTurns.next()
+        }
+        var releasePending = true
+        defer {
+            if releasePending {
+                released.timestamp = DispatchTime.now().uptimeNanoseconds
+                released.post(tap: .cghidEventTap)
+            }
+        }
+        try await deliver([pressed], "AppKit must receive system Shift before the mouse") {
+            $0.type == .flagsChanged && $0.keyCode == 56 && $0.modifierFlags.contains(.shift)
+        }
+        let screenPoint = window.convertPoint(toScreen: point)
+        let quartzPoint = CGPoint(x: screenPoint.x, y: screen.frame.maxY - screenPoint.y)
+        var events: [CGEvent] = []
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
+                mouseCursorPosition: quartzPoint, mouseButton: .left) else {
+                throw Failure("system Shift mouse event could not be created")
+            }
+            event.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+            event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+            events.append(event)
+        }
+        try await deliver(events, "AppKit must receive system mouse-up in the test window") {
+            $0.type == .leftMouseUp && $0.windowNumber == window.windowNumber
+        }
+        released.timestamp = DispatchTime.now().uptimeNanoseconds
+        try await deliver([released], "AppKit must receive system Shift release") {
+            $0.type == .flagsChanged && $0.keyCode == 56 && !$0.modifierFlags.contains(.shift)
+        }
+        releasePending = false
+        try require(!NSEvent.modifierFlags.contains(.shift), "system Shift release must restore keyboard modifiers")
+    }
+
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
         if flags.contains(.shift) {
+            if #available(macOS 27, *) {
+                try await systemShiftClick(point, flags: flags, clickCount: clickCount, in: window)
+                return
+            }
             var shiftObserved = false
             guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { event in
                 MainActor.assumeIsolated {

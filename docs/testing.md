@@ -291,7 +291,7 @@ Run the complete registry in the claimed GUI guest against optimized, testing-en
 	python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/selection-typing-evidence
 ```
 
-The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes its leading `flagsChanged` event, then creates and posts the mouse events with later timestamps. Queueing both modifier transitions together failed to deliver the leading transition in the active text-editor fixture. No sleep or synchronous run-loop drain establishes delivery.
+The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes the leading modifier before creating later-timestamped mouse events. On macOS 27, native text gestures require system event delivery: Shift-click posts through the HID event tap and acknowledges Shift, mouse-up in its own window, and Shift release. It requires the active test window and Post Event access; missing permission fails instead of falling back. Earlier macOS uses app-local event dispatch. No fixed delay substitutes for delivery, and neither path drains the run loop synchronously.
 
 For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Build each revision's optimized objects, then invoke the frozen runner explicitly:
 

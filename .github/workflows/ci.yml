@@ -6,18 +6,6 @@ on:
   pull_request:
 
 jobs:
-  native-input-diagnostic:
-    runs-on: xcode-27
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - name: Select Swift 6.4
-        run: scripts/select-ci-swift.sh
-      - name: Diagnose native event transport
-        run: |
-          swiftc -parse-as-library -swift-version 6 Tests/SelectionTyping/NativeEventProbe.swift -o "$RUNNER_TEMP/native-event-probe"
-          "$RUNNER_TEMP/native-event-probe"
-
   test:
     runs-on: xcode-27
     steps:
