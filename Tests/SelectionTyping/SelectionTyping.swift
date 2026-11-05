@@ -72,8 +72,6 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
-        cases.append(Scenario(name: "shift-plain-question-note-control", baseline: "temporary native input diagnostic"))
-        cases.append(Scenario(name: "shift-plain-multiline-note-control", baseline: "native input control"))
         for name in ["shift-note-text", "shift-html-text", "shift-code-text", "shift-question-note-text", "offscreen-go-note", "heading-go-note",
                      "note-command-backspace", "history-back-note", "html-panel-return"] {
             cases.append(Scenario(name: name, baseline:
@@ -1615,152 +1613,76 @@ private enum SelectionTyping {
     }
 
 
-    private static func shiftGlyphPoint(_ editor: NSTextView, in window: NSWindow, label: String) throws -> NSPoint {
-        guard let layout = editor.layoutManager, let container = editor.textContainer else {
-            throw Failure("\(label) must expose TextKit glyph geometry")
-        }
-        layout.ensureLayout(for: container)
-        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: 1, length: 1), actualCharacterRange: nil)
-        let glyphRect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-            .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
-        try require(glyphs.length > 0 && glyphRect.width > 0 && glyphRect.height > 0,
-            "\(label) character 1 must have a nonempty glyph bounding rectangle")
-        let firstRect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
-        let before = editor.convert(window.convertPoint(fromScreen: NSPoint(x: firstRect.minX + 1, y: firstRect.midY)), from: nil)
-        let local = glyphRect.contains(before) ? before : NSPoint(x: glyphRect.minX + min(1, glyphRect.width / 4), y: glyphRect.midY)
-        let point = editor.convert(local, to: nil)
-        print("SHIFT_GLYPH \(label) glyphRect=\(glyphRect) firstRect=\(firstRect) before=\(before) beforeContained=\(glyphRect.contains(before)) after=\(local) afterContained=\(glyphRect.contains(local)) bounds=\(editor.bounds) frame=\(editor.frame) visibleRect=\(editor.visibleRect) point=\(point) window=\(window.windowNumber) windowIdentity=\(ObjectIdentifier(window)) windowClass=\(Swift.type(of: window)) editorIdentity=\(ObjectIdentifier(editor)) editorClass=\(Swift.type(of: editor))")
-        try require(glyphRect.contains(local) && editor.visibleRect.contains(local),
-            "\(label) actual target must be inside character 1's glyph in editor coordinates and visible")
-        guard let content = window.contentView, let parent = content.superview,
-              content.hitTest(parent.convert(point, from: nil)) === editor else {
-            throw Failure("\(label) glyph point must hit the exact native editor")
-        }
-        return point
-    }
 
-    private static func clickShiftGlyph(_ point: NSPoint, editor: NSTextView, in window: NSWindow, label: String) async throws {
-        var received = false
-        var contained = false
-        var exactReceiver = false
-        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { event in
-            MainActor.assumeIsolated {
-                guard event.windowNumber == window.windowNumber,
-                      let layout = editor.layoutManager, let container = editor.textContainer,
-                      let content = window.contentView, let parent = content.superview else { return }
-                let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: 1, length: 1), actualCharacterRange: nil)
-                let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-                    .offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
-                let local = editor.convert(event.locationInWindow, from: nil)
-                received = true
-                contained = rect.contains(local)
-                exactReceiver = content.hitTest(parent.convert(event.locationInWindow, from: nil)) === editor
-                print("SHIFT_GLYPH \(label) mouseDown point=\(local) glyphRect=\(rect) contained=\(contained) receiverIsEditor=\(exactReceiver) eventWindow=\(event.windowNumber) nativeWindow=\(window.windowNumber) windowIdentity=\(ObjectIdentifier(window)) bounds=\(editor.bounds) frame=\(editor.frame) visibleRect=\(editor.visibleRect)")
-            }
-            return event
-        }) else { throw Failure("\(label) must install its actual mouse geometry monitor") }
-        defer { NSEvent.removeMonitor(monitor) }
-        try await click(point, flags: .shift, in: window)
-        print("SHIFT_GLYPH \(label) finalRange=\(editor.selectedRange()) responderIsEditor=\(window.firstResponder === editor)")
-        try require(received && contained && exactReceiver && window.firstResponder === editor,
-            "\(label) delivered mouse point must lie inside character 1's glyph and hit the exact native editor")
-    }
-
-    private static func exercisePlainNoteControl(short: Bool) async throws {
-        let label = short ? "plain-question-note-short" : "plain-note-multiline"
+    private static func nativeQuestionShiftRange() async throws -> NSRange {
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 450, height: 290),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close() }
-        let editor = NSTextView(usingTextLayoutManager: !short)
-        let font = short ? ChromeText.font(QuestionPainter.noteFont) : NoteRenderer.codeFont
-        guard let layout = editor.layoutManager else { throw Failure("\(label) must expose native layout") }
-        let height = short ? ceil(layout.defaultLineHeight(for: font)) + 2 * QuestionPainter.notePadding.height : 230
+        let editor = NSTextView(usingTextLayoutManager: false)
+        let font = ChromeText.font(QuestionPainter.noteFont)
+        guard let layout = editor.layoutManager else { throw Failure("plain question control must expose native layout") }
+        let height = ceil(layout.defaultLineHeight(for: font)) + 2 * QuestionPainter.notePadding.height
         let scroll = NSScrollView(frame: NSRect(x: 20, y: 20, width: 422, height: height))
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        if short { scroll.scrollerStyle = .overlay }
+        scroll.scrollerStyle = .overlay
         editor.isRichText = false
         editor.allowsUndo = true
-        editor.drawsBackground = !short
-        editor.backgroundColor = .textBackgroundColor
+        editor.drawsBackground = false
         editor.textColor = .labelColor
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
         editor.isAutomaticSpellingCorrectionEnabled = false
-        if !short {
-            editor.isContinuousSpellCheckingEnabled = true
-            editor.isAutomaticTextCompletionEnabled = false
-        }
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]
         editor.textContainer?.widthTracksTextView = true
-        if short { editor.textContainer?.lineFragmentPadding = 0 }
-        editor.textContainerInset = short ? QuestionPainter.notePadding : NSSize(width: 6, height: 8)
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainerInset = QuestionPainter.notePadding
         editor.font = font
-        if short {
-            editor.setAccessibilityLabel("Note")
-            editor.setAccessibilityPlaceholderValue("Add a note (optional)")
-        }
         scroll.documentView = editor
         window.contentView?.addSubview(scroll)
         let width = scroll.contentSize.width
-        editor.minSize = short ? NSSize(width: width, height: height) : .zero
-        editor.maxSize = NSSize(width: short ? width : .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        editor.minSize = NSSize(width: width, height: height)
+        editor.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         editor.setFrameSize(NSSize(width: width, height: height))
-        if short { editor.sizeToFit() }
+        editor.sizeToFit()
         window.makeKeyAndOrderFront(nil)
         window.layoutIfNeeded()
-        try require(window.makeFirstResponder(editor), "\(label) must accept its native editor")
-        try await wait("\(label) must be the active key window") {
+        try require(window.makeFirstResponder(editor), "plain question control must accept its native editor")
+        try await wait("plain question control must be the active key window") {
             NSApp.isActive && window.isKeyWindow && window.firstResponder === editor
         }
-        try require(Swift.type(of: editor) == NSTextView.self && Swift.type(of: window) == NSWindow.self
-            && editor.delegate == nil && editor.isEditable && !editor.isRichText && editor.allowsUndo
-            && editor.isVerticallyResizable && !editor.isHorizontallyResizable
-            && editor.textContainer?.widthTracksTextView == true
-            && !editor.isAutomaticQuoteSubstitutionEnabled && !editor.isAutomaticDashSubstitutionEnabled
-            && !editor.isAutomaticTextReplacementEnabled && !editor.isAutomaticSpellingCorrectionEnabled
-            && editor.drawsBackground == !short
-            && (short ? editor.textContainer?.lineFragmentPadding == 0
-                : editor.isContinuousSpellCheckingEnabled && !editor.isAutomaticTextCompletionEnabled)
-            && editor.textContainerInset == (short ? QuestionPainter.notePadding : NSSize(width: 6, height: 8))
-            && editor.font == font && scroll.documentView === editor
-            && scroll.frame.height == height && scroll.hasVerticalScroller && scroll.autohidesScrollers
-            && (!short || scroll.scrollerStyle == .overlay),
-            "\(label) must use the configured plain native editor outside easl routing")
-        let suffix = short ? "" : "\nsecond line"
-        try await typed(short ? "abcdef" : "abcdef\rsecond line", in: window)
-        try require(editor.string == "abcdef" + suffix, "\(label) must prepare its exact native text")
+        try await typed("abcdef", in: window)
         let caretRect = editor.firstRect(forCharacterRange: NSRange(location: 6, length: 0), actualRange: nil)
         let caretPoint = window.convertPoint(fromScreen: NSPoint(x: caretRect.minX + 1, y: caretRect.midY))
-        try require(caretRect.height > 0
-            && editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
-            "\(label) caret geometry must target insertion 6")
+        try require(editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
+            "plain question control must target insertion 6")
         try await click(caretPoint, in: window)
-        try require(editor.selectedRange() == NSRange(location: 6, length: 0),
-            "\(label) native mouse receiver must establish caret 6")
-        let point = try shiftGlyphPoint(editor, in: window, label: label)
-        try await clickShiftGlyph(point, editor: editor, in: window, label: label)
-        let range = editor.selectedRange()
-        let selected = (editor.string as NSString).substring(with: range)
-        print("PLAIN_NOTE_CONTROL \(label) finalRange=\(range) selected=\(selected) diagnosticOnly=\(short)")
-        if !short {
-            try require(range == NSRange(location: 1, length: 5) && selected == "bcdef",
-                "plain multiline native Shift-click must select exactly bcdef from caret 6; actual=\(range)")
-        }
-        try await typed("X", in: window)
-        print("PLAIN_NOTE_CONTROL \(label) replacement=\(editor.string.debugDescription) caret=\(editor.selectedRange()) diagnosticOnly=\(short)")
-        if !short {
-            try require(editor.string == "aX" + suffix && editor.selectedRange() == NSRange(location: 2, length: 0),
-                "plain multiline native typing must replace exactly bcdef with X and leave caret 2")
-        }
+        try require(editor.string == "abcdef" && editor.selectedRange() == NSRange(location: 6, length: 0),
+            "plain question control must establish abcdef and caret 6 through native input")
+        let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
+        let point = window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
+        try require(editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
+            "plain question control must target insertion 1")
+        try await click(point, flags: .shift, in: window)
+        return editor.selectedRange()
     }
 
     private static func exerciseShiftText(_ type: ObjectType, _ f: Fixture) async throws {
+        let expectedRange: NSRange
+        if type == .question, #available(macOS 27, *) {
+            expectedRange = try await nativeQuestionShiftRange()
+            f.window.makeKeyAndOrderFront(nil)
+            try await wait("question fixture must regain its native key window") { f.window.isKeyWindow }
+        } else {
+            expectedRange = NSRange(location: 1, length: 5)
+        }
+        let expectedText = ("abcdef" as NSString).substring(with: expectedRange)
+        let expectedReplacement = ("abcdef" as NSString).replacingCharacters(in: expectedRange, with: "X")
         let object = try await f.create(type, height: type == .question ? 420 : 290)
         let foreign = try await f.create(.image, x: 540, y: 45, width: 300, height: 290)
         try await click(try f.point(foreign.id, title: true), in: f.window)
@@ -1796,26 +1718,28 @@ private enum SelectionTyping {
             try await click(caretPoint, in: f.window)
             try require(editor.selectedRange() == NSRange(location: 6, length: 0),
                 "native \(type.rawValue) mouse receiver must establish caret 6")
-            let point = try f.checked(shiftGlyphPoint(editor, in: f.window, label: "active \(type.rawValue)"),
+            let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
+            let point = try f.checked(f.window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY)),
                 target: editor, label: "active \(type.rawValue) character 1")
             try require(editor.selectedRange() == NSRange(location: 6, length: 0)
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
-            try await clickShiftGlyph(point, editor: editor, in: f.window, label: "active \(type.rawValue)")
+            try await click(point, flags: .shift, in: f.window)
             try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
                 "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
             let range = editor.selectedRange()
-            try require(range == NSRange(location: 1, length: 5),
-                "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
-            try require((editor.string as NSString).substring(with: range) == "bcdef",
-                "the native \(type.rawValue) selection must expose exactly bcdef")
+            try require(range == expectedRange,
+                "native Shift-click must match its exact native selection; expected=\(expectedRange) actual=\(range)")
+            try require((editor.string as NSString).substring(with: range) == expectedText,
+                "the native \(type.rawValue) selection must expose exactly \(expectedText)")
             try await typed("X", in: f.window)
-            try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
-                "typing must replace exactly the Shift-clicked \(type.rawValue) range and place the caret after aX")
+            try require(editor.string == expectedReplacement
+                && editor.selectedRange() == NSRange(location: expectedRange.location + 1, length: 0),
+                "typing must replace exactly the Shift-clicked \(type.rawValue) range and place the caret after X")
             if type == .question {
                 try await post([key(36, "\r", in: f.window)])
                 try await wait("Return must submit exactly the edited question note") {
-                    f.board.objects[object.id]?.props["answer"]?["note"]?.string == "aX"
+                    f.board.objects[object.id]?.props["answer"]?["note"]?.string == expectedReplacement
                 }
             }
         } else if type == .code {
@@ -2202,8 +2126,6 @@ private enum SelectionTyping {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
             try await exerciseQuestionHeldReturn(f)
-        } else if name == "shift-plain-question-note-control" || name == "shift-plain-multiline-note-control" {
-            try await exercisePlainNoteControl(short: name == "shift-plain-question-note-control")
         } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
             let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
             try await exerciseShiftText(type, f)

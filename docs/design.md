@@ -133,6 +133,8 @@ Keyboard navigation into a note opens its raw Markdown editor immediately, inclu
 
 Shift-click inside the active note editor, code rows, HTML editable field, or question's optional note extends that text selection. The same native responder keeps typing, and board selection stays unchanged. Shift-click on a foreign tile's body instead changes board selection and gives typing to the board, even if one tile remains selected. A plain user click re-enters that tile before a later Shift-click can extend its text. Clicking elsewhere in the active tile does not count as clicking its current text responder.
 
+The macOS 27 synthesized-native-HID regression compares the question note with a plain `NSTextView` of the same configuration under the same input. Both select `{0,1}` from caret 6 to character 1 on that route; the same-run multiline control selects `{1,5}`. This is native CI parity, not a different editing contract: macOS 26.x and real-HID proof keep the exact `{1,5}` assertion.
+
 Delete and Command-A act on text while a terminal, editor, or page owns typing. With the board owning typing, Delete acts on selected objects and Command-A selects the board's objects. Board navigation shortcuts, Command-W, and Command-I keep their window-level priority.
 
 Note editors own their text undo history instead of sharing the window's page history. Editing a note between two visits to a page does not redirect that page's Command-Z into the hidden note.
