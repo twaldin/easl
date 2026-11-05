@@ -24,9 +24,13 @@ public enum DrawingStyle {
         family.flatMap { NSFont(descriptor: $0, size: size) } ?? .systemFont(ofSize: size)
     }
 
-    public static let textPointSize: CGFloat = 20
-    public static let labelSize: CGFloat = 18
-    public static let arrowLabelSize: CGFloat = 15
+    static func fontSnapshot() throws -> Data? {
+        try family.map { try NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }
+    }
+
+    nonisolated public static let textPointSize: CGFloat = 20
+    nonisolated public static let labelSize: CGFloat = 18
+    nonisolated public static let arrowLabelSize: CGFloat = 15
 
     /// Named palette (ShapeProps.color). Unknown names fall back to `#rrggbb`, then the default ink.
     public static let palette: [(name: String, color: NSColor)] = [
@@ -72,13 +76,17 @@ public enum DrawingStyle {
     }
 
     public static func text(_ string: String, size: CGFloat, color: NSColor, alignment: NSTextAlignment = .left) -> NSAttributedString {
+        text(string, font: font(size: size), color: color, alignment: alignment)
+    }
+
+    nonisolated static func text(_ string: String, font: NSFont, color: NSColor, alignment: NSTextAlignment = .left) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment
-        return NSAttributedString(string: string, attributes: [.font: font(size: size), .foregroundColor: color, .paragraphStyle: paragraph])
+        return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
     /// Widest an arrow caption lays out before it wraps.
-    public static let arrowLabelWidth: CGFloat = 240
+    nonisolated public static let arrowLabelWidth: CGFloat = 240
 
     /// An arrow's caption (its `label`, else its `relation` in the secondary color) and the size
     /// of the chip it sits on: what the drawing layer draws and `layout.check` places, both
@@ -86,7 +94,12 @@ public enum DrawingStyle {
     public static func arrowLabel(_ spec: ArrowSpec) -> (text: NSAttributedString, size: CGSize)? {
         guard let caption = spec.label ?? spec.relation, !caption.isEmpty else { return nil }
         let color = spec.label == nil ? NSColor.secondaryLabelColor : Self.color(spec.color)
-        let text = Self.text(caption, size: arrowLabelSize, color: color, alignment: .center)
+        return arrowLabel(caption, font: font(size: arrowLabelSize), color: color)
+    }
+
+    nonisolated static func arrowLabel(_ caption: String, font: NSFont, color: NSColor = .labelColor) -> (text: NSAttributedString, size: CGSize)? {
+        guard !caption.isEmpty else { return nil }
+        let text = Self.text(caption, font: font, color: color, alignment: .center)
         let size = text.boundingRect(with: NSSize(width: arrowLabelWidth, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return (text, CGSize(width: ceil(size.width) + 8, height: ceil(size.height)))
     }

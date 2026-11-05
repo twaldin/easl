@@ -4,7 +4,6 @@ import SwiftMath
 
 /// LaTeX in notes, typeset by SwiftMath: `$…$` runs inline, `$$…$$` on its own centered line.
 /// Delimiters follow Pandoc's rule so currency stays prose, and `\$` is a literal dollar.
-@MainActor
 enum NoteMath {
     /// A formula in one text node: its characters (without the delimiters) and whether it is
     /// display math.
@@ -110,6 +109,7 @@ enum NoteMath {
 
     /// A formula as a text attachment, or nil when SwiftMath can't typeset it. The picture draws
     /// in `NSColor.labelColor` at draw time, so it follows light and dark.
+    @MainActor
     static func attachment(latex: String, fontSize: CGFloat, display: Bool) -> NSTextAttachment? {
         guard let nativeLatex = NativeMathInput.prepare(latex) else { return nil }
         let label = MTMathUILabel()
@@ -139,6 +139,7 @@ enum NoteMath {
 
     // SwiftMath 1.7.3 recursively parses arguments, groups, infix denominators and table
     // cells. This bounded structural scan builds no math tree and leaves syntax errors to it.
+    @MainActor
     private struct NativeMathInput {
         private enum Frame: Equatable {
             case argument(Int), group, degree, left, environment(String), table, remainder

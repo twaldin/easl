@@ -337,7 +337,6 @@ final class DelegatedCalls {
     // MARK: text.measure
 
     /// One `text.measure` item (docs/design/next.md "Text measurement").
-    @MainActor
     private enum TextItem {
         case note(Document, source: String, width: CGFloat?, root: String?)
         case text(String, textSize: CGFloat, width: CGFloat?)
@@ -364,19 +363,45 @@ final class DelegatedCalls {
             }
         }
 
-        func size() async -> JSONValue {
-            let size: CGSize
-            switch self {
-            case .note(let document, let source, let width, _):
-                // No excerpts and no images: `measure` let through only notes without them.
-                let textWidth = (width ?? ObjectMeasure.defaultNoteWidth) - 2 * ObjectMeasure.noteInset.width
-                let diagrams = await NoteMermaid.resolve(document, width: textWidth, appearance: NoteMermaid.appearance())
-                let note = ObjectMeasure.note(document, markdown: source, width: width, excerpts: [:], images: [:], diagrams: diagrams)
-                return .object(["w": .number(note.size.width), "h": .number(note.size.height), "tableShortfall": .number(note.tableShortfall)])
-            case .text(let text, let textSize, let width): size = ObjectMeasure.shapeTextBounds(text, textSize: textSize, width: width)
-            case .label(let text, let width): size = ObjectMeasure.labelBounds(text, width: width)
-            case .arrowLabel(let text): size = DrawingStyle.arrowLabel(ArrowSpec(from: .point(.zero), to: .point(.zero), label: text))?.size ?? .zero
-            case .caption(let text): size = CGSize(width: ObjectMeasure.captionWidth(text), height: CodeMetrics.captionHeight)
+        @concurrent
+        func size(descriptor: NSFontDescriptor?, defaultWidth: CGFloat, appearance: NoteMermaid.Appearance) async -> JSONValue {
+            func font(_ size: CGFloat) -> NSFont {
+                descriptor.flatMap { NSFont(descriptor: $0, size: size) } ?? .systemFont(ofSize: size)
+            }
+            if case .note(let document, let source, let width, _) = self {
+                let width = width ?? defaultWidth
+                let textWidth = width - 2 * ObjectMeasure.noteInset.width
+                let fences = NoteMermaid.fences(in: document, width: textWidth, appearance: appearance)
+                let diagrams: [Int: NoteMermaid.Measurement] = fences.isEmpty ? [:] : await NoteMermaid.measure(fences)
+                return autoreleasepool {
+                    let renderer = NoteRenderer(source: source, width: textWidth, diagrams: diagrams) { latex, size, display in
+                        // SwiftMath owns views; only baseline-preserving geometry leaves main.
+                        let bounds: CGRect? = DispatchQueue.main.sync {
+                            MainActor.assumeIsolated {
+                                autoreleasepool { NoteMath.attachment(latex: latex, fontSize: size, display: display)?.bounds }
+                            }
+                        }
+                        guard let bounds else { return nil }
+                        let attachment = NSTextAttachment()
+                        attachment.bounds = bounds
+                        return attachment
+                    }
+                    let note = ObjectMeasure.note(document, width: width, renderer: renderer)
+                    return .object(["w": .number(note.size.width), "h": .number(note.size.height), "tableShortfall": .number(note.tableShortfall)])
+                }
+            }
+            let size: CGSize = autoreleasepool {
+                switch self {
+                case .note: preconditionFailure()
+                case .text(let text, let textSize, let width):
+                    return ObjectMeasure.shapeTextBounds(text, width: width, font: font(DrawingStyle.textPointSize * textSize))
+                case .label(let text, let width):
+                    return ObjectMeasure.labelBounds(text, width: width, font: font(DrawingStyle.labelSize))
+                case .arrowLabel(let text):
+                    return DrawingStyle.arrowLabel(text, font: font(DrawingStyle.arrowLabelSize))?.size ?? .zero
+                case .caption(let text):
+                    return CGSize(width: ObjectMeasure.captionWidth(text), height: CodeMetrics.captionHeight)
+                }
             }
             return .object(["w": .number(size.width), "h": .number(size.height)])
         }
@@ -387,13 +412,23 @@ final class DelegatedCalls {
     /// easld's `root`, on easld's machine, so a batch with one fails `unavailable` whole and easld
     /// measures it from its glyph table, reading them there. Nothing here reads a file.
     private func measure(_ p: JSONValue) async throws -> JSONValue {
+        try await Self.measure(p, font: DrawingStyle.fontSnapshot(), defaultWidth: ObjectMeasure.defaultNoteWidth,
+                               appearance: NoteMermaid.appearance())
+    }
+
+    @concurrent
+    nonisolated private static func measure(_ p: JSONValue, font: Data?, defaultWidth: CGFloat,
+                                            appearance: NoteMermaid.Appearance) async throws -> JSONValue {
         guard let list = p["items"]?.array else { throw ApiRouter.Failure("invalid_params", "items must be a list of {kind, text, width?, textSize?, root?}") }
         let items = try list.enumerated().map { try TextItem($1, at: $0) }
         for case .note(let document, _, _, let root) in items where !NoteMarkdown.anchoredFences(in: document).isEmpty || !NoteImages.sources(in: document).isEmpty {
             throw ApiRouter.Failure("unavailable", "a note's fences and images are read on the board's host\(root.map { " (under \($0))" } ?? ""), which this Mac doesn't have")
         }
+        let descriptor = try autoreleasepool {
+            try font.flatMap { try NSKeyedUnarchiver.unarchivedObject(ofClass: NSFontDescriptor.self, from: $0) }
+        }
         var sizes: [JSONValue] = []
-        for item in items { sizes.append(await item.size()) }
+        for item in items { sizes.append(await item.size(descriptor: descriptor, defaultWidth: defaultWidth, appearance: appearance)) }
         return .object(["sizes": .array(sizes)])
     }
 }
