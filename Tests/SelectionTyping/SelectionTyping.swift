@@ -255,7 +255,10 @@ private enum SelectionTyping {
 
     private static func click(_ point: NSPoint, flags: NSEvent.ModifierFlags = [], clickCount: Int = 1, in window: NSWindow) async throws {
         if flags.contains(.shift) {
-            if #available(macOS 27, *) {
+            if #available(macOS 27, *), let editor = window.firstResponder as? NSTextView,
+               let content = window.contentView, let parent = content.superview,
+               let hit = content.hitTest(parent.convert(point, from: nil)),
+               hit === editor || hit.isDescendant(of: editor) {
                 try await systemShiftClick(point, flags: flags, clickCount: clickCount, in: window)
                 return
             }
