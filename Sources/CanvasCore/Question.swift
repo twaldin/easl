@@ -344,9 +344,16 @@ public struct QuestionSpec: Equatable, Sendable {
         return format
     }()
 
+    #if DEBUG
+    @TaskLocal static var observeDateParsing: (@Sendable () -> Void)?
+    #endif
+
     /// An RFC 3339 date-time (`2026-10-05T17:00:00Z`, an offset, fractional seconds); nil otherwise.
     public static func date(_ text: String) -> Date? {
-        stampFormat.date(from: text) ?? fractionalFormat.date(from: text)
+        #if DEBUG
+        observeDateParsing?()
+        #endif
+        return stampFormat.date(from: text) ?? fractionalFormat.date(from: text)
     }
 
     /// How easl writes a moment (`answer.at`): UTC, whole seconds.
