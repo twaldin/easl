@@ -72,6 +72,7 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
+        cases.append(Scenario(name: "shift-plain-question-note-control", baseline: "temporary native input control"))
         for name in ["shift-note-text", "shift-html-text", "shift-code-text", "shift-question-note-text", "offscreen-go-note", "heading-go-note",
                      "note-command-backspace", "history-back-note", "html-panel-return"] {
             cases.append(Scenario(name: name, baseline:
@@ -1607,6 +1608,89 @@ private enum SelectionTyping {
         try await wait("native Shift-CmdZ must reach the app's board redo menu route") { f.board.objects[object.id]?.frame == moved }
     }
 
+    private static func exercisePlainQuestionNoteControl() async throws {
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 450, height: 290),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let editor = NSTextView(usingTextLayoutManager: false)
+        let font = ChromeText.font(QuestionPainter.noteFont)
+        guard let layout = editor.layoutManager else { throw Failure("plain control must use the question note's TextKit 1 layout") }
+        let height = ceil(layout.defaultLineHeight(for: font)) + 2 * QuestionPainter.notePadding.height
+        let scroll = NSScrollView(frame: NSRect(x: 20, y: 20, width: 422, height: height))
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        editor.isRichText = false
+        editor.allowsUndo = true
+        editor.drawsBackground = false
+        editor.textColor = .labelColor
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.autoresizingMask = [.width]
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainerInset = QuestionPainter.notePadding
+        editor.font = font
+        editor.setAccessibilityLabel("Note")
+        editor.setAccessibilityPlaceholderValue("Add a note (optional)")
+        scroll.documentView = editor
+        window.contentView?.addSubview(scroll)
+        let width = scroll.contentSize.width
+        editor.minSize = NSSize(width: width, height: scroll.frame.height)
+        editor.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        editor.setFrameSize(NSSize(width: width, height: scroll.frame.height))
+        editor.sizeToFit()
+        window.makeKeyAndOrderFront(nil)
+        window.layoutIfNeeded()
+        try require(window.makeFirstResponder(editor), "plain question-note control must accept its native editor")
+        try await wait("plain question-note control must be the active key window") {
+            NSApp.isActive && window.isKeyWindow && window.firstResponder === editor
+        }
+        try await typed("abcdef", in: window)
+        try require(editor.string == "abcdef" && editor.selectedRange() == NSRange(location: 6, length: 0),
+            "plain question-note control must start with abcdef and caret 6")
+        let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
+        try require(rect.width > 0 && rect.height > 0, "plain control character 1 must have native geometry")
+        let point = window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
+        guard let content = window.contentView, let parent = content.superview,
+              content.hitTest(parent.convert(point, from: nil)) === editor else {
+            throw Failure("plain control character 1 must hit the exact native editor")
+        }
+        try require(editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
+            "plain control native geometry must target insertion 1")
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextView.didChangeSelectionNotification, object: editor, queue: nil
+        ) { _ in
+            MainActor.assumeIsolated {
+                print("PLAIN_QUESTION_NOTE selection-change range=\(editor.selectedRange()) responderIsEditor=\(window.firstResponder === editor) event=\(String(describing: NSApp.currentEvent?.type)) flags=\(String(describing: NSApp.currentEvent?.modifierFlags.rawValue))")
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        print("PLAIN_QUESTION_NOTE before range=\(editor.selectedRange()) text=\(editor.string) targetInsertion=1 point=\(point) windowClass=\(Swift.type(of: window)) editorClass=\(Swift.type(of: editor))")
+        if #available(macOS 27, *) {
+            try await systemShiftClick(point, flags: .shift, clickCount: 1, in: window)
+        } else {
+            try await click(point, flags: .shift, in: window)
+        }
+        let range = editor.selectedRange()
+        let selected = (editor.string as NSString).substring(with: range)
+        print("PLAIN_QUESTION_NOTE after range=\(range) selected=\(selected) responderIsEditor=\(window.firstResponder === editor) expectedRange={1,5} expectedSelected=bcdef")
+        try require(window.firstResponder === editor, "plain control Shift-click must retain the exact editor")
+        try require(range == NSRange(location: 1, length: 5),
+            "plain control Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
+        try require(selected == "bcdef", "plain control Shift-click must expose exactly bcdef")
+        try await typed("X", in: window)
+        print("PLAIN_QUESTION_NOTE replacement text=\(editor.string) range=\(editor.selectedRange()) expectedText=aX expectedRange={2,0}")
+        try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
+            "plain control typing must replace exactly bcdef with X and place the caret after aX")
+    }
+
     private static func exerciseShiftText(_ type: ObjectType, _ f: Fixture) async throws {
         let object = try await f.create(type, height: type == .question ? 420 : 290)
         let foreign = try await f.create(.image, x: 540, y: 45, width: 300, height: 290)
@@ -2090,6 +2174,8 @@ private enum SelectionTyping {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
             try await exerciseQuestionHeldReturn(f)
+        } else if name == "shift-plain-question-note-control" {
+            try await exercisePlainQuestionNoteControl()
         } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
             let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
             try await exerciseShiftText(type, f)
