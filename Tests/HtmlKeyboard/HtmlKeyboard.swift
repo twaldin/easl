@@ -674,8 +674,8 @@ private enum HtmlKeyboard {
         window.contentView!.addSubview(previous)
         let html = pageHTML().replacingOccurrences(of: "<script>", with: """
         <script>
-        window.coldKeys = 0;
-        document.addEventListener('keydown', () => window.coldKeys++);
+        window.coldKeys = [];
+        document.addEventListener('keydown', (event) => window.coldKeys.push(event.key));
         """)
         let object = board.create(type: .html, props: .object(["html": .string(html)]),
                                   frame: Frame(x: -350, y: -250, w: 700, h: 500))
@@ -698,10 +698,10 @@ private enum HtmlKeyboard {
         let web = try await page(in: tile)
         try await loaded(web)
         try await wait(until: { window.firstResponder === web }, "the original cold document must finish native entry")
-        let pendingKeys = await js(web, "window.coldKeys") as? Int
-        try require(pendingKeys == 0, "pending keys must not be buffered into the page")
+        let pendingKeys = await js(web, "window.coldKeys") as? [String]
+        try require(pendingKeys == [], "pending keys must not be buffered into the page; actual=\(String(describing: pendingKeys))")
         typed("x", in: window)
-        try await wait(until: { await js(web, "window.coldKeys") as? Int == 1 },
+        try await wait(until: { await js(web, "window.coldKeys") as? [String] == ["x"] },
                        "the cold document must receive later native keys after construction")
         let other = board.create(type: .html, props: .object(["html": .string(html)]),
                                  frame: Frame(x: -350, y: -250, w: 700, h: 500))

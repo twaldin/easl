@@ -72,7 +72,6 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
-        cases.append(Scenario(name: "shift-plain-question-note-control", baseline: "temporary native input control"))
         for name in ["shift-note-text", "shift-html-text", "shift-code-text", "shift-question-note-text", "offscreen-go-note", "heading-go-note",
                      "note-command-backspace", "history-back-note", "html-panel-return"] {
             cases.append(Scenario(name: name, baseline:
@@ -1613,96 +1612,6 @@ private enum SelectionTyping {
         try await wait("native Shift-CmdZ must reach the app's board redo menu route") { f.board.objects[object.id]?.frame == moved }
     }
 
-    private static func exercisePlainQuestionNoteControl() async throws {
-        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 450, height: 290),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        let editor = NSTextView(usingTextLayoutManager: false)
-        let font = ChromeText.font(QuestionPainter.noteFont)
-        guard let layout = editor.layoutManager else { throw Failure("plain control must use the question note's TextKit 1 layout") }
-        let height = ceil(layout.defaultLineHeight(for: font)) + 2 * QuestionPainter.notePadding.height
-        let scroll = NSScrollView(frame: NSRect(x: 20, y: 20, width: 422, height: height))
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay
-        editor.isRichText = false
-        editor.allowsUndo = true
-        editor.drawsBackground = false
-        editor.textColor = .labelColor
-        editor.isAutomaticQuoteSubstitutionEnabled = false
-        editor.isAutomaticDashSubstitutionEnabled = false
-        editor.isAutomaticTextReplacementEnabled = false
-        editor.isAutomaticSpellingCorrectionEnabled = false
-        editor.isVerticallyResizable = true
-        editor.isHorizontallyResizable = false
-        editor.autoresizingMask = [.width]
-        editor.textContainer?.widthTracksTextView = true
-        editor.textContainer?.lineFragmentPadding = 0
-        editor.textContainerInset = QuestionPainter.notePadding
-        editor.font = font
-        editor.setAccessibilityLabel("Note")
-        editor.setAccessibilityPlaceholderValue("Add a note (optional)")
-        scroll.documentView = editor
-        window.contentView?.addSubview(scroll)
-        let width = scroll.contentSize.width
-        editor.minSize = NSSize(width: width, height: scroll.frame.height)
-        editor.maxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        editor.setFrameSize(NSSize(width: width, height: scroll.frame.height))
-        editor.sizeToFit()
-        window.makeKeyAndOrderFront(nil)
-        window.layoutIfNeeded()
-        try require(window.makeFirstResponder(editor), "plain question-note control must accept its native editor")
-        try await wait("plain question-note control must be the active key window") {
-            NSApp.isActive && window.isKeyWindow && window.firstResponder === editor
-        }
-        try await typed("abcdef", in: window)
-        try require(editor.string == "abcdef" && editor.selectedRange() == NSRange(location: 6, length: 0),
-            "plain question-note control must start with abcdef and caret 6")
-        let caretRect = editor.firstRect(forCharacterRange: NSRange(location: 6, length: 0), actualRange: nil)
-        let caretPoint = window.convertPoint(fromScreen: NSPoint(x: caretRect.minX + 1, y: caretRect.midY))
-        try require(caretRect.height > 0
-            && editor.characterIndexForInsertion(at: editor.convert(caretPoint, from: nil)) == 6,
-            "plain control caret placement must target native insertion 6")
-        try await click(caretPoint, in: window)
-        try require(editor.selectedRange() == NSRange(location: 6, length: 0),
-            "plain control must establish caret 6 through its mouse receiver")
-        let rect = editor.firstRect(forCharacterRange: NSRange(location: 1, length: 1), actualRange: nil)
-        try require(rect.width > 0 && rect.height > 0, "plain control character 1 must have native geometry")
-        let point = window.convertPoint(fromScreen: NSPoint(x: rect.minX + 1, y: rect.midY))
-        guard let content = window.contentView, let parent = content.superview,
-              content.hitTest(parent.convert(point, from: nil)) === editor else {
-            throw Failure("plain control character 1 must hit the exact native editor")
-        }
-        try require(editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
-            "plain control native geometry must target insertion 1")
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSTextView.didChangeSelectionNotification, object: editor, queue: nil
-        ) { _ in
-            MainActor.assumeIsolated {
-                print("PLAIN_QUESTION_NOTE selection-change range=\(editor.selectedRange()) responderIsEditor=\(window.firstResponder === editor) event=\(String(describing: NSApp.currentEvent?.type)) flags=\(String(describing: NSApp.currentEvent?.modifierFlags.rawValue))")
-            }
-        }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        print("PLAIN_QUESTION_NOTE before range=\(editor.selectedRange()) text=\(editor.string) targetInsertion=1 point=\(point) windowClass=\(Swift.type(of: window)) editorClass=\(Swift.type(of: editor))")
-        if #available(macOS 27, *) {
-            try await systemShiftClick(point, flags: .shift, clickCount: 1, in: window)
-        } else {
-            try await click(point, flags: .shift, in: window)
-        }
-        let range = editor.selectedRange()
-        let selected = (editor.string as NSString).substring(with: range)
-        print("PLAIN_QUESTION_NOTE after range=\(range) selected=\(selected) responderIsEditor=\(window.firstResponder === editor) expectedRange={1,5} expectedSelected=bcdef")
-        try require(window.firstResponder === editor, "plain control Shift-click must retain the exact editor")
-        try require(range == NSRange(location: 1, length: 5),
-            "plain control Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
-        try require(selected == "bcdef", "plain control Shift-click must expose exactly bcdef")
-        try await typed("X", in: window)
-        print("PLAIN_QUESTION_NOTE replacement text=\(editor.string) range=\(editor.selectedRange()) expectedText=aX expectedRange={2,0}")
-        try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
-            "plain control typing must replace exactly bcdef with X and place the caret after aX")
-    }
 
     private static func exerciseShiftText(_ type: ObjectType, _ f: Fixture) async throws {
         let object = try await f.create(type, height: type == .question ? 420 : 290)
@@ -1747,62 +1656,14 @@ private enum SelectionTyping {
             try require(editor.selectedRange() == NSRange(location: 6, length: 0)
                 && editor.characterIndexForInsertion(at: editor.convert(point, from: nil)) == 1,
                 "Shift-click geometry must target insertion 1 while the native caret remains at 6")
-            do {
-                var previousRange = editor.selectedRange()
-                var records = ["SELECTION_CHANGE initial=\(previousRange) editor=\(ObjectIdentifier(editor)) class=\(Swift.type(of: editor)) intended=\(point)"]
-                var firstBadStack: [String]?
-                var extendedStacks: [[String]] = []
-                var gesturePassed = false
-                let observer = NotificationCenter.default.addObserver(
-                    forName: NSTextView.didChangeSelectionNotification, object: editor, queue: nil
-                ) { notification in
-                    let receiver = (notification.object as? NSTextView).map { ObjectIdentifier($0) }
-                    MainActor.assumeIsolated {
-                        let range = editor.selectedRange()
-                        if range == NSRange(location: 1, length: 5) { extendedStacks.append(Thread.callStackSymbols) }
-                        let firstBad = range == NSRange(location: 0, length: 1) && firstBadStack == nil
-                        if firstBad { firstBadStack = Thread.callStackSymbols }
-                        let event = NSApp.currentEvent
-                        let mouseDetails: String
-                        switch event?.type {
-                        case .leftMouseDown?, .leftMouseUp?, .leftMouseDragged?,
-                             .rightMouseDown?, .rightMouseUp?, .rightMouseDragged?,
-                             .otherMouseDown?, .otherMouseUp?, .otherMouseDragged?:
-                            mouseDetails = "clickCount=\(event!.clickCount) eventNumber=\(event!.eventNumber)"
-                        default:
-                            mouseDetails = "clickCount=n/a eventNumber=n/a"
-                        }
-                        let clip = editor.enclosingScrollView?.contentView
-                        records.append("SELECTION_CHANGE previous=\(previousRange) range=\(range) firstBad=\(firstBad) receiver=\(String(describing: receiver)) editor=\(ObjectIdentifier(editor)) class=\(Swift.type(of: editor)) responder=\(String(describing: f.window.firstResponder.map { ObjectIdentifier($0) })) affinity=\(editor.selectionAffinity.rawValue) uptime=\(ProcessInfo.processInfo.systemUptime)")
-                        records.append("SELECTION_CHANGE eventType=\(String(describing: event?.type)) flags=\(String(describing: event?.modifierFlags.rawValue)) location=\(String(describing: event?.locationInWindow)) window=\(String(describing: event?.windowNumber)) timestamp=\(String(describing: event?.timestamp)) \(mouseDetails) globalFlags=\(NSEvent.modifierFlags.rawValue) buttons=\(NSEvent.pressedMouseButtons) pointer=\(NSEvent.mouseLocation)")
-                        records.append("SELECTION_CHANGE frame=\(editor.frame) bounds=\(editor.bounds) visible=\(editor.visibleRect) windowFrame=\(editor.convert(editor.bounds, to: nil)) clipFrame=\(String(describing: clip?.frame)) clipBounds=\(String(describing: clip?.bounds))")
-                        previousRange = range
-                    }
-                }
-                defer {
-                    NotificationCenter.default.removeObserver(observer)
-                    if !gesturePassed {
-                        records.forEach { print($0) }
-                        for (index, stack) in extendedStacks.enumerated() {
-                            print("SELECTION_CHANGE {1,5} notification stack \(index):\n\(stack.joined(separator: "\n"))")
-                        }
-                        if let firstBadStack {
-                            print("SELECTION_CHANGE first {0,1} synchronous notification stack:\n\(firstBadStack.joined(separator: "\n"))")
-                        } else {
-                            print("SELECTION_CHANGE missing fact: no notification observed the first transition to {0,1}; final=\(editor.selectedRange()). The selection setter boundary is not captured.")
-                        }
-                    }
-                }
-                try await click(point, flags: .shift, in: f.window)
-                try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
-                    "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
-                let range = editor.selectedRange()
-                try require(range == NSRange(location: 1, length: 5),
-                    "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
-                try require((editor.string as NSString).substring(with: range) == "bcdef",
-                    "the native \(type.rawValue) selection must expose exactly bcdef")
-                gesturePassed = true
-            }
+            try await click(point, flags: .shift, in: f.window)
+            try require(f.window.firstResponder === editor && f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+                "Shift-click inside the active \(type.rawValue) must retain its editor and board selection; \(f.diagnostic(point))")
+            let range = editor.selectedRange()
+            try require(range == NSRange(location: 1, length: 5),
+                "native Shift-click must select exactly characters 1 through 5 from caret 6; actual=\(range)")
+            try require((editor.string as NSString).substring(with: range) == "bcdef",
+                "the native \(type.rawValue) selection must expose exactly bcdef")
             try await typed("X", in: f.window)
             try require(editor.string == "aX" && editor.selectedRange() == NSRange(location: 2, length: 0),
                 "typing must replace exactly the Shift-clicked \(type.rawValue) range and place the caret after aX")
@@ -2196,8 +2057,6 @@ private enum SelectionTyping {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
             try await exerciseQuestionHeldReturn(f)
-        } else if name == "shift-plain-question-note-control" {
-            try await exercisePlainQuestionNoteControl()
         } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
             let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
             try await exerciseShiftText(type, f)
