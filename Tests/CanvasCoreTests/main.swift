@@ -3,6 +3,10 @@ import Foundation
 import Testing
 import CanvasCore
 
+if CommandLine.arguments.dropFirst().first == "--text-measure-regression" {
+    exit(TextMeasureRegression.main())
+}
+
 // The reference fixture reuses this executable so its two-second zmx bound excludes a new script's startup.
 if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "list" {
     do {

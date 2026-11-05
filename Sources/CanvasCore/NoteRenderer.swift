@@ -3,18 +3,23 @@ import Markdown
 
 /// Markdown → attributed text for the note display (TextKit 2). Prose is styled as authored;
 /// anchored fences render what `NoteSource` resolved from disk, keyed by their info string.
-@MainActor
 public final class NoteRenderer {
-    public static let bodyFont = NSFont.systemFont(ofSize: 13)
-    public static let codeFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-    public static let captionFont = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+    public static var bodyFont: NSFont { NSFont.systemFont(ofSize: 13) }
+    public static var codeFont: NSFont { NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular) }
+    public static var captionFont: NSFont { NSFont.systemFont(ofSize: 10.5, weight: .medium) }
     /// Rows past this in one excerpt are summarized; a whole-file excerpt stays cheap to lay out.
     static let maxRows = 400
 
     private let excerpts: [String: NoteExcerpt]
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
-    private let diagrams: [Int: NoteMermaid.Outcome]
+    private enum Diagram {
+        case image(NSImage)
+        case size(CGSize)
+        case fallback(String)
+    }
+    private let diagrams: [Int: Diagram]
+    private let mathAttachment: (String, CGFloat, Bool) -> NSTextAttachment?
     private let compositedDiagrams: Bool
     /// The markdown `document` was parsed from, for the source a rendered math span keeps verbatim.
     private let source: String?
@@ -32,14 +37,39 @@ public final class NoteRenderer {
 
     /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
     /// each side, as the display, renders, and `ObjectMeasure` lay it out.
+    @MainActor
     public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], source: String? = nil,
                 width: CGFloat, diagrams: [Int: NoteMermaid.Outcome] = [:],
                 compositedDiagrams: Bool = false) {
         self.excerpts = excerpts
         self.images = images
         self.source = source
-        self.diagrams = diagrams
+        self.diagrams = diagrams.mapValues {
+            switch $0 {
+            case .image(let image): .image(image)
+            case .fallback(let reason): .fallback(reason)
+            }
+        }
+        mathAttachment = { latex, size, display in
+            NoteMath.attachment(latex: latex, fontSize: size, display: display)
+        }
         self.compositedDiagrams = compositedDiagrams
+        lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
+    }
+
+    init(source: String, width: CGFloat, diagrams: [Int: NoteMermaid.Measurement],
+         math: @escaping (String, CGFloat, Bool) -> NSTextAttachment?) {
+        excerpts = [:]
+        images = [:]
+        self.source = source
+        self.diagrams = diagrams.mapValues {
+            switch $0 {
+            case .size(let size): .size(size)
+            case .fallback(let reason): .fallback(reason)
+            }
+        }
+        compositedDiagrams = false
+        mathAttachment = math
         lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
@@ -52,7 +82,12 @@ public final class NoteRenderer {
         var markerWidth: CGFloat = 0
     }
 
+    @MainActor
     public func render(_ document: Document, placeholder: String) -> NSAttributedString {
+        renderText(document, placeholder: placeholder)
+    }
+
+    func renderText(_ document: Document, placeholder: String) -> NSAttributedString {
         out.setAttributedString(NSAttributedString(string: ""))
         fitsWidth = false
         tableShortfall = 0
@@ -302,7 +337,7 @@ public final class NoteRenderer {
                              source: decoded.source[cursor..<span.start], at: sourceOffset, attributes, into: target)
                 sourceOffset = sourceOffset.map { $0 + decoded.source[cursor..<span.start].reduce(0) { $0 + $1.utf16.count } }
             }
-            if let attachment = NoteMath.attachment(latex: span.latex, fontSize: font.pointSize, display: span.display) {
+            if let attachment = mathAttachment(span.latex, font.pointSize, span.display) {
                 var math = attributes
                 math[.attachment] = attachment
                 if let sourceOffset { math[.noteSourcePosition] = NoteSourcePosition.anchor(sourceOffset) }
@@ -389,7 +424,7 @@ public final class NoteRenderer {
         ]
         if let line { attributes[.noteMarkdownLine] = line }
         let start = out.length
-        if let attachment = NoteMath.attachment(latex: latex, fontSize: Self.bodyFont.pointSize, display: true) {
+        if let attachment = mathAttachment(latex, Self.bodyFont.pointSize, true) {
             attributes[.attachment] = attachment
             append("\u{FFFC}", attributes)
         } else {
@@ -628,9 +663,18 @@ public final class NoteRenderer {
             fitsWidth = true
             if let diagram = diagrams[line] {
                 switch diagram {
-                case .image(let image):
+                case .image, .size:
                     let attachment = NoteImageAttachment()
-                    attachment.image = image
+                    let image: NSImage?
+                    switch diagram {
+                    case .image(let picture):
+                        image = picture
+                        attachment.image = picture
+                    case .size(let size):
+                        image = nil
+                        attachment.measuredSize = size
+                    case .fallback: preconditionFailure()
+                    }
                     attachment.allowsTextAttachmentView = false
                     let paragraph = style(context, spacing: 8, before: 2)
                     paragraph.alignment = .center
@@ -640,7 +684,7 @@ public final class NoteRenderer {
                         .paragraphStyle: paragraph,
                         .noteMarkdownLine: line,
                     ])
-                    if compositedDiagrams {
+                    if compositedDiagrams, let image {
                         out.addAttribute(.noteDiagramImage, value: image, range: NSRange(location: out.length - 2, length: 1))
                     }
                 case .fallback(let reason):
@@ -775,6 +819,7 @@ public final class NoteRenderer {
 }
 
 final class NoteImageAttachment: NSTextAttachment {
+    var measuredSize: CGSize?
     override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
                         textContainer: NSTextContainer?) -> NSImage? {
         attributes[.noteDiagramImage] == nil ? image : nil
@@ -782,7 +827,7 @@ final class NoteImageAttachment: NSTextAttachment {
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
                                    proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
-        guard let size = image?.size, size.width > 0, size.height > 0 else { return .zero }
+        guard let size = measuredSize ?? image?.size, size.width > 0, size.height > 0 else { return .zero }
         let width = min(size.width, max(1, proposedLineFragment.width - position.x - 4))
         return CGRect(x: 0, y: 0, width: width, height: (size.height * width / size.width).rounded())
     }
@@ -793,7 +838,7 @@ final class NoteImageAttachment: NSTextAttachment {
 /// thread. Keyed by the markdown destination as written.
 @MainActor
 public enum NoteImages {
-    public static func sources(in document: Document) -> [String] {
+    nonisolated public static func sources(in document: Document) -> [String] {
         var out: [String] = []
         func walk(_ markup: Markup) {
             if let image = markup as? Markdown.Image, let source = image.source, !source.isEmpty, !out.contains(source) { out.append(source) }

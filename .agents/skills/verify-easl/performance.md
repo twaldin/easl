@@ -25,6 +25,12 @@ Use the same helper and fixture for direct and relay arms. For a full browser qu
 - First input-covering decoded assignment is neither A nor B. Keep its latency and format separately.
 - Preserve immutable native PNGs, armed/observed receipts, mach launch/read brackets, trace events, helper stdout, and source-counter audit. Late, ambiguous, missing, and invalid-clock rows do not become successful percentiles. Sharp assignment does not establish native presentation or RGB quality.
 
+## Check delegated measurement responsiveness
+
+Use the [text measurement journey](features/text-measurement.md) for a 200-note remote board and concurrent native terminal keys. Compare release builds with identical fixture bytes. Retain all ten `layout.check` wall times per build, full replies, and viewer `main.stretch50` and `main.stretch250` counts and maxima. Require overflow findings from deliberately short note frames so an approximate fallback cannot look like a successful exact batch.
+
+The native regression records complete size JSON and real main-run-loop progress. Its optional historical baseline checks byte-exact dimensions. Keep profiling and captures outside timed checks. Report responsiveness separately from total batch throughput.
+
 ## Exercise exact-size boards
 
 `perf-board.py --objects N` generates exact-size fixtures with eight terminals, not N approximate tiles. Generate only into an unlaunched owned home:

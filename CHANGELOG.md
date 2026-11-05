@@ -14,6 +14,7 @@ Each version's section is its GitHub release's notes.
 - A fresh native HTML entry survives its matching page load. Native panels restore an unchanged HTML document or a note's editor and selection. A replacement HTML page retains the tile's native key sink until a fresh Return or click, without letting scripts take the keyboard or inheriting the old document's permission.
 - Unhandled keys from typing code, changes or question tiles no longer act on a different programmatically selected tile. First-click note drags select text immediately, rules enter at their Markdown source line, image attachments and unloaded placeholders enter at their source start, and whitespace-only notes or clicks below the last rendered line put the caret at source end.
 - Shift-click inside the text control that already has typing extends its text selection. Shift-click on a different tile still changes board selection and leaves keys on the board.
+- Delegated text measurement now parses and lays out notes, text shapes, labels, arrow captions, and code captions off the Mac's main thread. `layout.check` keeps terminal input responsive without changing measured sizes. Mermaid resolution and SwiftMath view sizing remain on main; only their dimensions enter worker layout.
 
 ## 0.3.6
 

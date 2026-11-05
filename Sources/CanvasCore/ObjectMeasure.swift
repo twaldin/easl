@@ -21,8 +21,8 @@ public enum ObjectMeasure {
     }
 
     /// Note display insets: `NoteTile` lays its text out with exactly these.
-    public static let noteInset = NSSize(width: 8, height: 10)
-    public static let noteLineFragmentPadding: CGFloat = 2
+    nonisolated public static let noteInset = NSSize(width: 8, height: 10)
+    nonisolated public static let noteLineFragmentPadding: CGFloat = 2
     /// Notes measured without a width wrap at the width a new note gets.
     public static var defaultNoteWidth: CGFloat { Board.defaultSize(.note).w }
     /// Room around the label of a rect (an ellipse scales it to its inscribed box).
@@ -215,16 +215,21 @@ public enum ObjectMeasure {
         let width = width ?? defaultNoteWidth
         let textWidth = width - 2 * noteInset.width
         let renderer = NoteRenderer(excerpts: excerpts, images: images, source: markdown, width: textWidth, diagrams: diagrams)
-        let text = renderer.render(document, placeholder: notePlaceholder)
+        return note(document, width: width, renderer: renderer)
+    }
+
+    nonisolated static func note(_ document: Document, width: CGFloat, renderer: NoteRenderer) -> (size: CGSize, tableShortfall: CGFloat) {
+        let textWidth = width - 2 * noteInset.width
+        let text = renderer.renderText(document, placeholder: notePlaceholder)
         let height = noteTextHeight(text, width: textWidth)
         return (CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up)), renderer.tableShortfall)
     }
 
     /// What an empty note shows (and so how tall it is).
-    public static let notePlaceholder = "Double-click or ↩ to write a note"
+    nonisolated public static let notePlaceholder = "Double-click or ↩ to write a note"
 
     /// Height TextKit 2 lays `text` out at in a container `width` wide, as the note display does.
-    public static func noteTextHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
+    nonisolated public static func noteTextHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()
@@ -258,7 +263,7 @@ public enum ObjectMeasure {
     }
 
     /// Rounded-up text bounds with a point of slack so the drawn label never re-wraps.
-    static func textBounds(_ text: NSAttributedString, width: CGFloat?) -> CGSize {
+    nonisolated static func textBounds(_ text: NSAttributedString, width: CGFloat?) -> CGSize {
         let size = text.boundingRect(with: NSSize(width: width ?? .greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return CGSize(width: ceil(size.width) + 2, height: ceil(size.height) + 2)
     }
@@ -266,12 +271,20 @@ public enum ObjectMeasure {
     /// A text shape's text at `textSize` times the drawing's text size, wrapped at `width` or
     /// unwrapped (`textBounds`).
     static func shapeTextBounds(_ text: String, textSize: CGFloat, width: CGFloat?) -> CGSize {
-        textBounds(DrawingStyle.text(text, size: DrawingStyle.textPointSize * textSize, color: .labelColor), width: width)
+        shapeTextBounds(text, width: width, font: DrawingStyle.font(size: DrawingStyle.textPointSize * textSize))
+    }
+
+    nonisolated static func shapeTextBounds(_ text: String, width: CGFloat?, font: NSFont) -> CGSize {
+        textBounds(DrawingStyle.text(text, font: font, color: .labelColor), width: width)
     }
 
     /// A rect's or an ellipse's label, centered, wrapped at `width` or unwrapped (`textBounds`).
     static func labelBounds(_ text: String, width: CGFloat?) -> CGSize {
-        textBounds(DrawingStyle.text(text, size: DrawingStyle.labelSize, color: .labelColor, alignment: .center), width: width)
+        labelBounds(text, width: width, font: DrawingStyle.font(size: DrawingStyle.labelSize))
+    }
+
+    nonisolated static func labelBounds(_ text: String, width: CGFloat?, font: NSFont) -> CGSize {
+        textBounds(DrawingStyle.text(text, font: font, color: .labelColor, alignment: .center), width: width)
     }
 }
 

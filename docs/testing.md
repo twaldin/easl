@@ -277,6 +277,7 @@ On `twaldin-home`, run every development or test GUI step inside `agent-gui`, in
 
 Easl lanes use `/home/tim/agents/projects/easl/state/efforts/gui-guest/recipe.md` for the tested claim, guest setup, proof, export, and cleanup commands. If that recipe is absent, GUI proof is not ready. Do not substitute a host launch.
 Use the project-local [verify-easl skill](../.agents/skills/verify-easl/SKILL.md) for guest launch, ownership checks, native feature journeys, retained evidence, and cleanup.
+Use the [delegated text measurement journey](../.agents/skills/verify-easl/features/text-measurement.md) for byte-exact base comparison, the native main-run-loop regression, and a 200-note remote board during terminal input.
 
 The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, Bun 1.4.3 or later, and zmx 0.8.1. Use a login shell so Homebrew's tools are on `PATH`. Cap Swift builds and bundling at two jobs. Use a separate `EASL_DEV_HOME` and scratch easld home for each lane.
 
