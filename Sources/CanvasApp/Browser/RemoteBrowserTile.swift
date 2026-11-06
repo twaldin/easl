@@ -664,7 +664,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             self.assemblingRefinement = nil
         }
         var preservesWheelBoundary = preservingWheelBoundary
-        if case .scroll(let scroll) = event {
+        if case .scroll(let scroll) = event, supportsScrollGestures {
             if let previous = lastWheel {
                 preservesWheelBoundary = preservesWheelBoundary || scroll.phase != previous.phase || scroll.momentum != previous.momentum
                     || scroll.gesture != previous.gesture
