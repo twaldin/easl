@@ -77,7 +77,7 @@ final class BrowserSurfaceHost: NSObject {
         watch()
         NSLog("easl: browser %@ streams as %@ (%@, %.2f px/pt)", id, stream.id, format.rawValue, stream.scale)
         return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size),
-                        "scale": .number(stream.scale), "scrollGestures": .bool(true)])
+                        "scale": .number(stream.scale), "scrollGestures": .bool(peer.hears("surface.scrollUnhandled", on: board))])
     }
 
     private func surface(for tile: BrowserTile) -> BrowserSurface {

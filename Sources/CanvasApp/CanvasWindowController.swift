@@ -1756,8 +1756,9 @@ final class CanvasWindow: NSWindow {
                 }
             } else if let root = contentView?.superview ?? contentView {
                 let hit = root.hitTest(root.superview?.convert(point, from: nil) ?? point) ?? root
-                wheelState = .content(WheelTarget(tile: nil, root: hit, responder: hit,
-                                                   point: hit.convert(point, from: nil)))
+                let receiver: NSView = (hit as? NSScrollView) ?? hit.enclosingScrollView ?? hit
+                wheelState = .content(WheelTarget(tile: nil, root: receiver, responder: receiver,
+                                                   point: receiver.convert(point, from: nil)))
             }
         }
         if case .choosing = wheelState,

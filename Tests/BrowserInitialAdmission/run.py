@@ -6,12 +6,14 @@ import pathlib
 import platform
 import shlex
 import subprocess
+import sys
 import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run initial browser preview admission against an existing native Easl build.")
+    parser = argparse.ArgumentParser(description="Run native browser admission or remote wheel negotiation against an existing Easl build.")
     parser.add_argument("--bin-path", required=True, type=pathlib.Path)
+    parser.add_argument("--case", choices=("initial-admission", "remote-wheel"), default="initial-admission")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS.")
@@ -48,14 +50,27 @@ def main():
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    with tempfile.TemporaryDirectory(prefix="easl-browser-admission-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="easl-browser-admission-", dir="/tmp") as temporary:
         environment = os.environ.copy()
         environment["EASL_HOME"] = temporary
         environment["CFFIXED_USER_HOME"] = temporary
         environment["XDG_CONFIG_HOME"] = temporary
         environment["EASL_NO_ACTIVATE"] = "1"
         environment.pop("EASL_ROOT", None)
-        subprocess.run([str(executable)], cwd=root, env=environment, check=True, timeout=45)
+        case_arguments = []
+        if args.case == "remote-wheel":
+            relay = pathlib.Path(temporary) / "ssh-unix-relay"
+            relay.write_text(
+                f"#!{sys.executable}\n"
+                "import os, shlex, sys\n"
+                "path, = shlex.split(sys.argv[-1])\n"
+                "os.execv('/usr/bin/nc', ['nc', '-U', path])\n"
+            )
+            relay.chmod(0o700)
+            environment["EASL_DEV_SSH"] = str(relay)
+            case_arguments.append("remote-wheel")
+        subprocess.run([str(executable), *case_arguments], cwd=root, env=environment,
+                       check=True, timeout=120 if case_arguments else 45)
 
 
 if __name__ == "__main__":

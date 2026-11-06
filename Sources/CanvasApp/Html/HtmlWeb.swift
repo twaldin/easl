@@ -587,7 +587,6 @@ final class HtmlWebView: WKWebView {
     private static func installSendMonitor() {
         guard sendMonitor == nil else { return }
         sendMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { event in
-            if MainActor.assumeIsolated({ (event.window as? CanvasWindow)?.handleSpacePan(event) == true }) { return nil }
             MainActor.assumeIsolated { observeSendGesture(event) }
             return event
         }
