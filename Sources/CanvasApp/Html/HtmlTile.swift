@@ -52,6 +52,16 @@ final class HtmlTile: NSView, TileContent {
     private var assetWatch: HostFileWatch?
     private var assetReload: DispatchWorkItem?
 
+    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
+        guard let webView, webView.superview != nil, !webView.isLoading else { return completion(nil) }
+        var local = webView.convert(point, from: self)
+        guard webView.bounds.contains(local) else { return completion(nil) }
+        if !webView.isFlipped { local.y = webView.bounds.height - local.y }
+        let zoom = webView.pageZoom * webView.magnification
+        PageScrollCapability.query(in: webView, point: CGPoint(x: local.x / zoom, y: local.y / zoom),
+                                   direction: direction, completion: completion)
+    }
+
     private func suspendAssetWatch() {
         assetWatch?.cancel()
         assetWatch = nil

@@ -76,7 +76,8 @@ final class BrowserSurfaceHost: NSObject {
         surface.add(stream)
         watch()
         NSLog("easl: browser %@ streams as %@ (%@, %.2f px/pt)", id, stream.id, format.rawValue, stream.scale)
-        return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size), "scale": .number(stream.scale)])
+        return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size),
+                        "scale": .number(stream.scale), "scrollGestures": .bool(true)])
     }
 
     private func surface(for tile: BrowserTile) -> BrowserSurface {
@@ -544,7 +545,7 @@ final class BrowserSurface {
             }
             Self.mouse(mouse.phase, at: point, clicks: mouse.clicks, mods: mouse.mods, on: webView, target: target)
         case .scroll(let scroll):
-            Self.scroll(scroll, on: webView)
+            Self.scroll(scroll, on: webView, stream: stream)
         case .key(let key):
             if key.down {
                 stream.heldKeys[key.code] = (key.chars, key.plain)
@@ -661,7 +662,39 @@ final class BrowserSurface {
         if down { webView.keyDown(with: event) } else { webView.keyUp(with: event) }
     }
 
-    private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView) {
+    private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView, stream: SurfaceStream) {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        let phaseless = scroll.phase == 0 && scroll.momentum == 0
+        let began = scroll.phase & NSEvent.Phase.began.rawValue != 0
+        let mayBegin = scroll.phase & NSEvent.Phase.mayBegin.rawValue != 0
+        let previous = stream.wheelDestination
+        let starts: Bool
+        if let gesture = scroll.gesture {
+            starts = previous?.gesture != gesture
+        } else {
+            starts = previous == nil
+                || (mayBegin && previous?.phase != NSEvent.Phase.mayBegin.rawValue)
+                || (began && previous?.phase != NSEvent.Phase.mayBegin.rawValue)
+                || (phaseless && (previous!.phase != 0 || previous!.momentum != 0
+                    || timestamp - previous!.timestamp > 0.25))
+        }
+        if starts {
+            let point = Self.point(scroll.x, scroll.y, in: webView)
+            stream.wheelDestination = SurfaceStream.WheelDestination(
+                page: webView, responder: responder(at: point, in: webView), point: point,
+                timestamp: timestamp, phase: scroll.phase, momentum: scroll.momentum, gesture: scroll.gesture)
+        }
+        guard var destination = stream.wheelDestination, destination.page === webView else { return }
+        destination.timestamp = timestamp
+        destination.phase = scroll.phase
+        destination.momentum = scroll.momentum
+        stream.wheelDestination = destination
+        defer {
+            let finishes = NSEvent.Phase.ended.rawValue | NSEvent.Phase.cancelled.rawValue
+            if scroll.momentum & finishes != 0 || scroll.phase & NSEvent.Phase.cancelled.rawValue != 0 {
+                stream.wheelDestination = nil
+            }
+        }
         func wheel(_ delta: Double) -> Int32 { Int32(max(-100_000, min(100_000, delta)).rounded()) }
         guard webView.window != nil,
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: scroll.precise ? .pixel : .line, wheelCount: 2,
@@ -672,12 +705,12 @@ final class BrowserSurface {
         cg.flags = CGEventFlags(rawValue: UInt64(scroll.mods))
         // The event has no window, and WebKit reads its location as its view's window's
         // coordinates: the window-local point goes where that reading gives it back unchanged.
-        let local = Self.point(scroll.x, scroll.y, in: webView)
+        let local = destination.point
         let inWindow = webView.convert(local, to: nil)
         cg.location = CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.height ?? 0) - inWindow.y)
         guard let event = NSEvent(cgEvent: cg) else { return }
         SurfaceEventQueue.adopt(event)
-        responder(at: local, in: webView).scrollWheel(with: event)
+        destination.responder.scrollWheel(with: event)
     }
 
     /// The page's selected text, read in the helper's world (`selectedText`): never through this

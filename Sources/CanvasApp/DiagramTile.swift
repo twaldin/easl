@@ -630,14 +630,16 @@ final class DiagramTile: NSView, TileContent {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    func canScroll(at point: NSPoint, direction: CGVector) -> Bool {
+        guard direction.dx == 0, let panel = detailPanel(in: bounds),
+              bounds.contains(point), point.y >= bounds.maxY - panel.height else { return false }
+        return CanvasWheel.canScroll(offset: detailScrollOffset,
+                                     maximum: panel.textHeight - max(0, panel.height - 36), delta: direction.dy)
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        guard !event.modifierFlags.contains(.command), let panel = detailPanel(in: bounds),
-              point.y >= bounds.maxY - panel.height, bounds.contains(point) else {
-            return super.scrollWheel(with: event)
-        }
+        guard let panel = detailPanel(in: bounds) else { return }
         let maximum = max(0, panel.textHeight - max(0, panel.height - 36))
-        guard maximum > 0 else { return super.scrollWheel(with: event) }
         let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 16)
         detailScrollOffset = min(maximum, max(0, detailScrollOffset - delta))
         needsDisplay = true

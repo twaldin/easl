@@ -348,10 +348,11 @@ final class CanvasView: NSScrollView {
         }
         refreshRings()
         guard let window, mouseMonitor == nil else { return }
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown]) { [weak self] event in
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown, .keyUp]) { [weak self, weak window] event in
             // Not `self?.handleMouse(event) ?? event`: that turns "consumed" (nil) back into the event.
             guard let self else { return event }
             self.reportViewerInput(event)
+            if event.window === window, (window as? CanvasWindow)?.handleSpacePan(event) == true { return nil }
             return self.handleMouse(event)
         }
         let center = NotificationCenter.default
@@ -1947,6 +1948,7 @@ final class CanvasView: NSScrollView {
     /// Scrolling that reaches the canvas (`CanvasWheel`): a wheel notch pans a useful distance,
     /// ⌘-scroll zooms around the pointer, a trackpad's scroll is the scroll view's own pan.
     override func scrollWheel(with event: NSEvent) {
+        guard (window as? CanvasWindow)?.deliveringContentWheel != true else { return }
         let flags = event.modifierFlags
         switch CanvasWheel.action(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
                                   command: flags.contains(.command), shift: flags.contains(.shift)) {

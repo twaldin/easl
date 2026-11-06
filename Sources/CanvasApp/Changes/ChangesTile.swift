@@ -35,7 +35,6 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private var messageWork: DispatchWorkItem?
     private let cache = ChangesLineCache()
     private var filterField: NSSearchField?
-    private var gesture = ScrollGesture()
     private var toolTipWork: DispatchWorkItem?
     /// The rows of the last painter and what they were laid out for: stepping through hunks or
     /// selecting lines doesn't rewrap every line.
@@ -638,27 +637,14 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     // MARK: Mouse
 
+    func canScroll(_ direction: CGVector) -> Bool {
+        guard direction.dx == 0 else { return false }
+        return CanvasWheel.canScroll(offset: scroll, maximum: contentHeight - viewportHeight, delta: direction.dy)
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        let dx = event.scrollingDeltaX
-        var dy = event.scrollingDeltaY
-        let sideways = CanvasWheel.sideways(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
-        if !event.hasPreciseScrollingDeltas { dy *= CodeMetrics.rowHeight }
-        let scrollable = contentHeight > viewportHeight + 0.5
-        guard let step = ScrollGesture.Step(event) else {
-            // A mouse wheel notch or a replayed step: each one on its own.
-            guard scrollable, !sideways, dy != 0 else { return super.scrollWheel(with: event) }
-            return setScroll(scroll - dy)
-        }
-        switch gesture.owner(of: step, sequence: (window as? CanvasWindow)?.scrollSequence ?? 0, dx: dx, dy: dy, tileTakes: scrollable && !sideways) {
-        case .tile?:
-            if dy != 0 { setScroll(scroll - dy) }
-        case .canvas?:
-            super.scrollWheel(with: event)
-        case nil:
-            // A gesture's first event without movement: the canvas mustn't start tracking a
-            // gesture that may turn out to scroll the tile.
-            if !scrollable { super.scrollWheel(with: event) }
-        }
+        let dy = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : CodeMetrics.rowHeight)
+        setScroll(scroll - dy)
     }
 
     override func mouseDown(with event: NSEvent) {

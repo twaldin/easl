@@ -124,14 +124,13 @@ final class CodeRowsView: NSView {
 
     // MARK: Mouse
 
-    /// Scrolls vertically when the rows overflow; anything else (sideways, a file that fits)
-    /// goes on to the canvas, which pans.
+    func canScroll(_ direction: CGVector) -> Bool {
+        guard direction.dx == 0 else { return false }
+        return CanvasWheel.canScroll(offset: bounds.minY, maximum: contentHeight - bounds.height, delta: direction.dy)
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        let dx = event.scrollingDeltaX
-        var dy = event.scrollingDeltaY
-        let sideways = CanvasWheel.sideways(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
-        if !event.hasPreciseScrollingDeltas { dy *= CodeMetrics.rowHeight }
-        guard !sideways, dy != 0, contentHeight > bounds.height + 0.5 else { return super.scrollWheel(with: event) }
+        let dy = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : CodeMetrics.rowHeight)
         onInteract?()
         scroll(toY: bounds.minY - dy)
     }
