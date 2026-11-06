@@ -480,8 +480,8 @@ The runner launches a real app with a disposable home and a local oversized docu
 precise and line-based events are synthetic AppKit replay, not HID or physical trackpad input.
 It checks content-first movement, board panning at an initial limit or over fitting content,
 and full-document START/END access on both axes. Phased replay checks observable ownership,
-not full-document WebKit traversal: directly replayed WebKit gestures can drop later steps
-(`DevInput.swift`). These browser runners emit no momentum. Separately qualify phased
+not full-document WebKit traversal; qualify full traversal separately. These browser runners
+emit no momentum. Separately qualify phased
 plus momentum input through the real `CanvasWindow` with `NSApp.sendEvent` or
 `window.sendEvent`, labelled **synthetic, AppKit dispatch**, and retain native event
 receipts. CuaDriver targeted phaseless wheel input remains the real-HID proof. A final

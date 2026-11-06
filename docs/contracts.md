@@ -521,7 +521,7 @@ A patch that doesn't apply (the lines changed since the tile read them, the inde
 
 Viewed: the file header's check writes `props.viewed[boardPath] = fingerprint` (one undo step, dropping entries whose diff changed since) and folds the file; an entry counts only while the fingerprint matches (`ChangedFile.isViewed`), so a changed file unfolds on the next listing. Fitted tiles (`ChangesMetrics.grown`): after a reload, a tile whose natural height equals `ChangesMetrics.fit` of the previous listing (at its width) grows toward the new fit when that is taller (`Board.growFitted`: into free space only, `Board.grownFrame`, never over a neighbour, the rest scrolls; credited to the system, never an undo step); one sized for an empty listing (or none yet, after a relaunch) grows wider too, a tile the user made (Review Changes: a compact "No changes" when it first lists nothing) to at most the default 820×620. Review Changes (the board menu's per-worktree Uncommitted changes and Branch vs <default branch>, File › Review Changes and Review Branch) lists first (`ChangeSet.load`) and then creates the tile, compact when nothing is listed. `object.create` of a changes tile by an agent (`caller`) that already made one on that board for the same `root` (resolved), `base`, and `paths` is `object.update` of that tile with the call's other props, `frame`, and `size`, and answers `reused: true` (`ApiRouter.reusableChanges`; not in batches).
 
-Scrolling: a trackpad gesture belongs to whoever its first movement picks (the tile when it can scroll and the movement is mostly vertical, else the board) until it ends, momentum included. A gesture the tile did not see begin stays with the board, even if the tile also missed the previous gesture's end. `CanvasWindow.sendEvent` counts gesture starts for `ScrollGesture`, including starts outside the tile. A gesture's first event without movement never reaches the board while the tile can scroll, so the board cannot start tracking a gesture that turns out to be the tile's. Wheel notches and phaseless steps go one by one, as in code tiles. A horizontal-dominant step or a non-precise ⇧-wheel step goes to the board (`CanvasWheel.sideways`). j/k, J/K, ]/[, s/r scroll the current hunk into the tile's view below the pinned file header (`reveal`), never the board.
+Scrolling follows the [shared content-first rule](design.md), including 250 ms phaseless bursts and one owner through momentum. j/k, J/K, ]/[, s/r scroll the current hunk into the tile's view below the pinned file header (`reveal`), never the board.
 
 Opening code: a click on a line opens it by `Board.openForNavigation` with `preview: true` (the tile's own preview, else a plain code tile in view showing the file, else a new one beside the tile, shrunk down to a follow tile's minimum to land wholly in view; see Navigating to code), one step of Navigate Back; then the board pans the least that shows it together with what showed of the changes tile (`Layout.reveal(_:keeping:…)`, the padding cut to the room left when both just fit), or the code tile alone when both can't fit.
 
@@ -707,19 +707,6 @@ On easld, `props.url` is observed page state; host-owned `urlIntent = {url, rev,
 The drawing Mac keeps its own browser profile, cookies, page state and network requests. Localhost and file URLs refer to that Mac, not to the board host. Easld stores ordinary URL, title and drawing-machine props, not page bodies, screenshots, cookies, page logs or profiles. Browser command results pass through memory. An agent-requested screenshot file is still written by the CLI process that requested it. Mirrored board content and non-drawing viewers retain the memory-only rules above.
 
 Every browser title bar shows its drawing machine. On easld boards its menu offers attached drawing Macs. After confirmation, an online move reads the current URL from the exact drawing Mac, revalidates the page and board incarnation, and writes URL plus `drawingMachine` together as an explicit update. An offline move explicitly confirms reloading the last saved URL. A failed online read aborts; it never silently uses stale metadata. The new Mac reloads in its own profile without copying cookies, logins, or unsaved state, and old streams end. Other tiles, including child pages, keep their assignments. Mac-hosted boards show their host but do not yet support moving drawing to a viewer.
-
-### Browser wheel input
-
-Plain wheel input over a live browser page larger than the clear canvas viewport first pans
-the viewer's canvas to reveal the clipped edge in that direction. The pan stops at that edge;
-later wheel steps scroll the page. This applies to local browsers, direct streams, and easld
-relays without changing tile frames or page viewport dimensions.
-The primary scroll axis decides whether reveal is needed. Minor sideways drift cannot claim
-a vertical page gesture after its bottom edge is visible.
-
-A phased gesture keeps the owner chosen by its first movement through momentum, including
-during browser resize. A gesture that began outside that browser page stays with the canvas.
-Move-tool wheel panning and Command-scroll zoom take precedence over browser reveal.
 
 ### Remote browser streams
 

@@ -898,7 +898,7 @@ final class CanvasView: NSScrollView {
     // MARK: Mouse
 
     private func reportViewerInput(_ event: NSEvent) {
-        guard let remote, !isHiddenOrHasHiddenAncestor, event.window === window else { return }
+        guard event.type != .keyUp, let remote, !isHiddenOrHasHiddenAncestor, event.window === window else { return }
         if event.type == .keyDown {
             guard let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return }
         } else {
