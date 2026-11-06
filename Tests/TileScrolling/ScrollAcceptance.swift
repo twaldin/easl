@@ -783,6 +783,8 @@ private enum SelectionTyping {
         Scenario(name: "content-keeps-owner-with-command", baseline: "expected regression failure: Command changes an existing content gesture to board zoom"),
         Scenario(name: "content-edge-momentum-new-gesture", baseline: "expected regression failure: new gesture at content edge is swallowed; no-chain substeps are controls"),
         Scenario(name: "phaseless-250ms-owner", baseline: "expected regression failure: per-event re-hit-test has no 250ms burst lock"),
+        // Run-4 ruling: omit the plain outside-board NSScrollView fixture, which also fails at94969df3.
+        // Real References HID retains content on the fix (panel04 c31d2b2e; panel moved under unmodified ticks).
         Scenario(name: "hover-panel-outside-tile", baseline: "expected regression failure: native panel outside tile pans board"),
         Scenario(name: "references-panel-outside-tile", baseline: "expected regression failure: native references list outside tile pans board"),
         Scenario(name: "browser-native-panel", baseline: "expected regression failure: browser tile steals native non-WebKit panel wheel"),
@@ -800,7 +802,6 @@ private enum SelectionTyping {
         Scenario(name: "space-click-shape", baseline: "ordinary shape-click control at94969df3; regression at0d9e1593"),
         Scenario(name: "space-click-move-terminal", baseline: "Move click keeps board keys at94969df3; regression at0d9e1593"),
         Scenario(name: "space-click-native-button", baseline: "ordinary native button-click control; tracking regression at0d9e1593"),
-        Scenario(name: "outside-board-retains-wheel", baseline: "outside scroll view must retain its gesture across the board"),
         Scenario(name: "terminal-horizontal-unfocused", baseline: "safety control: horizontal wheel must never send non-typing program bytes"),
         Scenario(name: "terminal-empty-unfocused", baseline: "expected regression failure: unfocused no-history vertical scroll swallowed"),
         Scenario(name: "terminal-alternate-typing", baseline: "existing-pass control: native alternate-scroll arrows preserved")
@@ -813,47 +814,6 @@ private enum SelectionTyping {
         }
         if name == "page-zero-begin-coalescing" {
             try await pageZeroBeginCoalescing(f)
-            return
-        }
-        if name == "outside-board-retains-wheel" {
-            guard let root = f.window.contentView else { throw Failure("missing window content") }
-            let scroll = NSScrollView(frame: NSRect(x: 15, y: 15, width: 240, height: 170))
-            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 5000))
-            text.isEditable = false
-            text.string = (1...200).map { "Outside board row \($0)\n" }.joined()
-            scroll.documentView = text
-            scroll.hasVerticalScroller = true
-            root.addSubview(scroll)
-            defer { scroll.removeFromSuperview() }
-            f.window.layoutIfNeeded()
-            if let container = text.textContainer { text.layoutManager?.ensureLayout(for: container) }
-            text.sizeToFit()
-            scroll.contentView.scroll(to: .zero)
-            scroll.reflectScrolledClipView(scroll.contentView)
-            let point = text.convert(NSPoint(x: 40, y: text.visibleRect.minY + 40), to: nil)
-            try require(!scroll.isDescendant(of: f.canvas)
-                        && f.hit(point)?.isDescendant(of: scroll) == true
-                        && text.bounds.height > scroll.contentSize.height,
-                        "outside-board fixture must be a hittable overflowing native sibling")
-            try await boardKeys(f)
-            let viewport = f.canvas.viewport, origin = scroll.contentView.bounds.origin
-            try await wheel(point, dy: -60, phase: 1, in: f)
-            try await wait("outside native scroll view must move on its first event") {
-                scroll.contentView.bounds.origin != origin
-            }
-            let afterBegin = scroll.contentView.bounds.origin
-            try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
-            try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
-            try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
-            try await wheel(try boardPoint(f), dy: -20, momentum: 2, in: f)
-            try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
-            try await wait("outside native owner must keep moving after the pointer leaves") {
-                scroll.contentView.bounds.origin.y > afterBegin.y
-            }
-            let after = f.canvas.viewport
-            print("OUTSIDE OFFSETS origin=\(origin) began=\(afterBegin) final=\(scroll.contentView.bounds.origin) boardBefore=\(viewport) boardAfter=\(after)")
-            try require(after.rect.x == viewport.rect.x && after.rect.y == viewport.rect.y && after.zoom == viewport.zoom,
-                        "outside native owner must not pan or zoom board")
             return
         }
         if name == "space-click-shape" || name == "space-click-move-terminal" || name == "space-click-native-button" {

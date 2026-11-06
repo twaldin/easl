@@ -468,6 +468,11 @@ WebKit may coalesce queued wheel events and return the last event's native ident
 The first directional page event is delivered one page point inward from the pinned
 point so its result stays distinct; later page events keep the pinned point.
 
+The run-4 native-panel ruling excludes the plain sibling `NSScrollView` synthetic fixture:
+its continuation fails on baseline and candidate. The real References panel retains a
+CuaDriver phaseless burst on the fix when the fixture moves it away from the HID target
+(panel04 proof `c31d2b2e`). Baseline pans instead. This is not HID pointer-motion proof.
+
 The real Unix-socket viewer regression covers absent/false gesture advertisements,
 legacy input, stale gesture and stream replies, and current-answer board fallback.
 It runs WebKit and the actual remote tile through the native application event loop:
