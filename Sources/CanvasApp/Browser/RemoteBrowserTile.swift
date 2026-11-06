@@ -715,7 +715,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 && previous.precise == scroll.precise && previous.mods == scroll.mods
                 && previous.gesture == scroll.gesture:
             outbound[index].event = .scroll(SurfaceScroll(
-                x: previous.x, y: previous.y, dx: previous.dx + scroll.dx, dy: previous.dy + scroll.dy,
+                x: scroll.x, y: scroll.y, dx: previous.dx + scroll.dx, dy: previous.dy + scroll.dy,
                 precise: previous.precise, phase: previous.phase, momentum: previous.momentum,
                 mods: previous.mods, gesture: previous.gesture))
             return true

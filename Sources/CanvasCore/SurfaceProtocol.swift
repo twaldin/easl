@@ -229,19 +229,6 @@ public struct SurfaceScroll: Sendable, Equatable {
         self.mods = mods
         self.gesture = gesture
     }
-
-    /// NSEvent phase bits, without an AppKit dependency on the protocol boundary.
-    public var gestureStep: ScrollGesture.Step? {
-        if phase & 32 != 0 { return .mayBegin }
-        if phase & 1 != 0 { return .began }
-        if phase & 4 != 0 { return .changed }
-        if phase & 16 != 0 { return .cancelled }
-        if phase & 8 != 0 { return .ended }
-        if momentum & 1 != 0 { return .momentumBegan }
-        if momentum & 4 != 0 { return .momentumChanged }
-        if momentum & (8 | 16) != 0 { return .momentumEnded }
-        return nil
-    }
 }
 
 public struct SurfaceScrollUnhandled: Sendable, Equatable {

@@ -17,8 +17,6 @@ struct SurfaceProtocolTests {
                 continue
             }
             #expect(scroll.gesture == (gesture == nil ? nil : 7))
-            #expect(scroll.phase == 4)
-            #expect(scroll.gestureStep == .changed)
         }
         for invalid in [.number(0), .number(-1), .number(1.5), .string("7"), .bool(true)] as [JSONValue] {
             var event = base
@@ -44,18 +42,6 @@ struct SurfaceProtocolTests {
             .object(["stream": "str_page", "gesture": 7, "extra": .bool(true)]),
         ] as [JSONValue] {
             #expect(SurfaceScrollUnhandled(invalid) == nil)
-        }
-    }
-
-    @Test func wireWheelPhasesUseTheSharedGestureBoundary() {
-        var boundary = ScrollGesture()
-        let phases: [(UInt, UInt, Bool)] = [(32, 0, true), (1, 0, false), (4, 0, false),
-                                          (8, 0, false), (0, 1, false), (0, 4, false),
-                                          (0, 8, false), (1, 0, true)]
-        for (index, sample) in phases.enumerated() {
-            let scroll = SurfaceScroll(x: 0, y: 0, dx: 0, dy: -1, precise: true,
-                                       phase: sample.0, momentum: sample.1, mods: 0)
-            #expect(boundary.starts(step: scroll.gestureStep, timestamp: Double(index) / 100) == sample.2)
         }
     }
 
