@@ -205,7 +205,7 @@ private enum SelectionTyping {
                 let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-                for y in 0..<8 { for x in 0..<8 { image.setColor(.systemBlue, atX: x, y: y) } }
+                for y in 0..<8 { for x in 0..<8 { image.setColor(.blue, atX: x, y: y) } }
                 try image.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("image.png"))
                 props = .object(["path": "image.png"])
             default: throw Failure("unsupported fixture type \(type.rawValue)")
@@ -328,8 +328,10 @@ private enum SelectionTyping {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                wheel1: dy, wheel2: dx, wheel3: 0),
               let phaseField = CGEventField(rawValue: 99),
-              let momentumField = CGEventField(rawValue: 123) else { throw Failure("CG scroll construction failed") }
-        cg.location = point
+              let momentumField = CGEventField(rawValue: 123),
+              let screen = NSScreen.screens.first else { throw Failure("CG scroll construction failed") }
+        let global = f.window.convertPoint(toScreen: point)
+        cg.location = CGPoint(x: global.x, y: screen.frame.maxY - global.y)
         cg.flags = flags
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(f.window.windowNumber))
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(f.window.windowNumber))
@@ -342,7 +344,7 @@ private enum SelectionTyping {
         try require(event.window === f.window && event.windowNumber == f.window.windowNumber,
                     "event synthesis prerequisite: CG-backed NSEvent must target the owned CanvasWindow")
         try require(abs(event.locationInWindow.x - point.x) < 1 && abs(event.locationInWindow.y - point.y) < 1,
-                    "event synthesis prerequisite: window-local CG scroll coordinates must round-trip; expected \(point), received \(event.locationInWindow)")
+                    "event synthesis prerequisite: window \(f.window.frame), Quartz \(cg.location), expected \(point), received \(event.locationInWindow)")
         let decodedPhase: UInt = phase == 1 ? NSEvent.Phase.began.rawValue
             : phase == 2 ? NSEvent.Phase.changed.rawValue : phase == 4 ? NSEvent.Phase.ended.rawValue : 0
         let decodedMomentum: UInt = momentum == 1 ? NSEvent.Phase.began.rawValue
