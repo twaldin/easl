@@ -21,7 +21,7 @@ The board format is unchanged, still format 3. The persisted object model is unc
 - A selected tile that is not taking typing has a dashed ring. The typing tile has a solid ring. Terminal ring corners are tighter, with radius 5 instead of 9, so the ring stays outside the text.
 - An `easl view.open_url` call occasionally opens a second browser instead of reusing the open one. This intermittent was also seen before the terminal-focus stall fix.
 - The paired needs-you stress check still recorded three main-thread pauses of about 52 ms each. An earlier check recorded 63.5 ms. Their cause remains unexplained.
-- With separate drawing and viewing Macs, a relayed browser page receives typed keys, but the viewing Mac's picture can stop short of the last ones, and Command-Z does not undo them. This also happens on 0.3.6.
+- With separate drawing and viewing Macs, a relayed browser page receives and shows typed keys, but the relay does not confirm that its frames include the last ones, and Command-Z does not undo them. This also happens on 0.3.6.
 - CI's native tests run on macOS 27. The runtime release check ran on macOS 26.6.2.
 - The cross-tile scroll-ownership rule in #235 is not included.
 
