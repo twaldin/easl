@@ -11,6 +11,7 @@ final class SceneOverlay: NSView {
     }
     struct Ring: Equatable {
         var rect: NSRect
+        /// Selected objects are dashed unless they own keyboard input.
         var dashed: Bool
     }
     var rings: [Ring] = [] {
@@ -26,14 +27,17 @@ final class SceneOverlay: NSView {
             }
         }
     }
+    /// The canvas sets `lineWidth` to one screen point at the current zoom.
     var marquee: NSBezierPath? {
         get { foreground.marquee }
         set { foreground.marquee = newValue }
     }
+    /// A revealed object's fading highlight, with strength from 1 to 0.
     var flash: (rect: NSRect, strength: CGFloat)? {
         get { foreground.flash }
         set { foreground.flash = newValue }
     }
+    /// Nil means no entered group; an empty array dims everything.
     var focusHoles: [NSRect]? { didSet { needsDisplay = true } }
 
     override init(frame: NSRect) {
@@ -69,8 +73,9 @@ private final class SceneRing {
 
     init(_ ring: SceneOverlay.Ring, in parent: NSView, below foreground: NSView) {
         self.ring = ring
-        path = NSBezierPath(roundedRect: ring.rect.insetBy(dx: -3, dy: -3), xRadius: 9, yRadius: 9)
+        path = NSBezierPath(roundedRect: NSRect(origin: .zero, size: ring.rect.size).insetBy(dx: -3, dy: -3), xRadius: 5, yRadius: 5)
         strips = (0..<4).map { _ in RingStrip(frame: .zero) }
+        // Separate backing strips keep focus-only damage outside the tile, away from terminal drawing.
         for strip in strips { parent.addSubview(strip, positioned: .below, relativeTo: foreground) }
         place()
         display()
@@ -80,22 +85,25 @@ private final class SceneRing {
 
     func update(_ ring: SceneOverlay.Ring) {
         guard ring != self.ring else { return }
-        let moved = ring.rect != self.ring.rect
+        let resized = ring.rect.size != self.ring.rect.size
+        let moved = ring.rect.origin != self.ring.rect.origin
+        let restyled = ring.dashed != self.ring.dashed
         self.ring = ring
-        if moved {
-            path = NSBezierPath(roundedRect: ring.rect.insetBy(dx: -3, dy: -3), xRadius: 9, yRadius: 9)
-            place()
+        if resized {
+            path = NSBezierPath(roundedRect: NSRect(origin: .zero, size: ring.rect.size).insetBy(dx: -3, dy: -3), xRadius: 5, yRadius: 5)
         }
-        display()
+        if moved || resized { place() }
+        if resized || restyled { display() }
     }
 
     private func place() {
-        let outer = ring.rect.insetBy(dx: -6, dy: -6)
-        let height = min(16, outer.height / 2), width = min(6, outer.width / 2)
-        strips[0].place(NSRect(x: outer.minX, y: outer.minY, width: outer.width, height: height))
-        strips[1].place(NSRect(x: outer.minX, y: outer.maxY - height, width: outer.width, height: height))
-        strips[2].place(NSRect(x: outer.minX, y: outer.minY + height, width: width, height: outer.height - 2 * height))
-        strips[3].place(NSRect(x: outer.maxX - width, y: outer.minY + height, width: width, height: outer.height - 2 * height))
+        let outer = NSRect(origin: .zero, size: ring.rect.size).insetBy(dx: -6, dy: -6)
+        // All four bounds are outside ring.rect; radius 5 fits the full 2.5-point stroke plus AA at 1x.
+        let height = min(6, outer.height / 2), width = min(6, outer.width / 2)
+        strips[0].place(NSRect(x: outer.minX, y: outer.minY, width: outer.width, height: height), origin: ring.rect.origin)
+        strips[1].place(NSRect(x: outer.minX, y: outer.maxY - height, width: outer.width, height: height), origin: ring.rect.origin)
+        strips[2].place(NSRect(x: outer.minX, y: outer.minY + height, width: width, height: outer.height - 2 * height), origin: ring.rect.origin)
+        strips[3].place(NSRect(x: outer.maxX - width, y: outer.minY + height, width: width, height: outer.height - 2 * height), origin: ring.rect.origin)
     }
 
     private func display() {
@@ -120,10 +128,13 @@ private final class RingStrip: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
     nonisolated override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func place(_ rect: NSRect) {
-        frame = rect
-        bounds = rect
+    func place(_ rect: NSRect, origin: NSPoint) {
+        let position = NSPoint(x: rect.minX + origin.x, y: rect.minY + origin.y)
+        if frame.origin != position { setFrameOrigin(position) }
+        if frame.size != rect.size { setFrameSize(rect.size) }
+        if bounds != rect { bounds = rect }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -142,6 +153,7 @@ private final class SceneForeground: NSView {
     }
 
     nonisolated override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     private func invalidate(_ old: NSRect?, _ new: NSRect?) {
         isHidden = outline == nil && marquee == nil && flash == nil
