@@ -1163,9 +1163,9 @@ final class CanvasView: NSScrollView {
 
     /// Deletes objects as one undo step. Closing a terminal ends its zmx session (the board
     /// reports it ended; see AppDelegate), so ask first, in a sheet: an app-modal alert would
-    /// stall every socket request until answered. `selectingNext`: ⌘W keeps going, the nearest
-    /// remaining tile takes the selection (and a terminal the keyboard), so the next ⌘W closes
-    /// that rather than the window.
+    /// stall every socket request until answered. `selectingNext`: ⌘W selects the nearest
+    /// remaining tile and gives it typing if it handles keys, so the next ⌘W closes that
+    /// tile rather than the window.
     func delete(_ ids: [ObjectID], selectingNext: Bool = false) {
         guard remote?.mirror.availability != .closed, !ids.isEmpty else { return }
         let terminals = ids.filter { tiles[$0]?.content is TerminalTile }

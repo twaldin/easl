@@ -504,8 +504,8 @@ final class HtmlWebView: WKWebView {
         return resigned
     }
 
-    /// The user asked for the page's keyboard (Return on the selected tile, or a click in a text
-    /// field). False when the page has no view in the window to take it.
+    /// A single user selection or a real body mouse-down asks for the page's keyboard.
+    /// False when the page has no view in the window to take it.
     @discardableResult
     func takeKeyboard() -> Bool {
         guard window != nil, !isHiddenOrHasHiddenAncestor else { return false }
