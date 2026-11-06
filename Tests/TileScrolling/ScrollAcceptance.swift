@@ -834,13 +834,17 @@ private enum SelectionTyping {
             let frame = f.board.objects[note.id]?.frame
             try await post([key(49, " ", in: f.window)])
             try await click(point, in: f.window)
-            try await post([key(49, " ", type: .keyUp, in: f.window)])
             guard let editor = f.window.firstResponder as? NSTextView, editor.isEditable else {
                 throw Failure("non-drag Space click must replay native note click and enter typing")
             }
             try require(f.canvas.viewport == viewport && f.board.objects[note.id]?.frame == frame,
                         "non-drag Space click must neither pan nor move its tile")
             let before = editor.string
+            try await post([key(49, " ", isARepeat: true, in: f.window)])
+            try require(editor.string == before && f.window.firstResponder === editor,
+                        "a Space press owned by the board must not repeat into the clicked editor")
+            try await post([key(49, " ", type: .keyUp, in: f.window)])
+            try require(editor.string == before, "the board-owned Space release must not insert text")
             try await typed("x", in: f.window)
             try require(editor.string.count == before.count + 1 && editor.string.contains("x"),
                         "replayed click must leave normal native typing available without inserting Space")

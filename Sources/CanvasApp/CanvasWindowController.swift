@@ -1579,7 +1579,7 @@ final class CanvasWindow: NSWindow {
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
     private var discardingMiddleSequence = false
     private var wheelBoundary = ScrollGesture()
-    private var wheelGeneration: UInt64 = 0
+    private var wheelGeneration = 0
     private var wheelState: WheelState = .idle
     private var replayingPanClick = false
     private(set) var deliveringContentWheel = false
@@ -1799,7 +1799,7 @@ final class CanvasWindow: NSWindow {
                 target.pageFallback = PageFallback(event)
                 wheelState = .content(target)
                 let generation = wheelGeneration
-                remote.beginPageWheel(event) { [weak self] in
+                remote.beginPageWheel(event, gesture: generation) { [weak self] in
                     guard let self, self.wheelGeneration == generation else { return }
                     self.handoffPageWheel()
                 }
@@ -1917,6 +1917,7 @@ final class CanvasWindow: NSWindow {
             spaceHeld = false
             return true
         }
+        if event.type == .keyDown, event.keyCode == 49, spaceHeld { return true }
         if event.type == .keyDown, event.keyCode == 49, boardKeys,
            event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
             spaceHeld = true
@@ -1953,7 +1954,6 @@ final class CanvasWindow: NSWindow {
     }
 
     private func cancelSpacePan() {
-        spaceHeld = false
         if let gesture = spacePan {
             if gesture.pan.panning { NSCursor.pop() }
             discardingSpaceSequence = true
@@ -1962,6 +1962,7 @@ final class CanvasWindow: NSWindow {
     }
 
     @objc private func cancelCanvasGestures() {
+        spaceHeld = false
         cancelSpacePan()
     }
 
