@@ -1319,11 +1319,10 @@ final class TerminalTile: NSView, TileContent {
     fileprivate var scrollbar: TerminalScrollbar?
 
     func canScroll(_ direction: CGVector) -> Bool {
-        guard surface != nil, !discarded, !endingSession else { return false }
+        guard surface != nil, !discarded, !endingSession, direction.dx == 0 else { return false }
         let typing = window?.firstResponder === terminal
         if terminal.isMouseCaptured { return typing }
         if let scrollbar, scrollbar.total > scrollbar.len {
-            guard direction.dx == 0 else { return false }
             return direction.dy > 0 ? scrollbar.offset > 0 : scrollbar.offset < scrollbar.total - scrollbar.len
         }
         // shortcut: pinned Ghostty exposes no active-screen or alternate-scroll getter; route on it once upstream adds one

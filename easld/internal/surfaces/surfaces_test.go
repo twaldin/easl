@@ -277,14 +277,17 @@ func TestAPushReachesOnlyItsViewerFromItsOwnLink(t *testing.T) {
 		from *link
 		line string
 	}{
-		"another Mac":    {forger, frame("str_2")},
-		"the viewer":     {all, frame("str_2")},
-		"another board":  {r.drawer, strings.Replace(frame("str_2"), "brd_a", "brd_b", 1)},
-		"no such stream": {r.drawer, frame("str_9")},
-		"unheard dialog": {r.drawer, `{"event":"surface.dialog","board":"brd_a","data":{"stream":"str_1","dialog":"dlg_1","kind":"alert","origin":"x"}}`},
-		"a board event":  {r.drawer, `{"event":"object.updated","board":"brd_a","data":{"stream":"str_2","id":"obj_page"}}`},
-		"malformed":      {r.drawer, `{"event":"surface.frame","board":`},
-		"forged close":   {forger, `{"event":"surface.notice","board":"brd_a","data":{"stream":"str_2","kind":"closed"}}`},
+		"another Mac":       {forger, frame("str_2")},
+		"the viewer":        {all, frame("str_2")},
+		"another board":     {r.drawer, strings.Replace(frame("str_2"), "brd_a", "brd_b", 1)},
+		"no such stream":    {r.drawer, frame("str_9")},
+		"unheard dialog":    {r.drawer, `{"event":"surface.dialog","board":"brd_a","data":{"stream":"str_1","dialog":"dlg_1","kind":"alert","origin":"x"}}`},
+		"unheard wheel":     {r.drawer, `{"event":"surface.scrollUnhandled","board":"brd_a","data":{"stream":"str_1","gesture":1}}`},
+		"forged wheel":      {forger, `{"event":"surface.scrollUnhandled","board":"brd_a","data":{"stream":"str_2","gesture":1}}`},
+		"wrong board wheel": {r.drawer, `{"event":"surface.scrollUnhandled","board":"brd_b","data":{"stream":"str_2","gesture":1}}`},
+		"a board event":     {r.drawer, `{"event":"object.updated","board":"brd_a","data":{"stream":"str_2","id":"obj_page"}}`},
+		"malformed":         {r.drawer, `{"event":"surface.frame","board":`},
+		"forged close":      {forger, `{"event":"surface.notice","board":"brd_a","data":{"stream":"str_2","kind":"closed"}}`},
 	} {
 		r.reg.Push(push.from, []byte(push.line))
 		if got := append(frameOnly.relayed(), all.relayed()...); len(got) != 0 {
@@ -292,13 +295,14 @@ func TestAPushReachesOnlyItsViewerFromItsOwnLink(t *testing.T) {
 		}
 	}
 	dialog := `{"event":"surface.dialog","board":"brd_a","data":{"stream":"str_2","dialog":"dlg_2","kind":"confirm","origin":"x"}}`
-	for _, line := range []string{frame("str_1"), frame("str_2"), dialog} {
+	unhandled := `{"event":"surface.scrollUnhandled","board":"brd_a","data":{"stream":"str_2","gesture":1}}`
+	for _, line := range []string{frame("str_1"), frame("str_2"), dialog, unhandled} {
 		r.reg.Push(r.drawer, []byte(line))
 	}
 	if got := frameOnly.relayed(); !reflect.DeepEqual(got, []string{frame("str_1")}) {
 		t.Fatalf("the frame-only viewer got %v", got)
 	}
-	if got := all.relayed(); !reflect.DeepEqual(got, []string{frame("str_2"), dialog}) {
+	if got := all.relayed(); !reflect.DeepEqual(got, []string{frame("str_2"), dialog, unhandled}) {
 		t.Fatalf("the viewer that hears all got %v", got)
 	}
 	if len(frameOnly.sent)+len(all.sent)+len(forger.sent) != 0 {

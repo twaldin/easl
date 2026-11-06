@@ -577,6 +577,18 @@ final class CanvasTerminalView: TerminalView {
         super.mouseUp(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
     }
 
+    override func scrollWheel(with event: NSEvent) {
+        let routed = (window as? CanvasWindow)?.deliveringContentWheel == true
+        let direction = CanvasWheel.direction(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                              precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
+        guard routed || window?.firstResponder === self
+                || (superview as? TerminalTile)?.canScroll(direction) == true else {
+            nextResponder?.scrollWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
         updateHover(at: convert(event.locationInWindow, from: nil), command: event.modifierFlags.contains(.command))

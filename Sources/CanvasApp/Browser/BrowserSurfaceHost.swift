@@ -662,39 +662,31 @@ final class BrowserSurface {
         if down { webView.keyDown(with: event) } else { webView.keyUp(with: event) }
     }
 
+    func pageWheelUnhandled(_ event: NSEvent, from webView: WKWebView) {
+        guard tile?.webView === webView else { return }
+        let first = PageWheelID(event)
+        for stream in streams where !stream.closed {
+            guard var destination = stream.wheelDestination,
+                  destination.page === webView, destination.firstDirectional == first,
+                  !destination.rejected, let gesture = destination.gesture else { continue }
+            destination.rejected = true
+            stream.wheelDestination = destination
+            stream.push("surface.scrollUnhandled", SurfaceScrollUnhandled.data(stream: stream.id, gesture: gesture))
+        }
+    }
+
     private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView, stream: SurfaceStream) {
         let timestamp = ProcessInfo.processInfo.systemUptime
-        let phaseless = scroll.phase == 0 && scroll.momentum == 0
-        let began = scroll.phase & NSEvent.Phase.began.rawValue != 0
-        let mayBegin = scroll.phase & NSEvent.Phase.mayBegin.rawValue != 0
-        let previous = stream.wheelDestination
-        let starts: Bool
-        if let gesture = scroll.gesture {
-            starts = previous?.gesture != gesture
-        } else {
-            starts = previous == nil
-                || (mayBegin && previous?.phase != NSEvent.Phase.mayBegin.rawValue)
-                || (began && previous?.phase != NSEvent.Phase.mayBegin.rawValue)
-                || (phaseless && (previous!.phase != 0 || previous!.momentum != 0
-                    || timestamp - previous!.timestamp > 0.25))
-        }
+        let fallbackStarts = stream.wheelBoundary.starts(step: scroll.gestureStep, timestamp: timestamp)
+        let starts = scroll.gesture.map { stream.wheelDestination?.gesture != $0 } ?? fallbackStarts
         if starts {
             let point = Self.point(scroll.x, scroll.y, in: webView)
             stream.wheelDestination = SurfaceStream.WheelDestination(
                 page: webView, responder: responder(at: point, in: webView), point: point,
-                timestamp: timestamp, phase: scroll.phase, momentum: scroll.momentum, gesture: scroll.gesture)
+                gesture: scroll.gesture)
         }
-        guard var destination = stream.wheelDestination, destination.page === webView else { return }
-        destination.timestamp = timestamp
-        destination.phase = scroll.phase
-        destination.momentum = scroll.momentum
-        stream.wheelDestination = destination
-        defer {
-            let finishes = NSEvent.Phase.ended.rawValue | NSEvent.Phase.cancelled.rawValue
-            if scroll.momentum & finishes != 0 || scroll.phase & NSEvent.Phase.cancelled.rawValue != 0 {
-                stream.wheelDestination = nil
-            }
-        }
+        guard let destination = stream.wheelDestination,
+              destination.page === webView, !destination.rejected else { return }
         func wheel(_ delta: Double) -> Int32 { Int32(max(-100_000, min(100_000, delta)).rounded()) }
         guard webView.window != nil,
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: scroll.precise ? .pixel : .line, wheelCount: 2,
@@ -710,6 +702,9 @@ final class BrowserSurface {
         cg.location = CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.height ?? 0) - inWindow.y)
         guard let event = NSEvent(cgEvent: cg) else { return }
         SurfaceEventQueue.adopt(event)
+        if stream.wheelDestination?.firstDirectional == nil, scroll.dx != 0 || scroll.dy != 0 {
+            stream.wheelDestination?.firstDirectional = PageWheelID(event)
+        }
         destination.responder.scrollWheel(with: event)
     }
 

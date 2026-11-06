@@ -24,7 +24,7 @@ import (
 )
 
 // Events are a stream's private events, in the order a stream's hearing lists them.
-var Events = []string{"surface.frame", "surface.dialog", "surface.notice"}
+var Events = []string{"surface.frame", "surface.dialog", "surface.notice", "surface.scrollUnhandled"}
 
 const forwardDeadline = 6 * time.Second
 

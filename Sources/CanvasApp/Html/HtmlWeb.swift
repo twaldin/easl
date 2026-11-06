@@ -3,90 +3,6 @@ import CanvasCore
 import CryptoKit
 import WebKit
 
-enum PageScrollCapability {
-    static func script(point: CGPoint, dx: Double, dy: Double, normalizedPoint: Bool = false) -> String {
-        guard point.x.isFinite, point.y.isFinite, dx.isFinite, dy.isFinite else { return "null" }
-        return """
-        (() => {
-          const horizontal = \(dx != 0 ? "true" : "false");
-          const delta = \(dx != 0 ? dx : dy);
-          const shadowHosts = new Set(['ARTICLE','ASIDE','BLOCKQUOTE','BODY','DIV','FOOTER',
-            'H1','H2','H3','H4','H5','H6','HEADER','MAIN','NAV','P','SECTION','SPAN']);
-          function inspect(doc, x, y, depth) {
-            if (depth > 16 || !doc || !doc.defaultView) return null;
-            let hit = doc.elementFromPoint(x, y);
-            if (!hit) return null;
-            for (let n = 0; hit.shadowRoot && n < 32; n++) {
-              const inner = hit.shadowRoot.elementFromPoint(x, y);
-              if (!inner || inner === hit) return null;
-              hit = inner;
-            }
-            if (hit.shadowRoot) return null;
-            const ancestry = [];
-            for (let n = 0; hit && n < 128; n++) {
-              if (hit.localName.includes('-') || ['CANVAS','OBJECT','EMBED'].includes(hit.tagName)) return null;
-              if (shadowHosts.has(hit.tagName) && !hit.shadowRoot &&
-                  !hit.textContent.trim() && !hit.children.length) return null;
-              if (hit.tagName === 'IFRAME' || hit.tagName === 'FRAME') {
-                try {
-                  const frame = hit.contentDocument;
-                  if (!frame) return null;
-                  const rect = hit.getBoundingClientRect();
-                  if (!rect.width || !rect.height || doc.defaultView.getComputedStyle(hit).transform !== 'none') return null;
-                  const inner = inspect(frame, (x - rect.left) * hit.offsetWidth / rect.width - hit.clientLeft,
-                    (y - rect.top) * hit.offsetHeight / rect.height - hit.clientTop, depth + 1);
-                  if (inner !== false) return inner;
-                } catch (_) { return null; }
-              }
-              ancestry.push(hit);
-              hit = hit.parentElement || hit.getRootNode().host;
-            }
-            if (hit) return null;
-            const root = doc.scrollingElement;
-            if (root && !ancestry.includes(root)) ancestry.push(root);
-            for (const element of ancestry) {
-              const style = doc.defaultView.getComputedStyle(element);
-              let overflow = horizontal ? style.overflowX : style.overflowY;
-              if (element === root && root === doc.documentElement && doc.body &&
-                  style.overflowX === 'visible' && style.overflowY === 'visible') {
-                const body = doc.defaultView.getComputedStyle(doc.body);
-                overflow = horizontal ? body.overflowX : body.overflowY;
-              }
-              const native = /^(auto|scroll|overlay)$/.test(overflow) ||
-                (element === root && !/^(hidden|clip)$/.test(overflow));
-              if (!native) continue;
-              const maximum = horizontal ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
-              if (maximum <= 0.5) continue;
-              const reverse = horizontal ? style.direction === 'rtl' : style.flexDirection === 'column-reverse';
-              const offset = (horizontal ? element.scrollLeft : element.scrollTop) + (reverse ? maximum : 0);
-              if (delta > 0 ? offset > 0.5 : delta < 0 && offset < maximum - 0.5) return true;
-              const boundary = horizontal ? style.overscrollBehaviorX : style.overscrollBehaviorY;
-              if (boundary === 'contain' || boundary === 'none') return false;
-            }
-            return false;
-          }
-          try { return inspect(document, \(Double(point.x)) * \(normalizedPoint ? "innerWidth" : "1"), \(Double(point.y)) * \(normalizedPoint ? "innerHeight" : "1"), 0); }
-          catch (_) { return null; }
-        })()
-        """
-    }
-
-    @MainActor
-    static func query(in webView: WKWebView, point: CGPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
-        let url = webView.url
-        webView.evaluateJavaScript(script(point: point, dx: Double(direction.dx), dy: Double(direction.dy)),
-                                  in: nil, in: BrowserScripts.world) { [weak webView] result in
-            MainActor.assumeIsolated {
-                guard let webView, webView.url == url, !webView.isLoading else { return completion(nil) }
-                switch result {
-                case .success(let value): completion(value as? Bool)
-                case .failure: completion(nil)
-                }
-            }
-        }
-    }
-}
-
 /// Compiled local allowlists and the fixed remote connection-hint guard, shared by HTML tiles.
 @MainActor
 enum HtmlRuleLists {
@@ -532,6 +448,8 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 }
 
 final class HtmlWebView: WKWebView {
+    var wheelHandoffEnabled = false
+
     private lazy var pageUndoManager = UndoManager()
     override var undoManager: UndoManager? { pageUndoManager }
 

@@ -1,8 +1,10 @@
 # Tile scrolling and board panning
 
-On local and remote boards, a new gesture scrolls content when it can move in the initial direction; empty board, fitting content, or a starting directional limit pans the board. One owner keeps both axes across tiles, content edges, resize, and momentum. Phaseless wheel events form one burst until a 250 ms gap. Tile frames, page viewport dimensions, and saved board layout stay unchanged.
+On local and remote boards, the first directional event's dominant axis chooses content that can move that way, otherwise the board, subject to the two exceptions below. One owner keeps both axes across tiles, content edges, resize, and momentum. Zero-delta setup does not choose an axis. Phaseless wheel events form one burst until a 250 ms gap. Command, Shift, and Move eligibility are read at the first event. Tile frames, page viewport dimensions, and saved board layout stay unchanged.
 
-Wheel and trackpad scrolling preserve selection and typing. A press inside an HTML or browser page, including its own scrollbar, is the one exception to the scroll rule: it selects the tile and gives it typing.
+Pages get input first. Only the matching first-event WebKit unhandled callback can transfer the gesture to the board. JavaScript pages that call `preventDefault` keep their gesture even at a bound. Typing terminals without scrollback retain Ghostty's program behavior, so a short normal shell moves nothing. These are the two accepted exceptions. Missing required private WebKit selectors or older remote hosts keep pages page-first with no handoff. Pages lose native edge bounce.
+
+Wheel and trackpad scrolling preserve selection and typing. A press inside an HTML or browser page, including its own scrollbar, is the one exception to selection and typing preservation: it selects the tile and gives it typing.
 
 ## Sub-features
 
@@ -14,7 +16,7 @@ Wheel and trackpad scrolling preserve selection and typing. A press inside an HT
 
 ## How to get to it (user POV)
 
-Point inside overflowing content and scroll in a direction with room. Content moves before any clipped browser edge is revealed. Start a new gesture at its content limit to pan the board. Cross onto another tile during either kind of gesture: its owner must not change. With board keys, hold Space and drag over a tile; with typing, Space must remain text. New Move-tool and Command-scroll gestures keep board pan and zoom.
+Point inside overflowing content and scroll in a direction with room. Content moves before any clipped browser edge is revealed. Start a new gesture at its content limit to pan the board, except for the accepted page and terminal cases above. Cross onto another tile during either kind of gesture: its owner must not change. With board keys, hold Space and drag over a tile; with typing, Space must remain text without delay or replay. Both Space and middle presses without a drag must replay the original click. New Move-tool and Command-scroll gestures keep board pan and zoom.
 
 ## Driving it with dev.sh
 
@@ -40,7 +42,18 @@ scripts/dev.sh input scroll "$X" "$Y" 0 -120 --repeat 4 --interval 8 --gesture -
 
 These move toward the bottom. Use positive Y for top, negative X for right, and positive X for left. Repeat with bounded attempts until native START/END pixels and independent canvas/page readbacks prove each edge. Keep original frame/viewport readbacks for comparison. The runner uses at most 150 attempts and fails after three unchanged comparisons.
 
-On the scratch remote board, establish [A's drawing identity and B's stream](browser-tiles.md) first. Record A's page offsets or visible markers before B's input. Require page movement in A and matching streamed pixels in B when content can move. At a starting page limit, only B's board pans. Crossings and momentum must retain that owner. Keep drawing-client and stream IDs, phase receipts, and separate A/B captures; two local pages are not relay proof.
+On the scratch remote board, establish [A's drawing identity and B's stream](browser-tiles.md) first. Record A's page offsets or visible markers before B's input. Require page movement in A and matching streamed pixels in B when content can move. At an unhandled starting page limit, only B's board pans after A's matching reply. Crossings and momentum must retain that owner. Keep drawing-client and stream IDs, phase receipts, and separate A/B captures; two local pages are not relay proof. Require first-forward delivery without a blocking capability wait, no `browser.eval`, no navigation credit or drive effects, and rejection of stale replies. Measure page first-movement and board-fallback latency separately over the home–deckbox link; do not infer either from relay correctness.
+
+## Required matrix and evidence
+
+- Run every tile row on both local and remote boards, before and after a click, with both real HID wheel input and separately labelled synthetic phased plus momentum input. Include terminal typing and not typing, normal and alternate screens, scrollback room and limits, and mouse reporting. Include rendered and editing notes, code, changes, HTML, browser, streamed browser, question, image, video, diagram and detail, group header, shape, and text.
+- Test native controls both inside and outside tile bodies. Include code hover documentation, references panels, browser address controls, and question text fields. A native scroll view with room must scroll; its directional limit must pan on a new gesture. A panel inside a page tile but outside its web view must not route to the page.
+- Test long plain pages, custom-element content, cross-origin iframes, still-loading pages, fitting pages, JavaScript `preventDefault` map-style handlers, and `overflow: hidden` editor-style handlers. Test both edges with phaseless and phased plus momentum input, locally and streamed. Preserve the JavaScript exception at the page's own bound.
+- Exercise a zero-delta begin, dominant-axis choice, both-axis drift, pointer crossings, content edges, resize, and momentum end. Change Command, Shift, and Move mid-burst and require the first-event choice to remain. Test phaseless gaps below and at 250 ms. Lose window focus while a page reply is pending and require wheel ownership to survive.
+- Test Space-drag over every tile only with board keys. With typing, require one unchanged space in the program or field and no board pan. Test both Space and middle non-drag click replay, including a page click that gives typing. Retain selection, typing-owner, page-offset, board-origin, and terminal-program-byte readbacks.
+- Record selector qualification for `_rubberBandingEnabled`, `_setRubberBandingEnabled:`, and `_webView:didNotHandleWheelEvent:`. Require mask `0`, no native edge bounce, and page-first/no-handoff behavior when a required selector is unavailable. An absent callback or timeout must never pan the board. DOM observations may measure movement but must never choose its owner.
+- Retain the exact head and frozen bundle identity, fixture and board IDs, exact window receipts, event timestamps, units, phase and momentum fields, raw readbacks, stdout/stderr, and screenshots or clips. Label each leg as real HID wheel, synthetic phased HID, or synthetic AppKit replay. Never label synthetic momentum as a physical-trackpad run.
+- Keep fail-before/pass-after native regression evidence and the five paired 200-tile performance blocks required by the lane brief. Retain main-thread stretch, idle CPU, and wakeup observations. Recipes are requirements, not a record of a passing run.
 
 ## Gotchas
 
@@ -49,7 +62,7 @@ On the scratch remote board, establish [A's drawing identity and B's stream](bro
 - These runners use synthetic AppKit replay, not HID or a physical trackpad. Phaseless precise deltas are not trackpad-phase proof. `--gesture` adds zero-motion begin/end events. Direct phased WebKit replay can drop later steps; phased ownership observations do not prove full-document page traversal.
 - Replay emits no momentum. Complete qualification needs separately labelled CG scroll-phase and momentum-phase synthesis through the HID path, with native event receipts. Never substitute a viewport readback or Core test for that input proof.
 - Resize and arrival use a 30-event phased burst; drift adds a small horizontal delta to vertical input. Wait for the burst's completion receipt in `app.log` before inspecting the result.
-- Remote forwarding carries precise/line units, phase, momentum, and gesture identity. Hosts without scroll capability take the unknown-page board fallback. Local replay is not remote proof.
+- Remote forwarding carries precise/line units, phase, momentum, and gesture identity only with advertised gesture support. Older hosts stay page-first without handoff. Local replay is not remote proof.
 - Source entry points are `Sources/CanvasApp/CanvasWindowController.swift`, `Sources/CanvasCore/CanvasWheel.swift`, `Sources/CanvasApp/DevInput.swift`, and `Tests/BrowserScrolling/`. `docs/testing.md` documents capture colour conversion and runner limits.
-- Pages use a pre-commit directional DOM extent query. Inaccessible or unknown content, failed queries, and timeouts pan the board rather than first committing page input and then chaining it.
-- Terminal scrollback is directional and independent of typing. Without history, not typing pans the board; typing retains Ghostty's native program behavior. A short normal shell then moves nothing because pinned Ghostty has no active-screen or alternate-scroll getter. Mouse reporting never gets wheel input without typing.
+- Pages use WebKit's first-event unhandled result, never a pre-commit DOM query, `browser.eval`, timeout, or absent callback. Missing selectors leave page-first delivery without handoff.
+- Terminal scrollback is directional and independent of typing. Without history, not typing pans the board; typing retains Ghostty's native program behavior. A short normal shell then moves nothing because pinned Ghostty has no active-screen or alternate-scroll getter. Mouse reporting never gets wheel input without typing. Horizontal terminal gestures pan the board.
