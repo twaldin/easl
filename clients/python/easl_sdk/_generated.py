@@ -138,7 +138,12 @@ class SurfaceNotice(TypedDict):
     name: NotRequired[str]
     state: NotRequired[str]
 
-SurfaceEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any]]
+class SurfaceScrollUnhandled(TypedDict):
+    """The drawing Mac rejected this gesture's first directional native wheel event. Private to the subscribed stream owner, once per gesture. Later events of that rejected gesture do not reach the page."""
+    stream: Required["SurfaceStream"]
+    gesture: Required[int]
+
+SurfaceEvent = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 class BoardLifecycleEvent(TypedDict):
     """Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions."""
@@ -919,7 +924,7 @@ class EventsApi:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
-        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
+        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog, surface.notice and surface.scrollUnhandled use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers."""
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 

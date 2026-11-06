@@ -177,7 +177,6 @@ final class TerminalTile: NSView, TileContent {
         terminal.onFocusChange = { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateSurfaceFocus() } }
         }
-        terminal.hasScrollback = { [weak self] in self?.scrollbar.map { $0.total > $0.len } ?? false }
         terminal.imageDestination = { [weak self] in self?.resolvePasteDestination() }
         terminal.onImageProblem = { [weak self] in self?.onNotice?($0) }
         Self.pasteTiles.add(self)
@@ -1318,6 +1317,22 @@ final class TerminalTile: NSView, TileContent {
 
     /// Ghostty's scrollbar (rows in total, the viewport's offset and rows); nil until reported.
     fileprivate var scrollbar: TerminalScrollbar?
+
+    func canScroll(_ direction: CGVector) -> Bool {
+        guard surface != nil, !discarded, !endingSession, direction.dx == 0 else { return false }
+        let typing = window?.firstResponder === terminal
+        if terminal.isMouseCaptured { return typing }
+        if let scrollbar, scrollbar.total > scrollbar.len {
+            return direction.dy > 0 ? scrollbar.offset > 0 : scrollbar.offset < scrollbar.total - scrollbar.len
+        }
+        return typing
+    }
+
+    var acceptsRetainedWheel: Bool {
+        guard surface != nil, !discarded, !endingSession else { return false }
+        return window?.firstResponder === terminal
+            || (!terminal.isMouseCaptured && scrollbar.map { $0.total > $0.len } == true)
+    }
 
     // MARK: TileContent
 

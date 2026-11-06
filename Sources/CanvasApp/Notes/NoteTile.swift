@@ -568,13 +568,7 @@ final class NoteTile: NSView, TileContent {
         editor.setSelectedRange(editor.selectedRange(), affinity: editor.selectionAffinity, stillSelecting: false)
     }
 
-    override func scrollWheel(with event: NSEvent) {
-        if display.frame.height > displayScroll.contentSize.height + 1 {
-            displayScroll.scrollWheel(with: event)
-        } else {
-            super.scrollWheel(with: event)
-        }
-    }
+    var wheelScrollView: NSScrollView { isEditing ? editorScroll : displayScroll }
 
     /// The layout fragment (one paragraph) under a point in this view's coordinates.
     private func fragment(at point: NSPoint) -> NSTextLayoutFragment? {

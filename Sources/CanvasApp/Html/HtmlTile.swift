@@ -219,6 +219,7 @@ final class HtmlTile: NSView, TileContent {
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.wheelHandoffEnabled = PageWheelHandoff.configure(web)
         web.underPageBackgroundColor = .textBackgroundColor
         web.onEscape = { [weak self, weak web] in
             guard let self, let web, self.webView === web else { return }
@@ -731,6 +732,7 @@ final class HtmlTile: NSView, TileContent {
         }
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.wheelHandoffEnabled = PageWheelHandoff.configure(web)
         web.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         web.appearance = appearance
         web.underPageBackgroundColor = .textBackgroundColor
@@ -905,6 +907,12 @@ final class HtmlTile: NSView, TileContent {
 }
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
+    @objc(_webView:didNotHandleWheelEvent:)
+    func webView(_ webView: WKWebView, didNotHandleWheelEvent event: NSEvent) {
+        guard (webView as? HtmlWebView)?.wheelHandoffEnabled == true else { return }
+        (webView.window as? CanvasWindow)?.pageWheelUnhandled(event, from: webView)
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard !hostBoardClosed, !board.isClosed else { return .cancel }
         guard let url = action.request.url else { return .cancel }

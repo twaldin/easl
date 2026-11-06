@@ -128,7 +128,8 @@
             "kind": { "const": "scroll" }, "seq": { "type": "integer", "minimum": 1 },
             "x": { "type": "number" }, "y": { "type": "number" }, "dx": { "type": "number" }, "dy": { "type": "number" },
             "precise": { "type": "boolean", "default": true }, "phase": { "type": "integer", "minimum": 0, "default": 0, "description": "Raw NSEvent phase." },
-            "momentum": { "type": "integer", "minimum": 0, "default": 0 }, "mods": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0 }
+            "momentum": { "type": "integer", "minimum": 0, "default": 0 }, "mods": { "type": "integer", "minimum": 0, "maximum": 4294967295, "default": 0 },
+            "gesture": { "type": "integer", "minimum": 1, "description": "Retained wheel gesture identity. Send only when surface.stream advertises scrollGestures." }
           }, "additionalProperties": false
         },
         {
@@ -224,11 +225,18 @@
       }, "additionalProperties": false,
       "description": "surface.notice data, private to the subscribed owning connection. Downloads remain drawing-machine files. Folder uploads and file inputs in frames remain refused."
     },
+    "SurfaceScrollUnhandled": {
+      "type": "object", "required": ["stream", "gesture"],
+      "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "gesture": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": false,
+      "description": "The drawing Mac rejected this gesture's first directional native wheel event. Private to the subscribed stream owner, once per gesture. Later events of that rejected gesture do not reach the page."
+    },
     "SurfaceEvent": {
       "description": "Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection.",
       "oneOf": [
         { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.frame" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceFrame" } }, "additionalProperties": false },
         { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.dialog" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceDialog" } }, "additionalProperties": false },
+        { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.scrollUnhandled" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceScrollUnhandled" } }, "additionalProperties": false },
         { "type": "object", "required": ["event", "board", "data"], "properties": { "event": { "const": "surface.notice" }, "board": { "$ref": "#/definitions/Id" }, "data": { "$ref": "#/definitions/SurfaceNotice" } }, "additionalProperties": false }
       ]
     },
@@ -1258,7 +1266,7 @@
       },
       "result": {
         "type": "object", "required": ["stream", "size", "scale"],
-        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 } }, "additionalProperties": false
+        "properties": { "stream": { "$ref": "#/definitions/SurfaceStream" }, "size": { "$ref": "#/definitions/SurfaceSize" }, "scale": { "type": "number", "exclusiveMinimum": 0 }, "scrollGestures": { "type": "boolean", "description": "Accepts optional scroll gesture identities and can report first-event rejection through surface.scrollUnhandled when native WebKit handoff is available." } }, "additionalProperties": false
       }
     },
     "surface.ack": {
@@ -2470,7 +2478,7 @@
       }
     },
     "events.subscribe": {
-      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
+      "description": "Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog, surface.notice and surface.scrollUnhandled use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers.",
       "params": {
         "type": "object",
         "properties": { "board": { "$ref": "#/definitions/Id", "description": "a board owned by this server; an app-local remote tab target is unsupported. Subscribe on the board host instead" }, "events": { "type": "array", "items": { "type": "string" } } },

@@ -135,8 +135,6 @@ final class CanvasTerminalView: TerminalView {
     /// Keyboard focus came or went: libghostty-spm has just told Ghostty the view is focused
     /// or not, without asking whether its window is key in an active app.
     var onFocusChange: (() -> Void)?
-    /// Whether the terminal has scrollback to scroll (more rows than its screen).
-    var hasScrollback: (() -> Bool)?
     var imageDestination: (() -> TerminalPasteDestination?)?
     var onImageProblem: ((String) -> Void)?
 
@@ -473,7 +471,6 @@ final class CanvasTerminalView: TerminalView {
 
     private var swallowedMouseUp = false
     private var hovered: TerminalReferences.Hit?
-    private var gesture = ScrollGesture()
     /// AppKit takes keyboard focus from a view it hides, and a terminal is hidden whenever its
     /// tile turns into its card (panned offscreen, zoomed out, a resize that took it out of
     /// view): the terminal that lost focus that way gets it back when shown again, unless
@@ -580,23 +577,15 @@ final class CanvasTerminalView: TerminalView {
         super.mouseUp(with: forcingDefaultBrowser ? Self.commandOnly(event) : event)
     }
 
-    /// Ghostty's alternate-scroll mode types arrow keys into a full-screen program without
-    /// mouse reporting. An unfocused terminal must not receive those keys.
     override func scrollWheel(with event: NSEvent) {
-        let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
-        let sideways = CanvasWheel.sideways(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
-        let owner: ScrollGesture.Owner?
-        if let step = ScrollGesture.Step(event) {
-            owner = gesture.owner(of: step, sequence: (window as? CanvasWindow)?.scrollSequence ?? 0, dx: dx, dy: dy, tileTakes: !sideways)
-        } else {
-            owner = sideways ? .canvas : .tile
-        }
-        guard let owner else { return }
-        if owner == .canvas {
+        let routed = (window as? CanvasWindow)?.deliveringContentWheel == true
+        let direction = CanvasWheel.direction(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                              precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
+        guard routed || window?.firstResponder === self
+                || (superview as? TerminalTile)?.canScroll(direction) == true else {
             nextResponder?.scrollWheel(with: event)
             return
         }
-        guard window?.firstResponder === self || hasScrollback?() == true || isMouseCaptured else { return }
         super.scrollWheel(with: event)
     }
 
