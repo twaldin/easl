@@ -562,6 +562,15 @@ private enum SelectionTyping {
         try require(web.responds(to: NSSelectorFromString("_rubberBandingEnabled"))
                     && web.responds(to: NSSelectorFromString("_setRubberBandingEnabled:")),
                     "host fixture requires WebKit rubber-banding controls for real edge rejection")
+        _ = await js(web, """
+            document.body.innerHTML = '<div style="width:calc(100vw + 160px);height:calc(100vh + 80px);background:linear-gradient(white,blue)"></div>';
+            document.body.style.cssText = 'margin:0;padding:0';
+            document.documentElement.style.cssText = 'scroll-behavior:auto';
+            scrollTo(0,0);
+            """)
+        try await wait("host fixture must begin above a real scrollable bottom edge") {
+            await js(web, "scrollY === 0 && document.scrollingElement.scrollHeight > innerHeight + 40") as? Bool == true
+        }
         let peer = try HostWheelPeer(board: f.board.id, browser: tile)
         defer { peer.close() }
         let host = BrowserSurfaceHost.shared
@@ -581,22 +590,13 @@ private enum SelectionTyping {
             proxy.holding = false
             web.uiDelegate = proxy
             defer { web.uiDelegate = original as? any WKUIDelegate }
-            _ = await js(web, """
-                document.body.innerHTML = '<div style="height:calc(100vh + 80px);background:linear-gradient(white,blue)"></div>';
-                document.body.style.cssText = 'margin:0;padding:0';
-                document.documentElement.style.cssText = 'scroll-behavior:auto';
-                scrollTo(0,0);
-                """)
-            try await wait("host fixture must begin above a real scrollable bottom edge") {
-                await js(web, "scrollY === 0 && document.scrollingElement.scrollHeight > innerHeight + 40") as? Bool == true
-            }
-            func send(_ seq: Int, gesture: Int, dy: Double) async throws {
+            func send(_ seq: Int, gesture: Int, dy: Double, dx: Double = 0) async throws {
                 guard let request = try SurfaceRequest(method: "surface.input", params: .object([
                     "stream": .string(stream),
                     "events": .array([.object([
                         "seq": .number(Double(seq)), "kind": "scroll",
                         "x": .number(Double(web.bounds.midX)), "y": .number(Double(web.bounds.midY)),
-                        "dx": .number(0), "dy": .number(dy), "precise": true,
+                        "dx": .number(dx), "dy": .number(dy), "precise": true,
                         "phase": .number(0), "momentum": .number(0), "gesture": .number(Double(gesture))
                     ])])
                 ])) else { throw Failure("consumer wheel request did not parse") }
@@ -628,6 +628,21 @@ private enum SelectionTyping {
             try require(proxy.received.allSatisfy {
                 $0.0 === web && $0.1.phase.isEmpty && $0.1.momentumPhase.isEmpty && $0.1.scrollingDeltaY < 0
             }, "both callback receipts must belong to genuine downward phaseless wheels on the streamed page")
+            try await send(4, gesture: 42, dy: 0, dx: -80)
+            var acknowledged = Int(frame)
+            try await wait("rejected same-gesture input must reach the host's delivered-frame watermark") {
+                try? peer.drain()
+                let frames = peer.lines.filter { $0["event"]?.string == "surface.frame" }.compactMap { $0["data"] }
+                for value in frames {
+                    if let seq = value["seq"]?.int, seq > acknowledged {
+                        guard (try? await host.handle(.ack(stream: stream, frame: seq), from: peer)) != nil else { return false }
+                        acknowledged = seq
+                    }
+                }
+                return frames.contains { ($0["input"]?.int ?? 0) >= 4 }
+            }
+            let rejectedOffset = await js(web, "scrollX") as? Double
+            try require(rejectedOffset == 0, "a rejected vertical gesture must not later move horizontally scrollable page content")
             print("HOST WHEEL callbacks=\(proxy.received.count) edge=\(String(describing: edge)) handoffs=\(peer.handoffs)")
             _ = try await host.handle(.stop(stream: stream), from: peer)
         } catch {
@@ -804,6 +819,10 @@ private enum SelectionTyping {
             root.addSubview(scroll)
             defer { scroll.removeFromSuperview() }
             f.window.layoutIfNeeded()
+            if let container = text.textContainer { text.layoutManager?.ensureLayout(for: container) }
+            text.sizeToFit()
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
             let point = text.convert(NSPoint(x: 40, y: text.visibleRect.minY + 40), to: nil)
             try require(!scroll.isDescendant(of: f.canvas)
                         && f.hit(point)?.isDescendant(of: scroll) == true

@@ -126,6 +126,14 @@ private enum BrowserInitialAdmission {
         try expect(condition(), message)
     }
 
+    private static func pageMatches(_ web: WKWebView, _ script: String) async -> Bool {
+        await withCheckedContinuation { continuation in
+            web.evaluateJavaScript(script) { value, error in
+                continuation.resume(returning: error == nil && value as? Bool == true)
+            }
+        }
+    }
+
     private enum WheelHostMode: CaseIterable {
         case absent, noFeedback, current
     }
@@ -267,9 +275,9 @@ private enum BrowserInitialAdmission {
         }
     }
 
-    private static func wheel(_ point: NSPoint, phase: Int64, in window: CanvasWindow) throws {
+    private static func wheel(_ point: NSPoint, phase: Int64, dx: Int32 = 0, dy: Int32? = nil, in window: CanvasWindow) throws {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                               wheel1: phase == 4 ? 0 : -24, wheel2: 0, wheel3: 0),
+                               wheel1: dy ?? (phase == 4 ? 0 : -24), wheel2: dx, wheel3: 0),
               let field = CGEventField(rawValue: 99), let screen = NSScreen.screens.first else {
             throw WheelFailure(description: "native wheel construction requires a logged-in macOS screen")
         }
@@ -297,17 +305,18 @@ private enum BrowserInitialAdmission {
             let page = root.appendingPathComponent("wheel-\(mode)/page.html")
             try """
             <!doctype html><meta charset="utf-8"><title>wheel-ready</title>
-            <style>body{margin:0;height:20000px;background:linear-gradient(white,blue)}</style>
+            <style>body{margin:0;width:20000px;height:20000px;background:linear-gradient(white,blue)}</style>
             <body>
             <script>
             let count = 0;
             window.scrollTo(0, 1000);
             document.title = 'wheel-ready-y-' + Math.round(scrollY);
-            addEventListener('wheel', event => {
+            window.consumeWheel = event => {
               event.preventDefault();
               window.scrollBy(0, event.deltaY);
               document.title = 'wheel-' + (++count) + '-y-' + Math.round(scrollY);
-            }, {passive:false});
+            };
+            addEventListener('wheel', window.consumeWheel, {passive:false});
             </script>
             """.write(to: page, atomically: true, encoding: .utf8)
             let object = fixture.board.create(type: .browser, props: .object(["url": .string(page.absoluteString)]),
@@ -405,6 +414,31 @@ private enum BrowserInitialAdmission {
                 try await until("matching current unhandled feedback must produce viewer board fallback") {
                     canvas.viewport != pose
                 }
+                guard let web = hostTile.webView else { throw WheelFailure(description: "native edge fixture lost its WebKit page") }
+                let acknowledged = fixture.acknowledgements
+                let configured = await pageMatches(web, """
+                    removeEventListener('wheel', window.consumeWheel);
+                    scrollTo(0, document.scrollingElement.scrollHeight);
+                    document.title = 'native-edge';
+                    scrollX === 0 && scrollY > 0 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1;
+                    """)
+                try expect(configured, "native edge fixture must have no wheel handler, vertical limit and horizontal room")
+                try await until("viewer must acknowledge a real frame after the native page reaches its edge") {
+                    fixture.acknowledgements > acknowledged && web.title == "native-edge"
+                }
+                let edgePose = canvas.viewport
+                try wheel(point, phase: 1, in: window)
+                try await until("WebKit's real rejection must cross the socket and pan the viewer board") {
+                    canvas.viewport.rect.y > edgePose.rect.y
+                }
+                let handedOff = canvas.viewport
+                try wheel(point, phase: 2, dx: -80, dy: 0, in: window)
+                try await until("the same rejected gesture must retain both axes on the viewer board") {
+                    canvas.viewport.rect.x > handedOff.rect.x
+                }
+                let unchanged = await pageMatches(web, "scrollX === 0 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1")
+                try expect(unchanged, "rejected same-gesture input must not move the horizontally scrollable host page")
+                print("PASS remote-wheel real WebKit rejection: socket handoff and retained board axes")
             }
             try expect(fixture.errors.isEmpty, "real surface transport must have no protocol errors: \(fixture.errors)")
             try expect(canvas.selection == selection && window.firstResponder === responder && canvas.focusedTile == nil,
