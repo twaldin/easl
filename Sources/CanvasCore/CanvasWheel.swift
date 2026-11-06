@@ -54,7 +54,6 @@ public enum CanvasWheel {
     }
 }
 
-/// Gesture boundaries shared by the window's retained wheel destination.
 public struct ScrollGesture: Sendable {
     public enum Step: Equatable, Sendable {
         case mayBegin, began, changed, ended, cancelled, momentumBegan, momentumChanged, momentumEnded

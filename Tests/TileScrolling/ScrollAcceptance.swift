@@ -1,9 +1,3 @@
-// Run only in the claimed macOS guest, from the resources checkout:
-// python3 Tests/TileScrolling/run.py --bin-path "$NATIVE_BIN_PATH" --resources "$PWD" --output "$EVIDENCE_OUT" --harness-source "$SCROLL_ACCEPTANCE_SOURCE"
-// NATIVE_BIN_PATH must contain an existing native, testing-enabled build; use this
-// exact source for 94969df3 and candidate. The runner links but never rebuilds Easl.
-// Queue synthesis must qualify before interpreting a routing assertion failure.
-
 import AppKit
 import WebKit
 import Darwin
@@ -408,7 +402,6 @@ private enum SelectionTyping {
                              target: tile, label: "rendered note prose")
     }
     private static func scrollbar(_ tile: TerminalTile) -> TerminalScrollbar? {
-        // Observation only: pinned Ghostty publishes this geometry through its delegate.
         guard let optional = Mirror(reflecting: tile).children.first(where: { $0.label == "scrollbar" })?.value else { return nil }
         return Mirror(reflecting: optional).children.first?.value as? TerminalScrollbar
     }
