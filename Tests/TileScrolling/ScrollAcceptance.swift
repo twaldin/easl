@@ -776,6 +776,36 @@ private enum SelectionTyping {
         try require(after == pageOffset, "fitting page must not move during board handoff")
     }
 
+    private static func basicsPanelOutsideCanvas(_ f: Fixture) async throws {
+        f.controller.toggleBasics(nil)
+        f.window.contentView?.layoutSubtreeIfNeeded()
+        try await post([])
+        guard let panel = descendants(f.window.contentView!).compactMap({ $0 as? BasicsPanel }).first,
+              let scroll = descendants(panel).compactMap({ $0 as? NSScrollView }).first(where: {
+                  ($0.documentView?.frame.height ?? 0) > $0.contentSize.height + 100
+              }) else { throw Failure("real sibling Basics panel must expose overflowing content") }
+        defer { panel.close() }
+        let point = try f.checked(scroll.convert(NSPoint(x: 60, y: 80), to: nil),
+                                  target: scroll, label: "real outside-canvas Basics panel")
+        try require(panel.superview === f.window.contentView && !panel.isDescendant(of: f.canvas)
+                    && f.hit(point)?.isDescendant(of: f.canvas) == false,
+                    "Basics must take the outside-canvas wheel branch")
+        let viewport = f.canvas.viewport
+        let origin = scroll.contentView.bounds.origin
+        try await wheel(point, dy: -70, phase: 1, in: f)
+        try await wait("outside-canvas panel must receive the first wheel") {
+            scroll.contentView.bounds.origin != origin
+        }
+        try await wheel(try boardPoint(f), dy: -50, phase: 2, in: f)
+        try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
+        try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
+        try await wheel(try boardPoint(f), dy: -20, momentum: 2, in: f)
+        try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
+        try require(f.canvas.viewport == viewport,
+                    "outside-canvas Basics must not pan board during crossing and momentum")
+        print("OFFSETS siblingBasics=\(origin) -> \(scroll.contentView.bounds.origin) board=\(viewport) -> \(f.canvas.viewport)")
+    }
+
 
     private static let scenarios: [Scenario] = [
         Scenario(name: "board-crosses-note", baseline: "expected regression failure: board gesture currently enters note"),
@@ -784,7 +814,8 @@ private enum SelectionTyping {
         Scenario(name: "content-edge-momentum-new-gesture", baseline: "expected regression failure: new gesture at content edge is swallowed; no-chain substeps are controls"),
         Scenario(name: "phaseless-250ms-owner", baseline: "expected regression failure: per-event re-hit-test has no 250ms burst lock"),
         // Run-4 ruling: omit the plain outside-board NSScrollView fixture, which also fails at94969df3.
-        // Real References HID retains content on the fix (panel04 c31d2b2e; panel moved under unmodified ticks).
+        // Real sibling Basics HID retains content on the fix (panel06 a2404b0d; panel moved under unmodified ticks).
+        Scenario(name: "basics-panel-outside-canvas", baseline: "native first-event and board-isolation control; full continuation movement is qualified separately with Cua HID"),
         Scenario(name: "hover-panel-outside-tile", baseline: "expected regression failure: native panel outside tile pans board"),
         Scenario(name: "references-panel-outside-tile", baseline: "expected regression failure: native references list outside tile pans board"),
         Scenario(name: "browser-native-panel", baseline: "expected regression failure: browser tile steals native non-WebKit panel wheel"),
@@ -808,6 +839,10 @@ private enum SelectionTyping {
     ]
 
     private static func run(_ name: String, _ f: Fixture) async throws {
+        if name == "basics-panel-outside-canvas" {
+            try await basicsPanelOutsideCanvas(f)
+            return
+        }
         if name == "host-phaseless-handled-first" {
             try await hostPhaselessHandledFirst(f)
             return

@@ -1325,7 +1325,6 @@ final class TerminalTile: NSView, TileContent {
         if let scrollbar, scrollbar.total > scrollbar.len {
             return direction.dy > 0 ? scrollbar.offset > 0 : scrollbar.offset < scrollbar.total - scrollbar.len
         }
-        // shortcut: pinned Ghostty exposes no active-screen or alternate-scroll getter; route on it once upstream adds one
         return typing
     }
 

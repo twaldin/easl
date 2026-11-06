@@ -1835,7 +1835,6 @@ final class CanvasWindow: NSWindow {
         }
         var view: NSView? = hit
         while let current = view, current !== target.tile, current !== canvas.documentView, current !== canvas {
-            if let note = current as? NoteTile, canScroll(note.wheelScrollView, direction: direction) { return note.wheelScrollView }
             if let rows = current as? CodeRowsView { return rows.canScroll(direction) ? rows : nil }
             if let scroll = current as? NSScrollView, canScroll(scroll, direction: direction) { return scroll }
             view = current.superview

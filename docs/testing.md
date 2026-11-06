@@ -469,9 +469,18 @@ The first directional page event is delivered one page point inward from the pin
 point so its result stays distinct; later page events keep the pinned point.
 
 The run-4 native-panel ruling excludes the plain sibling `NSScrollView` synthetic fixture:
-its continuation fails on baseline and candidate. The real References panel retains a
-CuaDriver phaseless burst on the fix when the fixture moves it away from the HID target
-(panel04 proof `c31d2b2e`). Baseline pans instead. This is not HID pointer-motion proof.
+its continuation fails on baseline and candidate. The real sibling Basics panel, verified
+outside `CanvasView`, retains a CuaDriver phaseless burst on the fix when its layout
+constraint moves it away from the HID target (panel06 proof `a2404b0d`). Baseline pans
+instead. This is fixture-driven panel motion, not HID pointer-motion proof. The tracked
+`basics-panel-outside-canvas` case checks first-event delivery and board isolation with
+AppKit dispatch; full content continuation is qualified by the HID probe.
+
+An actual `94969df3` drawing app and `560f49fc` viewer also preserved a complete phased/momentum
+sequence over the socket: 160 host points for the phaseless control, 161 for the same
+deltas with phases (proof `15ab494f`). The fixture timestamp failure above does not
+establish an older-host replay regression. Only gesture identity is advertisement-gated;
+phase and momentum remain forwarded to older hosts.
 
 The real Unix-socket viewer regression covers absent/false gesture advertisements,
 legacy input, stale gesture and stream replies, and current-answer board fallback.
