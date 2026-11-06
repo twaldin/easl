@@ -12,7 +12,15 @@ final class ObjectExpiryTests {
 
     init() async throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
-        registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
+        registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60, write: { data, url, options in
+            let probe = ProcessInfo.processInfo.environment["EASL_EXPIRY_PROBE"] != nil
+            if probe {
+                print("EXPIRY writer entered \(Date().timeIntervalSince1970)")
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            try data.write(to: url, options: options)
+            if probe { print("EXPIRY writer finished \(Date().timeIntervalSince1970)") }
+        }))
         board = try await registry.open(root: dir.appendingPathComponent("root"))
         let router = ApiRouter(registry: registry)
         self.router = router
@@ -184,8 +192,17 @@ final class ObjectExpiryTests {
     }
 
     @Test func closedPastDeadlineWaitsForOpenAndUsesStoredAbsoluteTime() async throws {
+        print("EXPIRY create start \(Date().timeIntervalSince1970)")
         let object = try await create(["expiresIn": "0.15s"])
+        print("EXPIRY create returned \(Date().timeIntervalSince1970) deadline \(object.expires!.date.timeIntervalSince1970)")
+        let hook = board.onEvent
+        board.onEvent = { event in
+            hook?(event)
+            if case .objectDeleted = event { print("EXPIRY deleted \(Date().timeIntervalSince1970) closed \(self.board.isClosed)") }
+        }
+        print("EXPIRY close start \(Date().timeIntervalSince1970)")
         try await registry.close(board.id)
+        print("EXPIRY close returned \(Date().timeIntervalSince1970)")
         try await Task.sleep(for: .milliseconds(300))
         #expect(board.objects[object.id] == object)
         let reopened = try await registry.open(root: board.root)
