@@ -127,6 +127,9 @@ private enum SelectionTyping {
                      "navigator-select-note", "html-cold-no-buffer"] {
             cases.append(Scenario(name: name, baseline: "feature regression"))
         }
+        for type in [ObjectType.html, .browser] {
+            cases.append(Scenario(name: "\(type.rawValue)-page-scrollbar", baseline: "order95 contract"))
+        }
         return cases
     }
 
@@ -1054,6 +1057,42 @@ private enum SelectionTyping {
             "scrolling a rendered note must never enter raw editing or change its markdown")
         try await typed("x", in: f.window)
         try await wait("note scrolling must keep subsequent typing in the previous terminal") { f.read(terminal.id) == before + Data("x".utf8) }
+    }
+
+    private static func exercisePageScrollbar(_ type: ObjectType, _ f: Fixture) async throws {
+        let terminal = try await f.create(.terminal, x: 20, y: 110, width: 370, height: 310)
+        let object = try await f.create(type, x: 470, y: 110, width: 440, height: 310)
+        let web = try await f.web(object.id)
+        _ = await js(web, """
+            document.head.insertAdjacentHTML('beforeend', '<style>html{overflow-y:scroll!important}body{min-height:3000px!important}::-webkit-scrollbar{width:18px;display:block}::-webkit-scrollbar-thumb{background:#555}::-webkit-scrollbar-track{background:#ddd}</style>');
+            true
+            """)
+        try await enter(terminal, in: f)
+        let before = f.read(terminal.id)
+        let rawGeometry = await js(web, "({width:innerWidth,height:innerHeight,total:document.scrollingElement.scrollHeight,client:document.documentElement.clientWidth,top:scrollY})")
+        guard let geometry = rawGeometry as? [String: Double],
+              let width = geometry["width"], let height = geometry["height"], let total = geometry["total"],
+              let client = geometry["client"], let top = geometry["top"], total > height, client < width else {
+            throw Failure("page must expose its actual overflowing scrollbar geometry: \(String(describing: rawGeometry))")
+        }
+        let scale = web.pageZoom * web.magnification
+        func point(_ y: Double) throws -> NSPoint {
+            try f.checked(web.convert(NSPoint(x: (client + width) / 2 * scale,
+                y: web.isFlipped ? y * scale : web.bounds.height - y * scale), to: nil),
+                target: web, label: "native page scrollbar")
+        }
+        let thumb = max(20, height * height / total)
+        try await drag(try point(thumb / 2), try point(min(height - 20, thumb / 2 + height * 0.45)), in: f.window)
+        try await wait("native page scrollbar drag must actually scroll the page") {
+            (await js(web, "scrollY") as? Double).map { $0 > top } == true
+        }
+        try require(f.canvas.selection == [object.id] && f.canvas.focusedTile == object.id,
+            "a page scrollbar press must select the page tile and give it typing")
+        try await typed("y", in: f.window)
+        try await wait("the page selected by its scrollbar must receive subsequent typing") {
+            await js(web, "document.getElementById('keys').textContent") as? String == "y"
+        }
+        try require(f.read(terminal.id) == before, "page scrollbar typing must not reach the previous terminal")
     }
 
     private static func exerciseBoardScroll(_ f: Fixture) async throws {
@@ -2307,6 +2346,8 @@ private enum SelectionTyping {
             try await exerciseGeometryGesture(name, f)
         } else if name == "note-scrollbar" || name == "note-scroll" {
             try await exerciseNoteScroll(name, f)
+        } else if name == "html-page-scrollbar" || name == "browser-page-scrollbar" {
+            try await exercisePageScrollbar(name.hasPrefix("html-") ? .html : .browser, f)
         } else if name == "board-scroll" {
             try await exerciseBoardScroll(f)
         } else if name == "note-navigation-caret" {

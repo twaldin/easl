@@ -5,7 +5,7 @@ Users give an HTML tile typing with a single user selection or a real body mouse
 ## Sub-features
 
 - `html-keyboard-return` enters a selected tile with Return.
-- `html-keyboard-click` enters through any real body click and keeps immediate keys away from the previous responder.
+- `html-keyboard-click` enters through any real body click, including a press on the page's own scrollbar, and keeps immediate keys away from the previous responder. This is the one exception to the scroll rule. Wheel and trackpad scrolling never select or take typing.
 - `html-keyboard-release` returns ownership to the canvas with Command-Escape, an unhandled plain Escape, or a board click.
 - `html-keyboard-autofocus` refuses keyboard capture from load-time page focus.
 - `html-keyboard-document` revokes the old document's grant when HTML changes.
