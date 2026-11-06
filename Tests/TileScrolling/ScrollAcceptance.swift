@@ -569,7 +569,7 @@ private enum SelectionTyping {
             scrollTo(0,0);
             """)
         try await wait("host fixture must begin above a real scrollable bottom edge") {
-            await js(web, "scrollY === 0 && document.scrollingElement.scrollHeight > innerHeight + 40") as? Bool == true
+            await js(web, "scrollY === 0 && document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 40") as? Bool == true
         }
         let peer = try HostWheelPeer(board: f.board.id, browser: tile)
         defer { peer.close() }
@@ -604,7 +604,7 @@ private enum SelectionTyping {
             }
             try await send(1, gesture: 41, dy: -1000)
             try await wait("first host wheel must genuinely move WebKit to the bottom edge") {
-                await js(web, "scrollY > 40 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1") as? Bool == true
+                await js(web, "scrollY > 40 && Math.abs(scrollY + document.scrollingElement.clientHeight - document.scrollingElement.scrollHeight) <= 1") as? Bool == true
             }
             try require(proxy.received.isEmpty, "handled first host wheel must not be rejected by WebKit")
             let edge = await js(web, "scrollY") as? Double
@@ -643,6 +643,13 @@ private enum SelectionTyping {
             }
             let rejectedOffset = await js(web, "scrollX") as? Double
             try require(rejectedOffset == 0, "a rejected vertical gesture must not later move horizontally scrollable page content")
+            try await send(5, gesture: 43, dy: 0, dx: -40)
+            try await wait("fresh horizontal gesture must genuinely move the same host page") {
+                (await js(web, "scrollX") as? Double ?? 0) > 0
+            }
+            let positiveOffset = await js(web, "scrollX") as? Double
+            try require(positiveOffset.map { $0 > 0 && $0 < 80 } == true,
+                        "ordered positive wheel must expose any earlier leaked rejected delta")
             print("HOST WHEEL callbacks=\(proxy.received.count) edge=\(String(describing: edge)) handoffs=\(peer.handoffs)")
             _ = try await host.handle(.stop(stream: stream), from: peer)
         } catch {
