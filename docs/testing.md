@@ -452,8 +452,12 @@ python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system nati
 ```
 
 This runner checks native panel scrolling, tile crossings, edges, momentum, focus loss,
-Space-drag and click replay, and the terminal disposition table. Its qualified AppKit
-queue events are synthetic, not physical-device or external HID evidence.
+Space-drag and click replay, and the terminal disposition table. Its CG-built wheel events
+enter the real `CanvasWindow` through `NSApp.sendEvent`. Label them **synthetic, AppKit
+dispatch**, not HID or physical-trackpad evidence. The image control exercises scroll
+began/changed/ended followed by nonzero momentum began/changed/ended. Wheel timestamps
+must use the live monotonic clock; zero timestamps suppressed momentum on both baseline
+and candidate in the paired guest control.
 
 ```sh
 scripts/bundle.sh
@@ -468,9 +472,11 @@ precise and line-based events are synthetic AppKit replay, not HID or physical t
 It checks content-first movement, board panning at an initial limit or over fitting content,
 and full-document START/END access on both axes. Phased replay checks observable ownership,
 not full-document WebKit traversal: directly replayed WebKit gestures can drop later steps
-(`DevInput.swift`). Momentum needs separately labelled CG phase/momentum injection through
-the HID path with native event receipts; these runners emit no momentum. A final END-marker
-WindowServer capture checks that native chrome, including
+(`DevInput.swift`). These browser runners emit no momentum. Separately qualify phased
+plus momentum input through the real `CanvasWindow` with `NSApp.sendEvent` or
+`window.sendEvent`, labelled **synthetic, AppKit dispatch**, and retain native event
+receipts. CuaDriver targeted phaseless wheel input remains the real-HID proof. A final
+END-marker WindowServer capture checks that native chrome, including
 the toolbar and tray, does not cover its colored border. The runner also checks that the tile frame and WebKit viewport
 stay unchanged. The runner never builds the app or touches the installed app's boards.
 The fixture hides page scrollbars and waits for native overlay scrollers to fade.

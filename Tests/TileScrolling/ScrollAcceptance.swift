@@ -324,7 +324,6 @@ private enum SelectionTyping {
         }
     }
 
-    // CG-backed AppKit queue events are synthetic, not physical trackpad/HID proof.
     private static func wheel(_ point: NSPoint, dy: Int32, dx: Int32 = 0, phase: Int64 = 0,
                               momentum: Int64 = 0, flags: CGEventFlags = [], in f: Fixture) async throws {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
@@ -333,6 +332,7 @@ private enum SelectionTyping {
               let momentumField = CGEventField(rawValue: 123),
               let screen = NSScreen.screens.first else { throw Failure("CG scroll construction failed") }
         cg.location = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
+        cg.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
         cg.flags = flags
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(f.window.windowNumber))
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(f.window.windowNumber))
@@ -352,12 +352,16 @@ private enum SelectionTyping {
             : momentum == 2 ? NSEvent.Phase.changed.rawValue : momentum == 3 ? NSEvent.Phase.ended.rawValue : 0
         try require(event.phase.rawValue == decodedPhase && event.momentumPhase.rawValue == decodedMomentum,
                     "event synthesis prerequisite: CG phases must decode to the requested AppKit phases")
+        try require(event.hasPreciseScrollingDeltas && event.timestamp > 0
+                    && abs(event.timestamp - ProcessInfo.processInfo.systemUptime) < 1,
+                    "pixel scroll must carry precise deltas and a live monotonic timestamp")
+        if momentum != 0 { try require(event.scrollingDeltaY != 0, "momentum must carry a nonzero scrolling delta") }
         var observed = false
         guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { delivered in
             MainActor.assumeIsolated {
                 if delivered.window === f.window {
                     observed = true
-                    print("SYNTHETIC scroll x=\(delivered.locationInWindow.x) y=\(delivered.locationInWindow.y) dy=\(delivered.scrollingDeltaY) phase=\(delivered.phase.rawValue) momentum=\(delivered.momentumPhase.rawValue)")
+                    print("SYNTHETIC APPKIT window=\(delivered.windowNumber) x=\(delivered.locationInWindow.x) y=\(delivered.locationInWindow.y) dy=\(delivered.scrollingDeltaY) precise=\(delivered.hasPreciseScrollingDeltas) phase=\(delivered.phase.rawValue) momentum=\(delivered.momentumPhase.rawValue) timestamp=\(delivered.timestamp)")
                 }
             }
             return delivered
@@ -365,9 +369,9 @@ private enum SelectionTyping {
         defer { NSEvent.removeMonitor(monitor) }
         let selection = f.canvas.selection, focus = f.canvas.focusedTile
         let responder = f.window.firstResponder
-        try await post([event])
+        NSApp.sendEvent(event)
         try require(observed, "AppKit must dispatch the scroll through the target window")
-        try await Task.sleep(for: .milliseconds(60))
+        try await Task.sleep(for: .milliseconds(16))
         try require(f.canvas.selection == selection && f.canvas.focusedTile == focus && f.window.firstResponder === responder,
                     "scroll must preserve selection, typing and exact keyboard responder")
     }
@@ -538,7 +542,7 @@ private enum SelectionTyping {
         try await wheel(try boardPoint(f), dy: -50, phase: 2, in: f)
         try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
         try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
-        try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+        try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
         try require(scroll.contentView.bounds.origin != afterBegin && f.canvas.viewport == viewport,
                     "native panel must retain wheel and momentum outside its bounds without panning board")
         try f.boardOwns([])
@@ -603,7 +607,7 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
             try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
             try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
-            try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+            try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
             try require(f.canvas.viewport == viewport && scroll.contentView.bounds.origin.y > afterBegin.y,
                         "outside native owner must keep continuation and momentum without panning board")
             return
@@ -616,10 +620,9 @@ private enum SelectionTyping {
             var point = try f.point(object.id)
             let counter = ButtonCounter()
             if name == "space-click-native-button" {
-                guard let tile = f.canvas.tiles[object.id] else { throw Failure("missing button tile") }
                 let button = NSButton(title: "Native click receipt", target: counter, action: #selector(ButtonCounter.press(_:)))
-                button.frame = NSRect(x: 20, y: 35, width: 190, height: 32)
-                tile.content.addSubview(button)
+                button.frame = NSRect(x: f.canvas.bounds.midX - 95, y: f.canvas.bounds.midY - 16, width: 190, height: 32)
+                f.canvas.addSubview(button)
                 point = try f.checked(button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil),
                                       target: button, label: "native button")
                 try await click(point, in: f.window)
@@ -689,7 +692,7 @@ private enum SelectionTyping {
             try await wheel(point, dy: -30, phase: 2, in: f)
             try await wheel(point, dy: 0, phase: 4, in: f)
             try await wheel(point, dy: -25, momentum: 1, in: f)
-            try await wheel(point, dy: 0, momentum: 3, in: f)
+            try await wheel(point, dy: -5, momentum: 3, in: f)
             let afterPageOffset = await js(web, "scrollY") as? Double
             let field = await js(web, "document.getElementById('field').value") as? String
             try require(f.canvas.viewport != handedOff && afterPageOffset == pageOffset && field == "",
@@ -709,7 +712,7 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
             try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
             try await wheel(try boardPoint(f), dy: -50, momentum: 1, in: f)
-            try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+            try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
             try require(scroll.contentView.bounds.origin.y > afterBegin.y && f.canvas.viewport == viewport,
                         "real key loss must retain content owner through continuation and momentum")
             try f.boardOwns([])
@@ -747,7 +750,7 @@ private enum SelectionTyping {
                 try await wheel(try boardPoint(f), dy: -80, phase: 4, in: f)
                 try await wheel(try notePoint(second, f), dy: -80, momentum: 1, in: f)
                 try await wheel(try boardPoint(f), dy: -80, momentum: 2, in: f)
-                try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+                try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
                 try require(firstScroll.contentView.bounds.origin.y > afterBegin.y, "original note must keep scrolling after pointer leaves")
                 try require(secondScroll.contentView.bounds.origin == secondOrigin && f.canvas.viewport == viewport,
                             "content owner must retain all events through crossing and momentum")
@@ -765,7 +768,7 @@ private enum SelectionTyping {
                     let beforeMomentum = f.canvas.viewport
                     try await wheel(try notePoint(first, f), dy: -30, momentum: 1, in: f)
                     try await wheel(try notePoint(second, f), dy: -30, momentum: 2, in: f)
-                    try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+                    try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
                     try require(f.canvas.viewport != beforeMomentum && firstScroll.contentView.bounds.origin == firstOrigin
                                 && secondScroll.contentView.bounds.origin == secondOrigin, "board must also retain momentum over content")
                 } else {
@@ -796,7 +799,7 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
             try await wheel(try boardPoint(f), dy: -90, momentum: 1, in: f)
             try await wheel(try boardPoint(f), dy: -90, momentum: 2, in: f)
-            try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+            try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
             try require(f.canvas.viewport == viewport,
                         "edge must never chain existing content gesture or momentum to board")
             try await wheel(try notePoint(text, f), dy: -90, phase: 1, in: f)
@@ -813,7 +816,22 @@ private enum SelectionTyping {
                 try await drag(point, NSPoint(x: point.x + 75, y: point.y + 45), in: f.window)
                 try await post([key(49, " ", type: .keyUp, in: f.window)])
                 try f.boardOwns([])
-            } else { try await wheel(point, dy: -90, in: f) }
+            } else {
+                try await wheel(point, dy: -90, in: f)
+                try require(f.canvas.viewport != viewport, "phaseless image wheel must pan the board")
+                try await Task.sleep(for: .milliseconds(350))
+                let phasedPoint = try f.point(image.id)
+                for (dy, phase): (Int32, Int64) in [(-20, 1), (-20, 2), (-15, 2), (0, 4)] {
+                    try await wheel(phasedPoint, dy: dy, phase: phase, in: f)
+                }
+                let beforeMomentum = f.canvas.viewport
+                for (dy, momentum): (Int32, Int64) in [(-20, 1), (-15, 2), (-10, 2), (-5, 3)] {
+                    try await wheel(phasedPoint, dy: dy, momentum: momentum, in: f)
+                }
+                try await wait("image board owner must move through the complete momentum sequence") {
+                    f.canvas.viewport != beforeMomentum
+                }
+            }
             try require(f.canvas.viewport != viewport, "non-scrolling tile / board-key Space-drag must pan board")
             try require(f.board.objects[image.id]?.frame == frame, "pan must not move the tile")
         } else if name == "space-typing-once" {
