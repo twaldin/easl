@@ -2,7 +2,28 @@
 
 Each version's section is its GitHub release's notes.
 
-## 0.3.7 (unreleased)
+## 0.3.7
+
+easl 0.3.7 gives a tile typing when you select it, while marquee, multi-selection, and agent or API selection keep keys on the board. Text measurement runs off the main thread, and needs-you refreshes no longer decode every question. Save work on the main thread is tagged in metrics, and the roughly half-second freeze when Escape returns from a note to a terminal is fixed.
+
+### easld, the app, and the CLI
+
+Selection and typing, save metrics spans, text measurement, needs-you refreshes, and the terminal-focus stall fix need the 0.3.7 app. They do not need a new easld or CLI. A press on a web page's own scrollbar counts as a click and gives that tile typing.
+
+The only easld change is the `view.open_url` description and its generated `SchemaHash`. The API schema stays at version 2. The release check exercised the 0.3.7 candidate app with easld 0.3.6 and the 0.3.6 app with candidate easld, including both CLIs against both app and host sockets. All 32 CLI calls passed without a schema-hash warning.
+
+### Board format
+
+The board format is unchanged, still format 3. The persisted object model is unchanged from 0.3.6.
+
+### Known limits
+
+- A selected tile that is not taking typing has a dashed ring. The typing tile has a solid ring. Terminal ring corners are tighter, with radius 5 instead of 9, so the ring stays outside the text.
+- An `easl` CLI open-url call occasionally opens a second browser instead of reusing the open one. This intermittent also occurred before the 0.3.7 fix.
+- Three needs-you refreshes still took about 52 ms each in the release check. Their cause remains unexplained.
+- A true relayed browser, with separate drawing and viewing Macs, loses queued input completion and Command-Z, as on 0.3.6.
+- CI's native tests run on macOS 27. The runtime release check ran on macOS 26.6.2.
+- The scroll rule in #235 and Pele in #210 are not included.
 
 ### Fixed
 
