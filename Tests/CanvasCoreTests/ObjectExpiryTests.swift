@@ -184,10 +184,13 @@ final class ObjectExpiryTests {
     }
 
     @Test func closedPastDeadlineWaitsForOpenAndUsesStoredAbsoluteTime() async throws {
-        let object = try await create(["expiresIn": "0.15s"])
+        let object = board.create(type: .note, props: .object(["markdown": "temporary"]), expires: ObjectExpiry(.distantFuture))
         try await registry.close(board.id)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(board.objects[object.id] == object)
+        let overdue = try board.update(object.id, expires: .set(ObjectExpiry(Date().addingTimeInterval(-1))))
+        board.scheduleQuestionExpiry()
+        try await registry.store.saveChecked(Board(snapshot: board.snapshot))
+        #expect(board.expireObjects().isEmpty)
+        #expect(board.objects[object.id] == overdue)
         let reopened = try await registry.open(root: board.root)
         #expect(reopened.objects[object.id] == nil)
         #expect(reopened.objects.count == 0)
