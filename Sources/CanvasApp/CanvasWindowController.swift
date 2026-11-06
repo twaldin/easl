@@ -1573,8 +1573,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
 /// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
-/// is on it, over a tile too. Wheel ownership stays with its initial board or content destination.
-/// Middle-drag and board-key Space-drag pan from anywhere on the canvas.
+/// is on it, over a tile too.
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
@@ -1729,7 +1728,6 @@ final class CanvasWindow: NSWindow {
         return (canvas, hit)
     }
 
-    /// Called for AppKit input and development replay before native responder dispatch.
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
         guard let canvas = (windowController as? CanvasWindowController)?.canvas,
               attachedSheet == nil, NSApp.modalWindow == nil else { return false }

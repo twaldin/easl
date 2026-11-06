@@ -8,8 +8,7 @@ import UniformTypeIdentifiers
 /// board's server (`remote.host.connection()`), never through `BoardMirror` and never by
 /// constructing WebKit.
 ///
-/// One connection per live period. It subscribes to private surface events on the canonical
-/// board before `surface.stream`. The page's Mac holds frame 0
+/// The page's Mac holds frame 0
 /// until `surface.ack` 0, then one frame is outstanding. A dropped link or stream opens a new
 /// stream and does not replay input. The last image stays up. On easld a stream also ends when
 /// its drawing Mac goes offline or the page moves to another Mac; the tile says so and opens again
