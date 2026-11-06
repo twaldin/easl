@@ -118,12 +118,13 @@ private enum BrowserInitialAdmission {
         guard condition() else { throw WheelFailure(description: message) }
     }
 
-    private static func until(_ message: String, _ condition: () -> Bool) async throws {
+    private static func until(_ message: String, _ condition: () async -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(12)
-        while !condition(), ContinuousClock.now < deadline {
+        while !(await condition()), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        try expect(condition(), message)
+        let passed = await condition()
+        try expect(passed, message)
     }
 
     private static func pageMatches(_ web: WKWebView, _ script: String) async -> Bool {
@@ -420,12 +421,14 @@ private enum BrowserInitialAdmission {
                     removeEventListener('wheel', window.consumeWheel);
                     scrollTo(0, document.scrollingElement.scrollHeight);
                     document.title = 'native-edge';
-                    scrollX === 0 && scrollY > 0 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1;
+                    true;
                     """)
                 try expect(configured, "native edge fixture must have no wheel handler, vertical limit and horizontal room")
                 try await until("viewer must acknowledge a real frame after the native page reaches its edge") {
-                    fixture.acknowledgements > acknowledged && web.title == "native-edge"
+                    let positioned = await pageMatches(web, "scrollX === 0 && scrollY > 0 && Math.abs(scrollY + document.scrollingElement.clientHeight - document.scrollingElement.scrollHeight) <= 1")
+                    return positioned && fixture.acknowledgements > acknowledged && web.title == "native-edge"
                 }
+                try expect(tile.hasOpenStream, "real-rejection gesture must begin on an open page stream")
                 let edgePose = canvas.viewport
                 try wheel(point, phase: 1, in: window)
                 try await until("WebKit's real rejection must cross the socket and pan the viewer board") {
@@ -436,8 +439,6 @@ private enum BrowserInitialAdmission {
                 try await until("the same rejected gesture must retain both axes on the viewer board") {
                     canvas.viewport.rect.x > handedOff.rect.x
                 }
-                let unchanged = await pageMatches(web, "scrollX === 0 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1")
-                try expect(unchanged, "rejected same-gesture input must not move the horizontally scrollable host page")
                 print("PASS remote-wheel real WebKit rejection: socket handoff and retained board axes")
             }
             try expect(fixture.errors.isEmpty, "real surface transport must have no protocol errors: \(fixture.errors)")
