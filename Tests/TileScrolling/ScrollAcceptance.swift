@@ -551,8 +551,9 @@ private enum SelectionTyping {
             throw Failure("host fixture needs a real BrowserTile")
         }
         try await wait("host fixture page did not load") {
-            guard let web = tile.webView else { return false }
-            return await js(web, "document.readyState === 'complete'") as? Bool == true
+            guard let web = tile.webView, !web.isLoading, tile.pendingNavigations.isEmpty,
+                  web.url?.resolvingSymlinksInPath() == f.root.appendingPathComponent("page.html").resolvingSymlinksInPath() else { return false }
+            return await js(web, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture'") as? Bool == true
         }
         guard let web = tile.webView, let original = web.uiDelegate as? NSObject,
               original.responds(to: DelayedWheelDelegate.callback) else {
@@ -666,7 +667,6 @@ private enum SelectionTyping {
         } else {
             panel = NavigationPanel.hover((1...100).map { "Documentation paragraph \($0).\n\n" }.joined())
         }
-        try await boardKeys(f)
         var pageView: WKWebView?
         if embedded {
             let object = try await f.create(name.hasPrefix("browser-") ? .browser : .html,
@@ -674,8 +674,12 @@ private enum SelectionTyping {
             guard let content = f.canvas.tiles[object.id]?.content else { throw Failure("missing page tile") }
             try await wait("page fixture prerequisite: embedded panel needs a loaded real WKWebView") {
                 pageView = (content as? BrowserTile)?.webView ?? (content as? HtmlTile)?.webView
-                guard let pageView else { return false }
-                return await js(pageView, "document.readyState === 'complete'") as? Bool == true
+                guard let pageView, !pageView.isLoading else { return false }
+                if let browser = content as? BrowserTile {
+                    guard browser.pendingNavigations.isEmpty,
+                          pageView.url?.resolvingSymlinksInPath() == f.root.appendingPathComponent("page.html").resolvingSymlinksInPath() else { return false }
+                }
+                return await js(pageView, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture'") as? Bool == true
             }
             panel.setFrameOrigin(NSPoint(x: 20, y: content.headerHeight + 20))
             content.addSubview(panel, positioned: .above, relativeTo: nil)
@@ -684,6 +688,8 @@ private enum SelectionTyping {
         }
         defer { panel.dismiss() }
         f.window.layoutIfNeeded()
+        // The fixture page focuses its field during load, before the board takes keys.
+        try await boardKeys(f)
         let scroll = try panelScroll(panel)
         scroll.verticalScrollElasticity = .none
         let origin = scroll.contentView.bounds.origin
@@ -720,8 +726,8 @@ private enum SelectionTyping {
         let object = try await f.create(.html, width: 540, height: 420)
         guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("missing HTML fixture") }
         try await wait("coalescing fixture must load its fitting document") {
-            guard let web = tile.webView else { return false }
-            return await js(web, "document.readyState === 'complete' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
+            guard let web = tile.webView, !web.isLoading else { return false }
+            return await js(web, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
         }
         guard let web = tile.webView, let original = web.uiDelegate as? NSObject else {
             throw Failure("coalescing fixture needs the real WebKit delegate")
@@ -815,8 +821,13 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
             try await wheel(try boardPoint(f), dy: -20, momentum: 2, in: f)
             try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
-            try require(f.canvas.viewport == viewport && scroll.contentView.bounds.origin.y > afterBegin.y,
-                        "outside native owner must keep continuation and momentum without panning board")
+            try await wait("outside native owner must keep moving after the pointer leaves") {
+                scroll.contentView.bounds.origin.y > afterBegin.y
+            }
+            let after = f.canvas.viewport
+            print("OUTSIDE OFFSETS origin=\(origin) began=\(afterBegin) final=\(scroll.contentView.bounds.origin) boardBefore=\(viewport) boardAfter=\(after)")
+            try require(after.rect.x == viewport.rect.x && after.rect.y == viewport.rect.y && after.zoom == viewport.zoom,
+                        "outside native owner must not pan or zoom board")
             return
         }
         if name == "space-click-shape" || name == "space-click-move-terminal" || name == "space-click-native-button" {
@@ -866,8 +877,8 @@ private enum SelectionTyping {
             let object = try await f.create(.html, width: 540, height: 420)
             guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("missing HTML fixture") }
             try await wait("page fixture prerequisite: fitting page must finish loading") {
-                guard let web = tile.webView else { return false }
-                return await js(web, "document.readyState === 'complete' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
+                guard let web = tile.webView, !web.isLoading else { return false }
+                return await js(web, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
             }
             guard let web = tile.webView, let original = web.uiDelegate as? NSObject else {
                 throw Failure("pending-page fixture prerequisite: real page must have an NSObject UI delegate")

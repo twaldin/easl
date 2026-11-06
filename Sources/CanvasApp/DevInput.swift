@@ -457,10 +457,6 @@ enum DevInput {
             let screen = window.convertPoint(toScreen: at)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
-            // A burst step is a continuous (trackpad-precise) delta without a gesture phase: on
-            // macOS 26 a replayed phased gesture only moves the view by its first step (NSScrollView
-            // tracks the rest of a real gesture itself and drops directly delivered steps). A
-            // single step is a phaseless wheel notch, which AppKit animates as a smooth scroll.
             if fields["phase"] != nil { cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1) }
             // `--gesture`: the burst as a trackpad gesture with its phases (began and ended carry no
             // movement), for views that own a gesture from its first event (a changes tile's scroll).
