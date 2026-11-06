@@ -325,7 +325,7 @@ private enum SelectionTyping {
     }
 
     private static func wheel(_ point: NSPoint, dy: Int32, dx: Int32 = 0, phase: Int64 = 0,
-                              momentum: Int64 = 0, flags: CGEventFlags = [], in f: Fixture) async throws {
+                              momentum: Int64 = 0, flags: CGEventFlags = [], settle: Bool = true, in f: Fixture) async throws {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                wheel1: dy, wheel2: dx, wheel3: 0),
               let phaseField = CGEventField(rawValue: 99),
@@ -371,7 +371,7 @@ private enum SelectionTyping {
         let responder = f.window.firstResponder
         NSApp.sendEvent(event)
         try require(observed, "AppKit must dispatch the scroll through the target window")
-        try await Task.sleep(for: .milliseconds(16))
+        if settle { try await Task.sleep(for: .milliseconds(16)) }
         try require(f.canvas.selection == selection && f.canvas.focusedTile == focus && f.window.firstResponder === responder,
                     "scroll must preserve selection, typing and exact keyboard responder")
     }
@@ -436,6 +436,7 @@ private enum SelectionTyping {
     private final class DelayedWheelDelegate: NSObject, WKUIDelegate {
         nonisolated(unsafe) let original: NSObject
         var pending: [(WKWebView, NSEvent)] = []
+        var received: [(WKWebView, NSEvent)] = []
         var holding = true
         static let callback = NSSelectorFromString("_webView:didNotHandleWheelEvent:")
 
@@ -454,6 +455,7 @@ private enum SelectionTyping {
 
         @objc(_webView:didNotHandleWheelEvent:)
         func unhandled(_ web: WKWebView, event: NSEvent) {
+            received.append((web, event))
             if holding { pending.append((web, event)) }
             else { forward(web, event) }
         }
@@ -470,6 +472,166 @@ private enum SelectionTyping {
             let answers = pending
             pending.removeAll()
             for (web, event) in answers { forward(web, event) }
+        }
+    }
+
+    @MainActor
+    private final class HostWheelPeer: SurfacePeer {
+        let connection: SocketServer.Connection
+        let reader: Int32
+        let board: BoardID
+        let browser: BrowserTile
+        private var buffer = Data()
+        private(set) var lines: [JSONValue] = []
+
+        init(board: BoardID, browser: BrowserTile) throws {
+            var sockets: [Int32] = [-1, -1]
+            guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {
+                throw Failure("host stream fixture could not open its consumer socket pair")
+            }
+            connection = SocketServer.Connection(fd: sockets[0])
+            reader = sockets[1]
+            self.board = board
+            self.browser = browser
+        }
+
+        var owner: SurfaceOwner { .socket(connection) }
+        var isOpen: Bool { connection.isOpen }
+        func tile(_ id: ObjectID) throws -> (board: BoardID, tile: BrowserTile) {
+            guard id == browser.objectID else { throw Failure("host peer received an unrelated tile") }
+            return (board, browser)
+        }
+        func hears(_ event: String, on board: BoardID) -> Bool { board == self.board }
+
+        func drain() throws {
+            var bytes = [UInt8](repeating: 0, count: 65_536)
+            while true {
+                let count = recv(reader, &bytes, bytes.count, MSG_DONTWAIT)
+                if count < 0 {
+                    if errno == EINTR { continue }
+                    guard errno == EAGAIN || errno == EWOULDBLOCK else {
+                        throw Failure("host consumer socket read failed: \(errno)")
+                    }
+                    break
+                }
+                guard count > 0 else { throw Failure("host consumer socket closed unexpectedly") }
+                buffer.append(contentsOf: bytes.prefix(count))
+            }
+            while let newline = buffer.firstIndex(of: 10) {
+                lines.append(try JSONDecoder().decode(JSONValue.self, from: Data(buffer[..<newline])))
+                buffer.removeSubrange(...newline)
+            }
+        }
+
+        func flush() async throws {
+            let marker = UUID().uuidString
+            try require(connection.send(.object(["hostWheelBarrier": .string(marker)])),
+                        "host consumer barrier must be queued after genuine pushes")
+            try await wait("host consumer outbox did not drain") {
+                try? self.drain()
+                return self.lines.contains { $0["hostWheelBarrier"]?.string == marker }
+            }
+            try drain()
+        }
+
+        var handoffs: [JSONValue] {
+            lines.filter { $0["event"]?.string == "surface.scrollUnhandled" }.compactMap { $0["data"] }
+        }
+
+        func close() {
+            shutdown(connection.fd, SHUT_RDWR)
+            Darwin.close(connection.fd)
+            Darwin.close(reader)
+        }
+    }
+
+    private static func hostPhaselessHandledFirst(_ f: Fixture) async throws {
+        let object = try await f.create(.browser, width: 660, height: 540)
+        guard let tile = f.canvas.tiles[object.id]?.content as? BrowserTile else {
+            throw Failure("host fixture needs a real BrowserTile")
+        }
+        try await wait("host fixture page did not load") {
+            guard let web = tile.webView else { return false }
+            return await js(web, "document.readyState === 'complete'") as? Bool == true
+        }
+        guard let web = tile.webView, let original = web.uiDelegate as? NSObject,
+              original.responds(to: DelayedWheelDelegate.callback) else {
+            throw Failure("host fixture requires WebKit's real _webView:didNotHandleWheelEvent: delegate")
+        }
+        try require(web.responds(to: NSSelectorFromString("_rubberBandingEnabled"))
+                    && web.responds(to: NSSelectorFromString("_setRubberBandingEnabled:")),
+                    "host fixture requires WebKit rubber-banding controls for real edge rejection")
+        let peer = try HostWheelPeer(board: f.board.id, browser: tile)
+        defer { peer.close() }
+        let host = BrowserSurfaceHost.shared
+        let opened = try await host.handle(.stream(tile: object.id, scale: 1, format: .jpeg), from: peer)
+        guard let stream = opened["stream"]?.string else { throw Failure("host did not open a stream") }
+        do {
+            _ = try await host.handle(.ack(stream: stream, frame: 0), from: peer)
+            try await wait("host consumer must receive the genuine initial frame") {
+                try? peer.drain()
+                return peer.lines.contains { $0["event"]?.string == "surface.frame" }
+            }
+            guard let frame = peer.lines.first(where: { $0["event"]?.string == "surface.frame" })?["data"]?["seq"]?.number else {
+                throw Failure("host initial frame must carry its acknowledgement sequence")
+            }
+            _ = try await host.handle(.ack(stream: stream, frame: Int(frame)), from: peer)
+            let proxy = DelayedWheelDelegate(original: original)
+            proxy.holding = false
+            web.uiDelegate = proxy
+            defer { web.uiDelegate = original as? any WKUIDelegate }
+            _ = await js(web, """
+                document.body.innerHTML = '<div style="height:calc(100vh + 80px);background:linear-gradient(white,blue)"></div>';
+                document.body.style.cssText = 'margin:0;padding:0';
+                document.documentElement.style.cssText = 'scroll-behavior:auto';
+                scrollTo(0,0);
+                """)
+            try await wait("host fixture must begin above a real scrollable bottom edge") {
+                await js(web, "scrollY === 0 && document.scrollingElement.scrollHeight > innerHeight + 40") as? Bool == true
+            }
+            func send(_ seq: Int, gesture: Int, dy: Double) async throws {
+                guard let request = try SurfaceRequest(method: "surface.input", params: .object([
+                    "stream": .string(stream),
+                    "events": .array([.object([
+                        "seq": .number(Double(seq)), "kind": "scroll",
+                        "x": .number(Double(web.bounds.midX)), "y": .number(Double(web.bounds.midY)),
+                        "dx": .number(0), "dy": .number(dy), "precise": true,
+                        "phase": .number(0), "momentum": .number(0), "gesture": .number(Double(gesture))
+                    ])])
+                ])) else { throw Failure("consumer wheel request did not parse") }
+                _ = try await host.handle(request, from: peer)
+            }
+            try await send(1, gesture: 41, dy: -1000)
+            try await wait("first host wheel must genuinely move WebKit to the bottom edge") {
+                await js(web, "scrollY > 40 && Math.abs(scrollY + innerHeight - document.scrollingElement.scrollHeight) <= 1") as? Bool == true
+            }
+            try require(proxy.received.isEmpty, "handled first host wheel must not be rejected by WebKit")
+            let edge = await js(web, "scrollY") as? Double
+            try await send(2, gesture: 41, dy: -47)
+            try await wait("later same-gesture edge wheel must receive WebKit's actual unhandled callback") {
+                proxy.received.count == 1
+            }
+            try await peer.flush()
+            try require(peer.handoffs.isEmpty, "handled-first numbered burst must emit zero surface.scrollUnhandled pushes")
+            let afterEdge = await js(web, "scrollY") as? Double
+            try require(afterEdge == edge, "later rejected wheel must leave the page at its observed edge")
+            try await send(3, gesture: 42, dy: -53)
+            try await wait("fresh edge gesture must receive WebKit's own rejection") { proxy.received.count == 2 }
+            try await peer.flush()
+            try require(peer.handoffs.count == 1, "fresh edge gesture must emit exactly one handoff")
+            guard let handoff = peer.handoffs.first.flatMap(SurfaceScrollUnhandled.init) else {
+                throw Failure("host handoff must parse as the consumer's SurfaceScrollUnhandled")
+            }
+            try require(handoff.stream == stream && handoff.gesture == 42,
+                        "fresh edge handoff must match its stream and numbered gesture")
+            try require(proxy.received.allSatisfy {
+                $0.0 === web && $0.1.phase.isEmpty && $0.1.momentumPhase.isEmpty && $0.1.scrollingDeltaY < 0
+            }, "both callback receipts must belong to genuine downward phaseless wheels on the streamed page")
+            print("HOST WHEEL callbacks=\(proxy.received.count) edge=\(String(describing: edge)) handoffs=\(peer.handoffs)")
+            _ = try await host.handle(.stop(stream: stream), from: peer)
+        } catch {
+            _ = try? await host.handle(.stop(stream: stream), from: peer)
+            throw error
         }
     }
 
@@ -542,6 +704,7 @@ private enum SelectionTyping {
         try await wheel(try boardPoint(f), dy: -50, phase: 2, in: f)
         try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
         try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
+        try await wheel(try boardPoint(f), dy: -20, momentum: 2, in: f)
         try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
         try require(scroll.contentView.bounds.origin != afterBegin && f.canvas.viewport == viewport,
                     "native panel must retain wheel and momentum outside its bounds without panning board")
@@ -553,6 +716,39 @@ private enum SelectionTyping {
         print("OFFSETS panel=\(origin) -> \(scroll.contentView.bounds.origin) board=\(viewport) -> \(f.canvas.viewport)")
     }
 
+    private static func pageZeroBeginCoalescing(_ f: Fixture) async throws {
+        let object = try await f.create(.html, width: 540, height: 420)
+        guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("missing HTML fixture") }
+        try await wait("coalescing fixture must load its fitting document") {
+            guard let web = tile.webView else { return false }
+            return await js(web, "document.readyState === 'complete' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
+        }
+        guard let web = tile.webView, let original = web.uiDelegate as? NSObject else {
+            throw Failure("coalescing fixture needs the real WebKit delegate")
+        }
+        let proxy = DelayedWheelDelegate(original: original)
+        proxy.holding = false
+        web.uiDelegate = proxy
+        defer { web.uiDelegate = original as? any WKUIDelegate }
+        try await boardKeys(f)
+        let point = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "fitting WK page")
+        let viewport = f.canvas.viewport
+        let pageOffset = await js(web, "scrollY") as? Double
+        try require(pageOffset != nil, "fitting page offset must be observable")
+        try await wheel(point, dy: 0, phase: 1, settle: false, in: f)
+        try await wheel(point, dy: -20, phase: 2, settle: false, in: f)
+        try await wheel(point, dy: -20, phase: 2, settle: false, in: f)
+        try await wait("fitting page must genuinely reject a changed event") {
+            proxy.received.contains { $0.1.phase.contains(.changed) }
+        }
+        try await wait("zero begin and back-to-back changes must hand the fitting-page gesture to board") {
+            f.canvas.viewport != viewport
+        }
+        let after = await js(web, "scrollY") as? Double
+        try require(after == pageOffset, "fitting page must not move during board handoff")
+    }
+
+
     private static let scenarios: [Scenario] = [
         Scenario(name: "board-crosses-note", baseline: "expected regression failure: board gesture currently enters note"),
         Scenario(name: "content-crosses-note", baseline: "expected regression failure: no retained original content target"),
@@ -562,6 +758,8 @@ private enum SelectionTyping {
         Scenario(name: "hover-panel-outside-tile", baseline: "expected regression failure: native panel outside tile pans board"),
         Scenario(name: "references-panel-outside-tile", baseline: "expected regression failure: native references list outside tile pans board"),
         Scenario(name: "browser-native-panel", baseline: "expected regression failure: browser tile steals native non-WebKit panel wheel"),
+        Scenario(name: "host-phaseless-handled-first", baseline: "expected regression failure at5afbc197: untimed host phaseless wheels cannot distinguish the handled first event from a later edge rejection"),
+        Scenario(name: "page-zero-begin-coalescing", baseline: "expected regression failure at5afbc197: coalesced changed reply loses first directional identity and swallows fitting-page gesture"),
         Scenario(name: "html-native-panel", baseline: "expected regression failure: HTML tile steals native non-WebKit panel wheel"),
         Scenario(name: "focus-loss-content-owner", baseline: "expected regression failure: crossed content owner not retained; focus preservation is an unchanged control"),
         Scenario(name: "focus-loss-cancels-space-only", baseline: "new Space cancellation regression; baseline has no Space pan, not a fail-before claim"),
@@ -581,6 +779,14 @@ private enum SelectionTyping {
     ]
 
     private static func run(_ name: String, _ f: Fixture) async throws {
+        if name == "host-phaseless-handled-first" {
+            try await hostPhaselessHandledFirst(f)
+            return
+        }
+        if name == "page-zero-begin-coalescing" {
+            try await pageZeroBeginCoalescing(f)
+            return
+        }
         if name == "outside-board-retains-wheel" {
             guard let root = f.window.contentView else { throw Failure("missing window content") }
             let scroll = NSScrollView(frame: NSRect(x: 15, y: 15, width: 240, height: 170))
@@ -607,6 +813,7 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
             try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
             try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
+            try await wheel(try boardPoint(f), dy: -20, momentum: 2, in: f)
             try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
             try require(f.canvas.viewport == viewport && scroll.contentView.bounds.origin.y > afterBegin.y,
                         "outside native owner must keep continuation and momentum without panning board")
@@ -692,6 +899,7 @@ private enum SelectionTyping {
             try await wheel(point, dy: -30, phase: 2, in: f)
             try await wheel(point, dy: 0, phase: 4, in: f)
             try await wheel(point, dy: -25, momentum: 1, in: f)
+            try await wheel(point, dy: -15, momentum: 2, in: f)
             try await wheel(point, dy: -5, momentum: 3, in: f)
             let afterPageOffset = await js(web, "scrollY") as? Double
             let field = await js(web, "document.getElementById('field').value") as? String
@@ -712,6 +920,7 @@ private enum SelectionTyping {
             try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
             try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
             try await wheel(try boardPoint(f), dy: -50, momentum: 1, in: f)
+            try await wheel(try boardPoint(f), dy: -25, momentum: 2, in: f)
             try await wheel(try boardPoint(f), dy: -5, momentum: 3, in: f)
             try require(scroll.contentView.bounds.origin.y > afterBegin.y && f.canvas.viewport == viewport,
                         "real key loss must retain content owner through continuation and momentum")
@@ -875,15 +1084,21 @@ private enum SelectionTyping {
             let viewport = f.canvas.viewport, before = f.read(object.id)
             let screen = tile.screenRows().map(\.text)
             let geometry = scrollbar(tile)
+            let shown = tile.shownText()
             print("TERMINAL geometry=\(String(describing: geometry)) screen=\(screen)")
             try await wheel(point, dy: name == "terminal-horizontal-unfocused" ? 0 : (history ? 120 : -40),
                             dx: name == "terminal-horizontal-unfocused" ? -80 : 0, in: f)
             if name == "terminal-horizontal-unfocused" {
-                try require(f.read(object.id) == before && tile.screenRows().map(\.text) == screen,
+                try require(f.read(object.id) == before && tile.shownText()?.text == shown?.text
+                            && scrollbar(tile)?.offset == geometry?.offset,
                             "non-typing horizontal terminal wheel must not send program bytes or scroll vertical history")
                 try require(f.canvas.viewport != viewport, "non-typing horizontal terminal wheel must pan board")
             } else if history {
-                try await wait("unfocused history must visibly scroll older terminal text") { tile.screenRows().map(\.text) != screen }
+                guard let geometry, let shown else { throw Failure("history fixture needs visible text and scrollbar geometry") }
+                try await wait("unfocused history must visibly scroll older terminal text") {
+                    guard let after = tile.shownText(), let scrollbar = scrollbar(tile) else { return false }
+                    return scrollbar.offset < geometry.offset && after.scrolledBack > 0 && after.text != shown.text
+                }
                 try require(f.canvas.viewport == viewport && f.read(object.id) == before, "unfocused history must neither pan nor send program input")
             } else if name == "terminal-empty-unfocused" {
                 try require(f.canvas.viewport != viewport && f.read(object.id) == before, "non-typing no-history terminal must pan without program input")
