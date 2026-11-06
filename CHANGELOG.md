@@ -2,6 +2,13 @@
 
 Each version's section is its GitHub release's notes.
 
+## 0.3.8 (unreleased)
+
+### Fixed
+
+- Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; initial modifiers and Move choose owner eligibility. Direct board ownership retains per-event pan/zoom modifiers; page handoff retains pan with initial Shift. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
+- Pages receive wheel input first and hand off only on WebKit's first-event unhandled result. JavaScript pages that prevent default keep their gesture even at a bound; typing terminals without scrollback keep Ghostty's behavior, so a short normal shell may not move. Pages lose native edge bounce. Missing private WebKit selectors or older remote hosts keep page-first input without handoff.
+
 ## 0.3.7
 
 easl 0.3.7 gives a tile typing on selection, including a click on its web page's scrollbar, while marquee, multi-selection, and agent or API selection do not take typing. Delegated text measurement runs off the main thread, and needs-you refreshes no longer decode every question. Save work on the main thread is tagged in metrics, and the new selection rings no longer cause a roughly half-second freeze when Escape in the composer returns keys to a terminal.
@@ -27,8 +34,6 @@ The board format is unchanged, still format 3. The persisted object model is unc
 
 ### Fixed
 
-- Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; initial modifiers and Move choose owner eligibility. Direct board ownership retains per-event pan/zoom modifiers; page handoff retains pan with initial Shift. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
-- Pages receive wheel input first and hand off only on WebKit's first-event unhandled result. JavaScript pages that prevent default keep their gesture even at a bound; typing terminals without scrollback keep Ghostty's behavior, so a short normal shell may not move. Pages lose native edge bounce. Missing private WebKit selectors or older remote hosts keep page-first input without handoff.
 - Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
 - Focus-ring styling changes repaint only the perimeter instead of the terminal interior, avoiding the terminal-focus draw stall.
 - Selecting one tile by click, Tab, or a chosen Go to result now gives it typing. Note prose edits after one click at the clicked source position, and every HTML body click moves typing synchronously before later keys. Marquee, multi-selection, group selection, and noninteractive tiles keep keys on the board.
