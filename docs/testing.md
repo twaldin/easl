@@ -436,9 +436,24 @@ The original owner keeps crossings, resize, both axes, and momentum. A wheel bur
 after a 250 ms gap. Space-drag pans anywhere with board keys and never intercepts typed
 spaces. New Move-tool and Command-scroll gestures retain pan and zoom behavior.
 
-Pages query directional DOM extent before committing wheel input. Unknown, failed, or
-timed-out queries pan the board. The [terminal disposition table](design.md) records the
+Pages receive wheel input first. Only WebKit's unhandled reply for the first directional
+event hands the gesture to the board. Missing private selectors leave the gesture with
+the page, and a page that cancels the wheel keeps it even at its bound. Browser tiles
+lose WebKit's edge bounce. Remote pages follow the same rule on the drawing Mac,
+without a blocking probe. The [terminal disposition table](design.md) records the
 accepted typing/no-scrollback limit imposed by pinned Ghostty's missing mode getters.
+
+The native ownership regressions link the existing testing-enabled release objects.
+Run them in the claimed macOS guest; use the same harness for baseline and candidate:
+
+```sh
+swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /tmp/easl-tile-scrolling
+```
+
+This runner checks native panel scrolling, tile crossings, edges, momentum, focus loss,
+Space-drag and click replay, and the terminal disposition table. Its qualified AppKit
+queue events are synthetic, not physical-device or external HID evidence.
 
 ```sh
 scripts/bundle.sh
