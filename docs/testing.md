@@ -434,16 +434,17 @@ python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system nati
 
 The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
-### Scrolling oversized browser tiles
+### Tile scroll ownership
 
-Plain scrolling over an oversized live local or streamed browser first reveals any browser edge clipped
-in that direction by the canvas window, clear of the toolbar and tray. The pan stops at that
-edge; further wheel steps scroll the page itself. A phased gesture keeps the owner selected by its first movement through
-momentum, so another gesture may be needed after revealing the edge. A browser resize during
-a gesture does not change that gesture's owner. A gesture that began outside the browser page
-continues panning the canvas when that browser arrives under the pointer. The tile's frame,
-page viewport size, and board layout stay unchanged. Move and ⌘-scroll keep their existing
-pan and zoom behavior.
+Local and remote boards use content-first directional ownership. A new gesture scrolls the
+tile's content when it can move that way; fitting content or an initial limit pans the board.
+The original owner keeps crossings, resize, both axes, and momentum. A wheel burst ends
+after a 250 ms gap. Space-drag pans anywhere with board keys and never intercepts typed
+spaces. New Move-tool and Command-scroll gestures retain pan and zoom behavior.
+
+Pages query directional DOM extent before committing wheel input. Unknown, failed, or
+timed-out queries pan the board. The [terminal disposition table](design.md) records the
+accepted typing/no-scrollback limit imposed by pinned Ghostty's missing mode getters.
 
 ```sh
 scripts/bundle.sh
@@ -453,11 +454,14 @@ python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --arrival
 python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --drift
 ```
 
-The runner launches a real app with a disposable home and a local oversized document. It
-replays native precise and line-based scrolls through the full document on both axes. Phased
-trackpad replay checks canvas reveal with a viewport-sized document, because directly replayed
-WebKit gestures drop later steps (`DevInput.swift`). START and END must become visible inside
-the window. A final END-marker WindowServer capture checks that native chrome, including
+The runner launches a real app with a disposable home and a local oversized document. Its
+precise and line-based events are synthetic AppKit replay, not HID or physical trackpad input.
+It checks content-first movement, board panning at an initial limit or over fitting content,
+and full-document START/END access on both axes. Phased replay checks observable ownership,
+not full-document WebKit traversal: directly replayed WebKit gestures can drop later steps
+(`DevInput.swift`). Momentum needs separately labelled CG phase/momentum injection through
+the HID path with native event receipts; these runners emit no momentum. A final END-marker
+WindowServer capture checks that native chrome, including
 the toolbar and tray, does not cover its colored border. The runner also checks that the tile frame and WebKit viewport
 stay unchanged. The runner never builds the app or touches the installed app's boards.
 The fixture hides page scrollbars and waits for native overlay scrollers to fade.

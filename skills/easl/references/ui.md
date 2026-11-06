@@ -19,11 +19,12 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 
 ## Reading a board
 
-- Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
-  Code and changes tiles scroll vertically when their content overflows; sideways scrolls pan the board.
-  Over terminals, vertical scrolling stays with the tile, focused or not. Click into a full-screen program that does not read the mouse to scroll it. Sideways scrolls pan the board.
-  Over an oversized browser, plain scrolling first reveals its clipped edge in that direction, then scrolls the page. A trackpad gesture keeps its first owner through momentum; start another gesture after revealing the edge.
-  With a mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included.
+- Scroll over content that can move in that direction to scroll it, selected or not. Empty board, fitting content, and a starting content limit pan the board. Pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
+  One owner keeps the whole gesture through crossings, content edges, and momentum. Start a new gesture to pan from a content edge. Wheels without phases use a new burst after a 250 ms gap.
+  This applies to every tile type, including local pages and streamed browsers. Nested scrollers stay within the owning tile. A page that cannot report directional scrollability before receiving input takes the board-pan fallback.
+  Terminal scrollback scrolls whether or not the terminal has typing. Without scrollback, an unfocused terminal pans the board; with typing, Ghostty keeps the input so alternate-scroll programs get arrows. A normal shell with under one screen of output then moves nothing: pinned Ghostty exposes no active-screen or alternate-scroll getter. Mouse-reporting programs receive wheel input only with typing.
+  Hold Space and drag anywhere to pan while the board holds the keys. With a typing tile, Space types normally; use middle-drag to pan without leaving typing.
+  With a mouse: the wheel follows the same content-first rule, ⌘-scroll zooms around the pointer, and ⇧-scroll uses the horizontal direction. Middle-drag pans from anywhere, tiles included.
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
   A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).
 - **⌥⌘-arrows** (↑ ↓ ← →) move between tiles: to the nearest tile that way, and a landed-on tile takes typing when it handles keys.
@@ -108,5 +109,5 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   A Ctrl shortcut pressed on the board shows a notice naming its ⌘ key, once per key per session.
 - ⌃ stays the terminal's: ⌃C interrupts, ⌃D ends input; ⌘C copies the selection, ⌘V pastes.
 - ⌥ (Option) is Alt; for Alt as Meta in the shell, set `macos-option-as-alt = true` in the user's Ghostty config.
-- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways, a middle-button drag pans; right-click the board or a tile for its menu.
+- Mouse: the wheel follows the content-first rule, ⌘-scroll zooms around the pointer, ⇧-scroll uses the horizontal direction, and middle-drag pans; with board keys, Space-drag also pans anywhere. Right-click the board or a tile for its menu.
 - ⌥⌘-arrows move between tiles like a tiling window manager; ⌘Esc leaves a terminal.

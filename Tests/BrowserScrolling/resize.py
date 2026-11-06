@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A page-owned wheel gesture stays page-owned when its browser becomes oversized."""
+"""Check browser ownership across resize, arrival, and drift with synthetic AppKit replay, not HID or momentum."""
 import argparse
 import json
 import os
@@ -68,8 +68,8 @@ def main():
                                           "props": {"url": page.as_uri()}})["object"]["id"]
             call("view.render", {"board": board, "target": tile, "out": str(home / "loaded.png")})
             log = home / "app.log"
+            print("Input: synthetic DevInput AppKit replay, not physical HID or momentum", flush=True)
             if args.drift:
-                dev("input", "scroll", 160 * zoom, 230 * zoom, 0, -10000)
                 before = call("view.get", {"board": board})["viewport"]
                 page_y = call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"]
                 offset = log.stat().st_size
@@ -81,7 +81,7 @@ def main():
                 assert after == before, f"Sideways drift stole a vertical page gesture: {before} -> {after}"
                 wait(lambda: call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] > page_y,
                      "The vertical gesture did not reach the page")
-                print("PASS minor sideways drift does not steal a vertical page gesture", flush=True)
+                print("PASS synthetic phased gesture: minor sideways drift does not steal vertical page ownership", flush=True)
                 return
             offset = log.stat().st_size
             dev("input", "scroll", 160 * zoom, 230 * zoom, 0, -12,
@@ -107,10 +107,12 @@ def main():
             if args.arrival:
                 assert after["rect"]["y"] > before["rect"]["y"], f"Browser swallowed an arriving canvas gesture: {before} -> {after}"
                 assert call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] == 0
-                print("PASS arriving canvas gesture keeps panning over a normal browser", flush=True)
+                print("PASS synthetic phased gesture: arriving browser keeps board ownership", flush=True)
             else:
                 assert after == before, f"Page-owned gesture changed to canvas after resize: {before} -> {after}"
-                print("PASS page-owned gesture stays page-owned after browser enlargement", flush=True)
+                assert call("browser.eval", {"surface_id": tile, "script": "scrollY"}, browser=True)["value"] > 0, (
+                    "The resized page lost the content movement that established its ownership")
+                print("PASS synthetic phased gesture: page keeps ownership after browser enlargement", flush=True)
         finally:
             dev("stop")
 

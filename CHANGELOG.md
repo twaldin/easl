@@ -27,6 +27,7 @@ The board format is unchanged, still format 3. The persisted object model is unc
 
 ### Fixed
 
+- Wheel and trackpad scrolling choose content when it can move in the initial direction and keep one owner across tile crossings, content edges, and momentum. Starting at a content limit pans the board. Space-drag pans from anywhere while the board holds the keys; typing spaces stay with the tile.
 - Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
 - Focus-ring styling changes repaint only the perimeter instead of the terminal interior, avoiding the terminal-focus draw stall.
 - Selecting one tile by click, Tab, or a chosen Go to result now gives it typing. Note prose edits after one click at the clicked source position, and every HTML body click moves typing synchronously before later keys. Marquee, multi-selection, group selection, and noninteractive tiles keep keys on the board.
