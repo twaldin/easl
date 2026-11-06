@@ -61,6 +61,8 @@ CI passes `--ci-timing-report-only` to report the 50 ms upper bound without enfo
 
 `CanvasCoreTests --filter BoardSaveTests` covers ordered coalescing, checked-save changes without a revision increment, flush-all, close failures, and conditional-write conflicts after successful and failed writes. `BoardAnchorLoadTests.gitSettlementDuringInFlightSaveWritesRefusedAnchorsOutNext` covers anchor settlement crossing an in-flight save.
 
+`ObjectExpiryTests.closedPastDeadlineWaitsForOpenAndUsesStoredAbsoluteTime` makes its held fixture overdue only after close finishes, then persists that snapshot. It checks that the closed instance refuses expiry and that reopening removes the overdue object before returning. No short deadline races the asynchronous close save.
+
 The following named tests use isolated child processes while the rest of Core stays parallel:
 
 - `identifyingAMacDoesNotHideProtocolFailures` retains its 200 ms protocol deadline without unrelated executor backlog.
