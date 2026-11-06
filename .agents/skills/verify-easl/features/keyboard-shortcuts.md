@@ -9,6 +9,7 @@ Users invoke menu actions through native key equivalents and change their bindin
 - `keys-conflict` swaps a conflicting binding or cancels without changing either.
 - `keys-drawing` keeps bare drawing letters on the canvas rather than intercepting text input.
 - `keys-rejection` refuses reserved or invalid bindings without changing the saved map.
+- `keys-selection-typing` gives a single user-selected tile typing, keeps board gestures on the board, and preserves typing through programmatic navigation.
 
 ## How to get to it (user POV)
 
@@ -25,6 +26,34 @@ Preconditions: an isolated `EASL_DEV_HOME`, fresh settings, one owned terminal, 
 - Use **Clear**, **Reset**, and **Restore Defaults** in separate cases, retaining the resulting menu bindings and behavior. Restart the same development home, rediscover its windows, and verify the chosen persisted binding before restoring defaults.
 - Attempt to record Command-L and require a rejection with no binding change. Cancel recording with Escape, then separately by moving focus to the board window, and require the original binding. Test a bare drawing-letter swap into a global action and require refusal. Record active keyboard layout when qualifying punctuation.
 - To test Ghostty remap precedence, set `XDG_CONFIG_HOME` to a scratch directory before launching and put the test configuration in its `ghostty` directory. `EASL_DEV_HOME` does not isolate Ghostty configuration. The guest account's `~/Library/Application Support/com.mitchellh.ghostty` configuration is still read; require it absent or record that unmet isolation prerequisite without changing the shared file. Qualify unchanged default and customized bindings separately, retaining which action receives each chord.
+
+### Selection and typing
+
+Run local and scratch remote boards. Keep a raw terminal byte recorder, a note, an HTML page with two fields and an object link, and a browser textarea. Record `view.get` selection and `focused` before and after each action.
+
+1. Click note prose once and type. Require the exact saved markdown and caret placement. Click an HTML field once and require its visible value and `props.state` receipt.
+2. Focus the terminal recorder. Click HTML prose and immediately post a native key. Require no new terminal bytes, including while the page delays its mouse handler. A pending key may be delivered to HTML or dropped, never sent to the previous terminal.
+3. Click the HTML object link. Require destination selection and source HTML typing. Separately perform a permitted programmatic `canvasKit.goTo` after restoring terminal typing; no click at navigation time may change that responder. The bridge still requires its existing fresh gesture permit.
+4. Marquee one terminal, Shift-click to select several tiles, and select a group. Require board ownership and no terminal receipt. Command-9 must still zoom the board. Select an image and require board ownership.
+5. Send plain Escape to the terminal program and require byte `1b`. Command-Escape must leave typing without a second byte or selection change. Repeat Leave Tile for every keyboard-handling type.
+6. Type into the browser textarea, undo with Command-Z, and redo with Shift-Command-Z. Require exact DOM text and unchanged board object frames. Repeat in HTML.
+7. Record selection and typing, then scroll a rendered note, drag its scrollbar, resize or move another tile, hover, and pinch. Both states must stay unchanged. A title/card click without dragging still selects; an overview-card drag must retain zoom and save exactly its pointer delta.
+8. Click note prose, type, and finish with plain Escape and Command-Return in separate trials. If typing returns to the prompt terminal, require selection to move to that terminal and the next key to reach its recorder. With no prompt terminal, require the note to stay selected with board keys. Keyboard/title entry also returns to the board.
+9. Right-click an unselected tile and cancel its native context menu without a command. Require that single tile's typing and a native text or terminal-byte result. Repeat for an already singly selected tile and for a member of a multi-selection; the latter keeps the multi-selection and board keys.
+10. Exercise the shipped `view.open_url` command through the private app socket while another tile has typing. Require destination selection, the exact previous responder, and a real typed result in that owner. There is no tile-select CLI command. Separately choose a destination through Command-P and require typing in that destination.
+11. Drag a visible scrollbar on overflowing HTML through the guest's authorized HID pointer path. Require an actual DOM scroll delta, then require that the HTML tile is selected and has typing. Repeat for a browser page. A page press, including its own scrollbar, is the one exception to the scroll rule. Wheel and trackpad scrolling must preserve selection and typing. A replayed mouse event that does not scroll is not proof. If native tracking cannot be driven, retain the exact attempted pointer calls and pixels.
+
+Replay uses `scripts/dev.sh input key` and `shortcut` with the owned window ID. Independently exercise genuine HID inside the guest using `/Applications/CuaDriver.app/Contents/MacOS/cua-driver call press_key` with JSON fields `pid`, `window_id`, a unique `session`, `key`, `modifiers`, and `delivery_mode: "foreground"`. This exact-window route briefly activates the owned guest window and restores the previous app. Never invoke it on home. Retain the delivery receipt and verify independent pixels or terminal bytes; a posted-key receipt alone proves no effect. End the Cua session before cleanup.
+
+Supplement the real-app proof with the native matrix:
+
+```sh
+swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "$G/proof/selection-typing"
+```
+
+The fixture installs production menus and a native board window/controller, activates only its isolated guest process, and tests native key equivalents. Its CLI cases use a real socket and production API router with the same view adapter as the app. Full application startup and registration remain part of the real-app proof. Baseline menu controls are not evidence until the fixture has a key window and the board undo control passes.
+
 
 ## Gotchas
 

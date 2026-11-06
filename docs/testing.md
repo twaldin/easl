@@ -283,6 +283,29 @@ The guest needs macOS 14 or later, Command Line Tools, git, Python, Go, Bun 1.4.
 
 In `agent-gui`, use the already-authorized CuaDriver with both the dev process PID and its window ID, as the recipe shows. Capture before and after a visible change, then inspect both PNGs for changed terminal output and advancing HTML or browser content. A new file or in-process `view.snapshot` is not GUI proof. Do not pursue a native SSH Screen Recording grant.
 
+## Native selection and typing regression
+
+Run the complete registry in the claimed GUI guest against optimized, testing-enabled app objects:
+
+```sh
+	swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	python3 Tests/SelectionTyping/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/scratch/selection-typing-evidence
+```
+
+The runner preserves the account's `HOME` and isolates easl state. It drives native mouse and keyboard dispatch, reads terminal bytes and page text, and checks exact text-selection ranges. A Shift click waits until AppKit observes the leading modifier before creating later-timestamped mouse events. On macOS 27, a hit inside the native text editor that already owns typing uses system event delivery. It places the hardware pointer at the receiver, posts through the HID event tap, and acknowledges Shift, mouse-up in its own window, and Shift release. It requires the active test window and Post Event access; missing permission fails instead of falling back. Board-selection gestures, other receivers, and earlier macOS use app-local event dispatch. No fixed delay substitutes for delivery, and neither path drains the run loop synchronously.
+
+Note and question-note text-extension cases place caret 6 through the editor's mouse receiver before Shift-clicking character 1. Notes on every OS and question notes before macOS 27 require exactly `{1,5}`, selected text `bcdef`, and replacement text `aX` with caret `{2,0}`. On macOS 27, the question note must match a plain `NSTextView` with the same configuration and input in the same run. Its selected text, replacement text, and resulting caret must match that native control's range.
+
+The shared native `drag` helper acknowledges each dispatched mouse event before posting the next. The first-note and overview-card round-trip scenarios intentionally dispatch drag motion as a queued batch. Both paths retain exact world-space movement or source-selection assertions.
+
+For a baseline comparison, freeze the final Swift harness and Python runner outside the checkout. Build each revision's optimized objects, then invoke the frozen runner explicitly:
+
+```sh
+	python3 /absolute/scratch/final-run.py --resources /path/to/revision --bin-path /path/to/optimized/bin --harness-source /absolute/scratch/final-harness.swift --output /absolute/scratch/revision-evidence
+```
+
+Use a separate output directory for each revision. `--resources` supplies that revision's schema, fixtures, and cleanup script instead of resolving them relative to the copied runner. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
+
 ## Native browsing-data regression
 
 Build with `swift build --build-system native -j 2 --product Easl -Xswiftc -enable-testing`, then run `python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"` in the queued guest. It uses an isolated home and reads back real cookies from the default, local, remote-only, and closed-board-only profile stores after confirming the native sheet. The latter two stores are absent from the supplied local profile names and the in-memory named-store cache. CI runs the same fixture.
@@ -463,7 +486,7 @@ The runner links the prebuilt `CanvasApp`, opens a board in a disposable home, a
 
 The runner also exercises hostile click handlers, including delayed script evaluation and stale native interactions. Its `--missing-selector` mode makes `_setShouldSuppressFirstResponderChanges:` unavailable and requires the native keyboard gate to keep page-initiated focus from taking the keyboard. Both `--hostile-clicks` and `--missing-selector` run in the default suite. For a focused run, pass either flag directly to the linked `HtmlKeyboard` executable with the disposable environment that `run.py` sets. The runner forwards only `--exports`.
 
-`--clobbered-click` rejects a `<form name="activeElement" contenteditable>` shadowing `document.activeElement`, and `--stale-focus-click` rejects a plain-page click while a field retains DOM focus. Both require a later real field click to work. `--document-grants` grants keys, rewrites the tile's HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click to grant again. These cases also run in the default suite. The document case awaits the expected key-event count: a JavaScript timer turn alone is not a barrier for WebKit's native input IPC.
+`--clobbered-click` uses a `<form name="activeElement" contenteditable>` that shadows `document.activeElement`; `--stale-focus-click` clicks plain content while another field retains DOM focus. Real body clicks grant native typing without trusting either DOM condition. Page-initiated focus without a native click remains denied. `--document-grants` rewrites HTML through `Board.update`, requires zero keystrokes in the replacement document, then requires a fresh click. These cases run in the default suite. The document case awaits the expected key-event count, not merely a JavaScript timer turn.
 
 The default suite also exports a hostile HTML tile through `HtmlTile.exportDocument` and reopens the saved file in an ordinary WebKit view. It checks the export-only policy, removal of active content, and preservation of rendered diagrams, math, code, images, and links. Add `--exports` to the runner command for this regression alone. Native Save as HTML and Open in Browser captures remain separate guest proof under `html-export` in the verification map.
 
@@ -496,11 +519,11 @@ The Kitty consumer emits a startup banner before its `READY` line. The fixture f
 
 ### Move tool input isolation
 
-Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and keyboard focus on the canvas.
+Use an isolated guest instance with a terminal and a second tile. Press M with the canvas holding the keyboard. Record selection and typing, then drag the terminal by its live body. Require a changed tile frame, unchanged terminal input, and the same selection and typing. Repeat moving an unselected tile while another terminal or text tile owns typing.
 
-Shift-click the second tile and drag either body. One ⌘Z must restore both frames. Escape during a held drag must restore the preview without committing it. After release, Select must be active. With Move on, scroll over each body and require board pan rather than content scroll.
+Shift-click the second tile and drag either body. One ⌘Z must restore both frames. After a normal release, Move must remain active for the next drag. Escape during a held drag must restore the preview without committing it and return to Select. V or Escape also returns an idle Move tool to Select. With Move on, scroll over each body and require board pan rather than content scroll.
 
-Check hidden-terminal focus separately. Focus the terminal in Select, then pan it far enough offscreen to become a card. Press M and pan it back into view. The terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
+Check hidden-terminal focus separately. Leave a typing terminal with Command-Escape, then pan it out until it becomes a card. Press M and pan it back into view. Neither selection nor typing changes during those gestures, and the terminal must not regain the keyboard. Escape must return to Select without sending a byte to the terminal.
 
 Repeat the body, multi-selection, group, and undo cases on a guest-local scratch host with a second viewer. Read committed frames from the host and capture both viewers by exact PID and window ID.
 

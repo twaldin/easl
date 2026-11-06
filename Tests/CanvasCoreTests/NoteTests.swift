@@ -105,6 +105,83 @@ struct NoteLinkTests {
 }
 
 @MainActor
+struct NoteSourcePositionTests {
+    private func render(_ source: String, width: CGFloat = 400) -> NSAttributedString {
+        NoteRenderer(excerpts: [:], source: source, width: width).render(NoteMarkdown.parse(source), placeholder: "")
+    }
+
+    private func sourceOffset(_ rendered: NSAttributedString, at offset: Int) throws -> Int {
+        let position = try #require(rendered.attribute(.noteSourcePosition, at: min(offset, rendered.length - 1), effectiveRange: nil) as? NoteSourcePosition)
+        return position.sourceOffset(at: offset)
+    }
+
+    @Test func inlineFormattingAndLinksKeepTheirRawCharacterPositions() throws {
+        let source = "First **bold** and *soft* [linked](https://example.com).\nNext line."
+        for width in [CGFloat(60), CGFloat(400)] {
+            let rendered = render(source, width: width)
+            for word in ["First", "bold", "soft", "linked", "Next"] {
+                let shown = (rendered.string as NSString).range(of: word).location
+                let raw = (source as NSString).range(of: word).location
+                #expect(try sourceOffset(rendered, at: shown + 1) == raw + 1)
+            }
+        }
+    }
+
+    @Test func repeatedTextUsesItsOwnSourceSpan() throws {
+        let rendered = render("**same** and same")
+        #expect(rendered.string == "same and same")
+        #expect(try sourceOffset(rendered, at: 2) == 4)
+        #expect(try sourceOffset(rendered, at: 11) == 15)
+    }
+
+    @Test func unicodeSourceColumnsBecomeNativeUtf16Offsets() throws {
+        let source = "🦊 café **bold**\ncontinued"
+        let rendered = render(source)
+        for word in ["café", "bold", "continued"] {
+            let shown = (rendered.string as NSString).range(of: word).location
+            let raw = (source as NSString).range(of: word).location
+            #expect(try sourceOffset(rendered, at: shown + 1) == raw + 1)
+        }
+    }
+
+    @Test func decodedEscapesEntitiesAndInlineCodeMapToTheirAuthoredText() throws {
+        let source = #"Cost \$5 &amp; `two words`."#
+        let rendered = render(source)
+        let shown = rendered.string as NSString
+        let raw = source as NSString
+        let ampersand = shown.range(of: "&").location
+        #expect(try sourceOffset(rendered, at: ampersand) == raw.range(of: "&amp;").location)
+        #expect(try sourceOffset(rendered, at: ampersand + 1) == NSMaxRange(raw.range(of: "&amp;")))
+        let words = shown.range(of: "words").location
+        #expect(try sourceOffset(rendered, at: words + 2) == raw.range(of: "words").location + 2)
+    }
+
+    @Test func imagePlaceholderAndAttachmentMapToTheImageSourceStart() throws {
+        let source = "prefix ![a](https://example.com/a.png)"
+        for loaded in [false, true] {
+            let images = loaded ? ["https://example.com/a.png": NSImage(size: NSSize(width: 1, height: 1))] : [:]
+            let rendered = NoteRenderer(excerpts: [:], images: images, source: source, width: 400)
+                .render(NoteMarkdown.parse(source), placeholder: "")
+            for offset in 7...rendered.length {
+                #expect(try sourceOffset(rendered, at: offset) == 7)
+            }
+        }
+    }
+
+    @Test func wrappedTableFragmentsKeepTheirOriginalSourcePositions() throws {
+        let source = "| Name | Text |\n|---|---|\n| one | a long cell with **bold** and more words here |\n"
+        for width in [CGFloat(180), CGFloat(600)] {
+            let rendered = render(source, width: width)
+            for word in ["bold", "here"] {
+                let shown = (rendered.string as NSString).range(of: word).location
+                let raw = (source as NSString).range(of: word).location
+                #expect(try sourceOffset(rendered, at: shown + 1) == raw + 1)
+            }
+        }
+    }
+}
+
+@MainActor
 struct NoteTableTests {
     /// The incident persona's evidence timeline (round 8): a long event and a long citation.
     let timeline = """

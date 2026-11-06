@@ -8,7 +8,7 @@ A conflict names the action that already uses the shortcut. **Swap** exchanges t
 
 Changes save in `ui-settings.json` and update the menus at once. The menus show the current bindings. With a terminal focused, custom menu shortcuts take precedence over Ghostty's window, tab, and split remaps. Unchanged easl defaults keep those user-configured remaps, including creating a terminal beside the focused terminal in its directory. Board navigation, Close, browser address focus, Write Prompt, and Paste Mentions retain their existing priority over remaps. Other menu shortcuts beat the terminal library's bindings, except terminal editing actions such as copy, paste, undo, and search. Bare drawing keys work on the canvas and do not replace typing in a terminal or text editor.
 
-Move (M) keeps the keyboard on the canvas while you drag tiles from their bodies. V or Escape returns to Select. Leaving Move during a drag cancels that drag.
+Move (M) drags tiles from their bodies without changing selection or typing. V or Escape returns to Select. Leaving Move during a drag cancels that drag.
 
 ## Defaults
 

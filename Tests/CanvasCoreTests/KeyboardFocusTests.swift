@@ -6,25 +6,24 @@ import CanvasCore
 /// Where the keyboard goes when the user turns to another tile, which code tile Code ▸ commands
 /// act on, what a changes tile's keys start on and say, and what the close sheet names.
 struct KeyboardFocusTests {
-    let code = KeyboardFocus.Holder("code", isTerminal: false)
-    let shell = KeyboardFocus.Holder("shell", isTerminal: true)
-
-    @Test func selectingAnotherTileTakesTheKeyboardFromATileButNotFromATerminal() {
-        #expect(KeyboardFocus.afterSelectionChange(["other"], holder: code) == .canvas, "s in a changes tile nobody is looking at")
-        #expect(KeyboardFocus.afterSelectionChange([], holder: code) == .canvas)
-        #expect(KeyboardFocus.afterSelectionChange(["code", "other"], holder: code) == .canvas, "the ring and the keys never part")
-        #expect(KeyboardFocus.afterSelectionChange(["code"], holder: code) == .stay, "a click inside the tile that has the keyboard")
-        #expect(KeyboardFocus.afterSelectionChange(["other"], holder: shell) == .stay, "the mouse selects while the user talks to the agent")
-        #expect(KeyboardFocus.afterSelectionChange(["other"], holder: nil) == .stay)
+    @Test func aSingleUserSelectionGivesThatTileTyping() {
+        #expect(KeyboardFocus.afterSelection(["note"], cause: .user) == .tile("note"))
+        #expect(KeyboardFocus.afterSelection(["shell"], cause: .user) == .tile("shell"))
+        #expect(KeyboardFocus.afterSelection([], cause: .user) == .canvas)
+        #expect(KeyboardFocus.afterSelection(["note", "shell"], cause: .user) == .canvas)
     }
 
-    @Test func aTitleBarPressHandsTheKeyboardToTheTileOrTheCanvas() {
-        #expect(KeyboardFocus.afterTitleBarPress(on: "follow", isTerminal: false, holder: code) == .canvas)
-        #expect(KeyboardFocus.afterTitleBarPress(on: "follow", isTerminal: false, holder: shell) == .canvas, "a terminal loses it too")
-        #expect(KeyboardFocus.afterTitleBarPress(on: "follow", isTerminal: false, holder: nil) == .canvas)
-        #expect(KeyboardFocus.afterTitleBarPress(on: "agent", isTerminal: true, holder: code) == .terminal("agent"))
-        #expect(KeyboardFocus.afterTitleBarPress(on: "code", isTerminal: false, holder: code) == .stay, "dragging the tile you're in keeps you in it")
-        #expect(KeyboardFocus.afterTitleBarPress(on: "shell", isTerminal: true, holder: shell) == .stay)
+    @Test func boardGesturesNeverGrantTypingEvenWhenOnlyOneTileRemains() {
+        #expect(KeyboardFocus.afterSelection(["shell"], cause: .boardGesture) == .canvas)
+        #expect(KeyboardFocus.afterSelection(["note", "shell"], cause: .boardGesture) == .canvas)
+        #expect(KeyboardFocus.afterSelection([], cause: .boardGesture) == .canvas)
+    }
+
+    @Test func programmaticSelectionNeverMovesTyping() {
+        let selections: [Set<ObjectID>] = [[], ["note"], ["shell"], ["note", "shell"]]
+        for ids in selections {
+            #expect(KeyboardFocus.afterSelection(ids, cause: .programmatic) == .stay)
+        }
     }
 
     @Test func aPressAnywhereOnATitleBarButItsButtonsIsTheTilesHandle() {
@@ -98,9 +97,9 @@ struct KeyboardFocusTests {
         #expect(ChangesKey(keyCode: 15, characters: "r", shift: false, command: false, other: true) == nil, "⌥r, ⌃r: not the tile's")
     }
 
-    @Test func tabNeverTypesIntoTheSelectedTileAndEscClosesGetStartedLast() {
+    @Test func returnEntersSelectionAndEscClosesGetStartedLast() {
         #expect(KeyboardFocus.entersSelection(keyCode: 36) && KeyboardFocus.entersSelection(keyCode: 76), "Return and Enter")
-        #expect(!KeyboardFocus.entersSelection(keyCode: 48), "Tab ×3 put the practice note into editing and saved a tab into it")
+        #expect(!KeyboardFocus.entersSelection(keyCode: 48), "Tab cycles selection or visits an open panel, rather than entering the current tile")
         func escape(chrome: Bool = false, group: Bool = false, selection: Bool = false, panel: Bool = true) -> KeyboardFocus.Escape {
             KeyboardFocus.escape(chromeHidden: chrome, inGroup: group, hasSelection: selection, panelOpen: panel)
         }

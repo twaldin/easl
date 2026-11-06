@@ -143,7 +143,9 @@ public final class NoteRenderer {
         case let table as Table:
             self.table(table, context: context, line: line)
         case is ThematicBreak:
-            append(" \n", [.font: Self.bodyFont, .paragraphStyle: style(context, spacing: 8), .noteBlock: NoteBlock.rule.rawValue])
+            var rule: [NSAttributedString.Key: Any] = [.font: Self.bodyFont, .paragraphStyle: style(context, spacing: 8), .noteBlock: NoteBlock.rule.rawValue]
+            if let line { rule[.noteMarkdownLine] = line }
+            append(" \n", rule)
         case let html as HTMLBlock:
             code(html.rawHTML, context: context, line: line)
         default:
@@ -217,6 +219,21 @@ public final class NoteRenderer {
 
     private func inline(_ markup: Markup, _ attributes: [NSAttributedString.Key: Any], into target: NSMutableAttributedString) {
         var attributes = attributes
+        let renderedStart = target.length
+        defer {
+            if markup.childCount == 0, target.length > renderedStart,
+               target.attribute(.noteSourcePosition, at: renderedStart, effectiveRange: nil) == nil,
+               let range = markup.range, let source = sourceIndex?.utf16Range(range) {
+                let position: NoteSourcePosition
+                if source.length == target.length - renderedStart {
+                    position = .text(rendered: renderedStart, source: source.location)
+                } else {
+                    position = .anchor(source.location)
+                }
+                target.addAttribute(.noteSourcePosition, value: position,
+                                    range: NSRange(location: renderedStart, length: target.length - renderedStart))
+            }
+        }
         let font = attributes[.font] as? NSFont ?? Self.bodyFont
         switch markup {
         case let text as Markdown.Text:
@@ -233,7 +250,29 @@ public final class NoteRenderer {
         case let code as InlineCode:
             attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.9, weight: .regular)
             attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.25)
-            target.append(NSAttributedString(string: code.code, attributes: attributes))
+            if let index = sourceIndex, let range = code.range, let raw = index.text(range), let source = index.utf16Range(range) {
+                let ticks = raw.prefix { $0 == "`" }.count
+                var content = raw.dropFirst(ticks).dropLast(ticks)
+                var start = source.location + ticks
+                if content.first == " ", content.last == " ", content.contains(where: { $0 != " " }) {
+                    content = content.dropFirst().dropLast()
+                    start += 1
+                }
+                if content.utf16.count == code.code.utf16.count {
+                    attributes[.noteSourcePosition] = NoteSourcePosition.text(rendered: target.length, source: start)
+                    target.append(NSAttributedString(string: code.code, attributes: attributes))
+                } else {
+                    let characters = Array(code.code), pieces = content.map(String.init)
+                    if characters.count == pieces.count {
+                        appendMapped(code.code, characters: characters[...], source: pieces[...], at: start, attributes, into: target)
+                    } else {
+                        attributes[.noteSourcePosition] = NoteSourcePosition.anchor(start)
+                        target.append(NSAttributedString(string: code.code, attributes: attributes))
+                    }
+                }
+            } else {
+                target.append(NSAttributedString(string: code.code, attributes: attributes))
+            }
         case let link as Markdown.Link:
             if let destination = link.destination, let parsed = NoteLink(encoded: destination) {
                 attributes[.noteLink] = parsed.encoded
@@ -242,6 +281,9 @@ public final class NoteRenderer {
             }
             inlines(markup, attributes, into: target)
         case let image as Markdown.Image:
+            if let range = image.range, let source = sourceIndex?.utf16Range(range) {
+                attributes[.noteSourcePosition] = NoteSourcePosition.anchor(source.location)
+            }
             if let source = image.source, let picture = images[source] {
                 let attachment = NoteImageAttachment()
                 attachment.image = picture
@@ -280,31 +322,63 @@ public final class NoteRenderer {
             target.append(NSAttributedString(string: text.string, attributes: attributes))
             return
         }
+        let sourceStart = index.utf16Range(range)?.location
         let spans = NoteMath.spans(in: decoded)
         guard !spans.isEmpty else {
-            target.append(NSAttributedString(string: text.string, attributes: attributes))
+            appendMapped(text.string, characters: decoded.characters[...], source: decoded.source[...], at: sourceStart, attributes, into: target)
             return
         }
         let font = attributes[.font] as? NSFont ?? Self.bodyFont
         var cursor = 0
+        var sourceOffset = sourceStart
         for span in spans {
             if span.start > cursor {
-                target.append(NSAttributedString(string: String(decoded.characters[cursor..<span.start]), attributes: attributes))
+                appendMapped(String(decoded.characters[cursor..<span.start]), characters: decoded.characters[cursor..<span.start],
+                             source: decoded.source[cursor..<span.start], at: sourceOffset, attributes, into: target)
+                sourceOffset = sourceOffset.map { $0 + decoded.source[cursor..<span.start].reduce(0) { $0 + $1.utf16.count } }
             }
             if let attachment = mathAttachment(span.latex, font.pointSize, span.display) {
                 var math = attributes
                 math[.attachment] = attachment
+                if let sourceOffset { math[.noteSourcePosition] = NoteSourcePosition.anchor(sourceOffset) }
                 target.append(NSAttributedString(string: "\u{FFFC}", attributes: math))
             } else {
                 var fallback = attributes
                 fallback[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.9, weight: .regular)
-                target.append(NSAttributedString(string: String(decoded.characters[span.start..<span.end]), attributes: fallback))
+                appendMapped(String(decoded.characters[span.start..<span.end]), characters: decoded.characters[span.start..<span.end],
+                             source: decoded.source[span.start..<span.end], at: sourceOffset, fallback, into: target)
             }
             cursor = span.end
+            sourceOffset = sourceOffset.map { $0 + decoded.source[span.start..<span.end].reduce(0) { $0 + $1.utf16.count } }
         }
         if cursor < decoded.characters.count {
-            target.append(NSAttributedString(string: String(decoded.characters[cursor...]), attributes: attributes))
+            appendMapped(String(decoded.characters[cursor...]), characters: decoded.characters[cursor...],
+                         source: decoded.source[cursor...], at: sourceOffset, attributes, into: target)
         }
+    }
+
+    private func appendMapped(_ string: String, characters: ArraySlice<Character>, source: ArraySlice<String>, at sourceStart: Int?,
+                              _ attributes: [NSAttributedString.Key: Any], into target: NSMutableAttributedString) {
+        var attributes = attributes
+        if let sourceStart {
+            let length = string.utf16.count
+            if source.reduce(0, { $0 + $1.utf16.count }) == length {
+                attributes[.noteSourcePosition] = NoteSourcePosition.text(rendered: target.length, source: sourceStart)
+            } else {
+                var offsets = [sourceStart]
+                offsets.reserveCapacity(length + 1)
+                var position = sourceStart
+                for (character, raw) in zip(characters, source) {
+                    let width = String(character).utf16.count
+                    let rawWidth = raw.utf16.count
+                    for unit in 1...width { offsets.append(position + min(unit, rawWidth)) }
+                    position += rawWidth
+                    offsets[offsets.count - 1] = position
+                }
+                attributes[.noteSourcePosition] = NoteSourcePosition.decoded(rendered: target.length, sourceOffsets: offsets)
+            }
+        }
+        target.append(NSAttributedString(string: string, attributes: attributes))
     }
 
     /// The markdown source of a paragraph that is one display formula.
@@ -430,14 +504,25 @@ public final class NoteRenderer {
             // with "…" at the note's edge.
             let cut = layout.shortfall > 0
             style.lineBreakMode = cut ? .byTruncatingTail : .byWordWrapping
-            let wrapped = cells.enumerated().map { column, cell in cut ? [cell] : Self.wrap(cell, width: layout.widths[column]) }
+            let wrapped = cells.enumerated().map { column, cell in
+                cut ? [NSRange(location: 0, length: cell.length)] : Self.wrapRanges(cell, width: layout.widths[column])
+            }
             let start = out.length
             for row in 0..<(wrapped.map(\.count).max() ?? 1) {
                 if row > 0 { append("\u{2028}", [.font: Self.bodyFont]) }
                 let last = wrapped.lastIndex { row < $0.count } ?? 0
                 for column in 0...last where column < wrapped.count {
                     if column > 0 { append("\t", [.font: Self.bodyFont]) }
-                    if row < wrapped[column].count { out.append(wrapped[column][row]) }
+                    if row < wrapped[column].count {
+                        let range = wrapped[column][row]
+                        let destination = out.length
+                        out.append(cells[column].attributedSubstring(from: range))
+                        cells[column].enumerateAttribute(.noteSourcePosition, in: range) { value, run, _ in
+                            guard let position = value as? NoteSourcePosition else { return }
+                            out.addAttribute(.noteSourcePosition, value: position.shifted(by: destination - range.location),
+                                             range: NSRange(location: destination + run.location - range.location, length: run.length))
+                        }
+                    }
                 }
             }
             append("\n", [.font: Self.bodyFont])
@@ -523,9 +608,9 @@ public final class NoteRenderer {
     /// `cell` in lines at most `width` wide: whole runs (`runs(of:)`) while they fit, a run wider
     /// than the column broken after its last `/`, `.`, `-`, `_`, `:` or `,` that fits, else
     /// between characters. Every line keeps its text's attributes: a wrapped link links on both.
-    static func wrap(_ cell: NSAttributedString, width: CGFloat) -> [NSAttributedString] {
+    static func wrapRanges(_ cell: NSAttributedString, width: CGFloat) -> [NSRange] {
         let text = cell.string as NSString
-        var lines: [NSAttributedString] = []
+        var lines: [NSRange] = []
         var line: NSRange?
         for run in runs(of: cell) {
             if let open = line {
@@ -534,18 +619,18 @@ public final class NoteRenderer {
                     line = joined
                     continue
                 }
-                lines.append(cell.attributedSubstring(from: open))
+                lines.append(open)
             }
             var rest = run
             while measure(cell.attributedSubstring(from: rest)) > width {
                 let cut = breakOffset(in: rest, of: cell, text: text, width: width)
-                lines.append(cell.attributedSubstring(from: NSRange(location: rest.location, length: cut)))
+                lines.append(NSRange(location: rest.location, length: cut))
                 rest = NSRange(location: rest.location + cut, length: rest.length - cut)
             }
             line = rest
         }
-        if let line { lines.append(cell.attributedSubstring(from: line)) }
-        return lines.isEmpty ? [NSAttributedString()] : lines
+        if let line { lines.append(line) }
+        return lines.isEmpty ? [NSRange(location: 0, length: 0)] : lines
     }
 
     /// Length of the longest start of `range` that fits `width` (at least one character), cut

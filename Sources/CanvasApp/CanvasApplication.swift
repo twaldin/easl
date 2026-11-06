@@ -41,7 +41,12 @@ final class CanvasApplication: NSApplication {
             if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }
             return window.sendEvent(event)
         }
-        super.sendEvent(event)
+        if event.type == .leftMouseDown || event.type == .leftMouseDragged || event.type == .leftMouseUp,
+           let window = event.window as? CanvasWindow {
+            window.sendSelectionMouse(event) { super.sendEvent(event) }
+        } else {
+            super.sendEvent(event)
+        }
     }
 
     /// Replayed actions follow the exact replay window's responder chain before AppKit's.

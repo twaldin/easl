@@ -2,6 +2,8 @@
 
 Plain scrolling over an oversized live browser first reveals the canvas-clipped edge in the scroll direction, clear of the toolbar and tray. Later wheel steps scroll the page. Tile frames, page viewport dimensions, and saved board layout stay unchanged.
 
+Wheel and trackpad scrolling preserve selection and typing. A press inside an HTML or browser page, including its own scrollbar, is the one exception to the scroll rule: it selects the tile and gives it typing.
+
 ## Sub-features
 
 - `scroll-wheel` reaches START and END on both axes with precise and line-based wheel input.

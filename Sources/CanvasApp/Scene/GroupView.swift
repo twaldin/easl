@@ -27,7 +27,6 @@ final class GroupView: NSView, NSViewToolTipOwner {
     var onPress: ((NSEvent) -> Void)?
     var onDrag: ((NSEvent) -> Void)?
     var onRelease: ((NSEvent) -> Void)?
-    var onEnter: (() -> Void)?
     var onMenu: (() -> NSMenu?)?
 
     init?(object: CanvasObject) {
@@ -132,7 +131,6 @@ final class GroupView: NSView, NSViewToolTipOwner {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount >= 2 { return onEnter?() ?? () }
         onPress?(event)
     }
 

@@ -1,53 +1,28 @@
-/// Where the keyboard goes when the user turns to something else, so keys always act on what
-/// the user is looking at: Return enters a tile, Esc (⌘Esc in a terminal) leaves it, and
-/// selecting another tile never leaves the keyboard behind in the one that had it (`s` staging
-/// in a changes tile nobody is looking at).
+/// Selection changes carry their provenance; the native first responder remains the typing owner.
 public enum KeyboardFocus {
-    /// The tile holding the keyboard (a terminal, a code tile's rows, a changes tile, a note
-    /// being edited, a page).
-    public struct Holder: Equatable, Sendable {
-        public var id: ObjectID
-        public var isTerminal: Bool
-
-        public init(_ id: ObjectID, isTerminal: Bool) {
-            self.id = id
-            self.isTerminal = isTerminal
-        }
+    public enum SelectionCause: Equatable, Sendable {
+        case user
+        case boardGesture
+        case programmatic
     }
 
     public enum Handoff: Equatable, Sendable {
-        /// The keyboard stays where it is.
         case stay
-        /// The canvas takes it: Delete, Esc, ⌘W and the arrows act on the selection, Return
-        /// enters the one selected tile.
         case canvas
-        /// This terminal takes it.
-        case terminal(ObjectID)
+        case tile(ObjectID)
     }
 
-    /// After any change of the selection (a marquee, a drawing or group label pressed, Go to,
-    /// a clicked marker): a tile other than a terminal keeps the keyboard only while it is the
-    /// whole selection, so the ring and the keys never part. A terminal keeps it: the user
-    /// presses drawings and ⌘-clicks references while talking to the agent (dictation pastes
-    /// into it).
-    public static func afterSelectionChange(_ selection: Set<ObjectID>, holder: Holder?) -> Handoff {
-        guard let holder, !holder.isTerminal, selection != [holder.id] else { return .stay }
-        return .canvas
+    public static func afterSelection(_ selection: Set<ObjectID>, cause: SelectionCause) -> Handoff {
+        switch cause {
+        case .programmatic: return .stay
+        case .boardGesture: return .canvas
+        case .user:
+            guard selection.count == 1, let id = selection.first else { return .canvas }
+            return .tile(id)
+        }
     }
 
-    /// A plain press on a tile's title bar (a click, or the start of a drag): the user turned
-    /// to that tile. A terminal takes the keyboard (it types when clicked); anything else leaves
-    /// it with the canvas, so Return enters it, unless the tile already has it. Whatever had the
-    /// keyboard, a terminal included, loses it.
-    public static func afterTitleBarPress(on tile: ObjectID, isTerminal: Bool, holder: Holder?) -> Handoff {
-        if holder?.id == tile { return .stay }
-        return isTerminal ? .terminal(tile) : .canvas
-    }
-
-    /// The keys with which the canvas hands the keyboard to the one selected tile: Return and
-    /// keypad Enter. Not Tab, which moves between the canvas and a panel's buttons (Get
-    /// Started) and never types into a tile: Tab on the selected practice note put it into
-    /// editing, and the next Tab saved a tab character into it.
+    /// Return and keypad Enter explicitly re-enter the selected tile.
     public static func entersSelection(keyCode: UInt16) -> Bool {
         keyCode == 36 || keyCode == 76
     }

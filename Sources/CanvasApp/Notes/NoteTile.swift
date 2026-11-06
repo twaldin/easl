@@ -2,11 +2,6 @@ import AppKit
 import CanvasCore
 import Markdown
 
-/// A markdown note (docs/design.md "Notes"). Displays rendered markdown with live code fences;
-/// double-click edits the raw markdown, ⌘↩, clicking away or Esc commits. The note holds
-/// keyboard focus only while editing, then hands it back to the prompt-target terminal. A
-/// conflicting change by someone else is only overwritten by an explicit ⌘↩; Esc keeps theirs,
-/// the user's text one ⌘Z away.
 @MainActor
 final class NoteTile: NSView, TileContent {
     static let placeholder = ObjectMeasure.notePlaceholder
@@ -58,8 +53,8 @@ final class NoteTile: NSView, TileContent {
     private var diagramGeneration = 0
 
     private var session: NoteEditSession?
+    private var selectionAnchor: Int?
     var isEditing: Bool { session != nil }
-    private var clickMonitor: Any?
 
     init(object: CanvasObject, board: Board, files: HostFiles? = nil) {
         self.object = object
@@ -542,16 +537,35 @@ final class NoteTile: NSView, TileContent {
     /// terminal, dictation pastes there); a click on a note link should act, not just focus.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    func followsLink(_ event: NSEvent) -> Bool {
+        !isEditing && !display.isSelectable && link(at: convert(event.locationInWindow, from: nil)) != nil
+    }
+
     override func mouseDown(with event: NSEvent) {
+        selectionAnchor = nil
         let point = convert(event.locationInWindow, from: nil)
-        if event.clickCount >= 2 {
-            beginEditing(at: point)
-        } else if let link = link(at: point) {
+        if let link = link(at: point) {
             open(link, defaultBrowser: event.modifierFlags.contains(.option))
-        } else {
-            // Selecting and dragging the note is the frame's job.
-            super.mouseDown(with: event)
+        } else if !event.modifierFlags.contains(.shift) {
+            beginEditing(at: point)
+            if isEditing { selectionAnchor = editor.selectedRange().location }
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let anchor = selectionAnchor, isEditing else { return }
+        editor.autoscroll(with: event)
+        let point = editor.convert(event.locationInWindow, from: nil)
+        let insertion = editor.characterIndexForInsertion(at: point)
+        let range = NSRange(location: min(anchor, insertion), length: abs(insertion - anchor))
+        editor.setSelectedRange(range, affinity: insertion < anchor ? .upstream : .downstream, stillSelecting: true)
+        editor.scrollRangeToVisible(NSRange(location: insertion, length: 0))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard selectionAnchor != nil else { return }
+        selectionAnchor = nil
+        editor.setSelectedRange(editor.selectedRange(), affinity: editor.selectionAffinity, stillSelecting: false)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -631,12 +645,14 @@ final class NoteTile: NSView, TileContent {
 
     // MARK: Editing
 
-    /// Return on the selected note: editing, the caret at the end; Esc or ⌘↩ gives the keyboard
-    /// back to the canvas with the note selected.
     func enterKeyboard() -> Bool {
         if display.isSelectable { return window?.makeFirstResponder(display) == true }
-        guard session == nil else { return false }
-        beginEditing(at: nil)
+        if session != nil { return window?.makeFirstResponder(editor) == true }
+        let shown = display.visibleRect.intersection(canvas?.clearVisibleRect(of: display) ?? display.visibleRect)
+        let visible = shown.isEmpty ? display.bounds : shown
+        let point = NSPoint(x: min(visible.maxX - 1, max(visible.minX + 1, display.textContainerOrigin.x + (display.textContainer?.lineFragmentPadding ?? 0))),
+                            y: visible.minY + min(8, visible.height / 2))
+        beginEditing(at: convert(point, from: display))
         enteredByKeyboard = true
         return true
     }
@@ -677,28 +693,59 @@ final class NoteTile: NSView, TileContent {
         enteredByKeyboard = false
         let text = markdown
         editor.string = text
+        editor.undoManager?.removeAllActions()
         editor.setSelectedRange(NSRange(location: point.map { caretOffset(at: $0, in: text) } ?? (text as NSString).length, length: 0))
         displayScroll.isHidden = true
         editorScroll.isHidden = false
         window?.makeFirstResponder(editor)
         editor.scrollRangeToVisible(editor.selectedRange())
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, self.session != nil, event.window === self.window else { return }
-                let point = self.convert(event.locationInWindow, from: nil)
-                if !self.bounds.contains(point) { self.endEditing(.implicit) }
-            }
-            return event
-        }
     }
 
-    /// Start of the markdown line the clicked paragraph was rendered from.
     private func caretOffset(at point: NSPoint, in text: String) -> Int {
-        guard let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
-              let storage = display.textStorage, offset < storage.length,
-              let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
+        guard !text.isEmpty else { return 0 }
+        guard let storage = display.textStorage, storage.length > 0,
+              let layout = display.textLayoutManager, let content = layout.textContentManager else { return 0 }
+        let local = display.convert(point, from: self)
+        let origin = display.textContainerOrigin
+        let inContainer = NSPoint(x: local.x - origin.x, y: local.y - origin.y)
+        if let lastLocation = content.location(content.documentRange.location, offsetBy: storage.length - 1),
+           let lastFragment = layout.textLayoutFragment(for: lastLocation),
+           let lastLine = lastFragment.textLineFragments.last,
+           inContainer.y > lastFragment.layoutFragmentFrame.minY + lastLine.typographicBounds.maxY {
             return (text as NSString).length
         }
+        guard let fragment = layout.textLayoutFragment(for: inContainer),
+              let elementRange = fragment.textElement?.elementRange else { return 0 }
+        let inFragment = NSPoint(x: inContainer.x - fragment.layoutFragmentFrame.minX,
+                                 y: inContainer.y - fragment.layoutFragmentFrame.minY)
+        var nearestLine: NSTextLineFragment?
+        var nearestDistance = CGFloat.greatestFiniteMagnitude
+        for line in fragment.textLineFragments {
+            let bounds = line.typographicBounds
+            let distance = max(0, max(bounds.minY - inFragment.y, inFragment.y - bounds.maxY))
+            if distance < nearestDistance {
+                nearestLine = line
+                nearestDistance = distance
+            }
+            if distance == 0 { break }
+        }
+        guard let line = nearestLine else { return 0 }
+        let inLine = NSPoint(x: inFragment.x - line.typographicBounds.minX,
+                             y: inFragment.y - line.typographicBounds.minY)
+        let elementStart = content.offset(from: content.documentRange.location, to: elementRange.location)
+        let insertion = min(max(0, elementStart + line.characterIndex(for: inLine)), storage.length)
+        let index = min(insertion, storage.length - 1)
+        let position = storage.attribute(.noteSourcePosition, at: index, effectiveRange: nil) as? NoteSourcePosition
+            ?? (insertion > 0 ? storage.attribute(.noteSourcePosition, at: min(insertion - 1, storage.length - 1), effectiveRange: nil) as? NoteSourcePosition : nil)
+        if let position { return min(max(0, position.sourceOffset(at: insertion)), (text as NSString).length) }
+        guard let offset = offset(of: fragment.rangeInElement.location),
+              offset < storage.length, let markdownLine = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int else {
+            return (text as NSString).length
+        }
+        return sourceOffset(ofLine: markdownLine, in: text)
+    }
+
+    private func sourceOffset(ofLine line: Int, in text: String) -> Int {
         var current = 1
         var utf16 = 0
         for scalar in text.utf16 {
@@ -740,9 +787,8 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func finishEditing(returningFocus: Bool) {
+        selectionAnchor = nil
         session = nil
-        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
-        clickMonitor = nil
         hideBanner()
         let hadFocus = window?.firstResponder === editor
         editorScroll.isHidden = true
@@ -758,13 +804,13 @@ final class NoteTile: NSView, TileContent {
 
     private var canvas: CanvasView? { enclosingScrollView as? CanvasView }
 
-    /// Keyboard focus goes back to the canvas with the note selected after an edit started with
-    /// Return, else to where prompts go.
     private func returnFocus() {
         if enteredByKeyboard, let canvas {
-            canvas.leaveTile(object.id)
-        } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
-            terminal.focus()
+            canvas.leaveTile()
+        } else if let canvas, let target = canvas.promptTarget, canvas.tiles[target]?.content is TerminalTile {
+            canvas.setSelection([target], cause: .user)
+        } else if let canvas {
+            canvas.leaveTile()
         } else {
             window?.makeFirstResponder(nil)
         }
@@ -1020,17 +1066,15 @@ final class NoteTile: NSView, TileContent {
         return fragment(where: .noteCodeRow, is: NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)).map(rect(of:))
     }
 
-    /// Go to's heading row: where the heading rendered from markdown `line` is, in this view's
-    /// coordinates, the rendered note scrolled to it first when its text overflows the tile.
-    /// Nil while editing, while it holds no text (not live), or with no such heading.
     func reveal(heading line: Int) -> NSRect? {
-        guard !isEditing, let found = fragment(where: .noteMarkdownLine, is: line) else { return nil }
-        if display.frame.height > displayScroll.contentSize.height + 1 { display.scroll(textRow(of: found).origin) }
-        let rect = rect(of: found)
-        return rect.isEmpty ? nil : rect
+        guard enterKeyboard(), isEditing, let window else { return nil }
+        let range = NSRange(location: sourceOffset(ofLine: line, in: editor.string), length: 0)
+        editor.setSelectedRange(range)
+        editor.scrollRangeToVisible(range)
+        let screen = editor.firstRect(forCharacterRange: range, actualRange: nil)
+        return convert(window.convertFromScreen(screen), from: nil)
     }
 
-    var takesKeyboardFocus: Bool { isEditing }
 }
 
 /// The rendered note. TextKit 2 lays out only a viewport around what's visible, and on the canvas
@@ -1175,6 +1219,10 @@ private extension NSTextView {
 
 /// The raw-markdown editor: ⌘↩ commits, Esc (`onCancel`) and losing focus leave it.
 final class NoteEditor: NSTextView {
+    private lazy var editingUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { editingUndoManager }
+
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?
     var onResign: (() -> Void)?

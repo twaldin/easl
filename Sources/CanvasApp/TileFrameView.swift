@@ -47,7 +47,6 @@ final class TileFrameView: NSView {
     var onMoveBegan: ((NSEvent) -> Void)?
     var onMoveDragged: ((NSEvent) -> Void)?
     var onMoveEnded: ((NSEvent) -> Void)?
-    var onTitleDoubleClick: (() -> Void)?
     var onMenu: ((NSEvent) -> NSMenu?)?
 
     private var resizeStart: (mouse: NSPoint, frame: NSRect, proportional: Bool)?
@@ -89,6 +88,7 @@ final class TileFrameView: NSView {
         applyLayerColors()
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
+        closeButton.refusesFirstResponder = true
         closeButton.title = "✕"
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
@@ -114,6 +114,7 @@ final class TileFrameView: NSView {
         titleBar.addSubview(zoomControl)
         machineControl.isHidden = object.type != .browser
         machineControl.onChoose = { [weak self] machine in self?.onDrawingMachine?(machine) }
+        machineControl.refusesFirstResponder = true
         titleBar.addSubview(machineControl)
         addSubview(titleBar)
         zoomView.addSubview(content)
@@ -820,10 +821,6 @@ final class TileFrameView: NSView {
         if resizeGrip.contains(local) { return self }
         // A zoomed-out card is one handle: click selects, drag moves, double-click focuses.
         if !isLive || zoomedOut, bounds.contains(local) { return self }
-        // So is the title bar, but for its buttons (`TileTitleBar`): a press on the title, the
-        // dot, a status or the gaps between them selects the tile and turns the keyboard to it,
-        // the first click into an inactive window included (the bar's own view takes no first
-        // click, so a press on it was lost and typing stayed in the tile that had the keyboard).
         if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width,
                              machineControlWidth: machineControl.isHidden ? 0 : machineControl.frame.width) == .handle { return self }
         return super.hitTest(point)
@@ -832,8 +829,6 @@ final class TileFrameView: NSView {
     override func mouseDown(with event: NSEvent) {
         if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
             resizeStart = (event.locationInWindow, frame, event.modifierFlags.contains(.option))
-        } else if event.clickCount == 2 {
-            onTitleDoubleClick?()
         } else {
             moving = true
             onMoveBegan?(event)
@@ -924,6 +919,7 @@ private final class TileZoomControl: NSView {
         super.init(frame: frame)
         for (button, symbol, label, tip) in [(minus, "minus", "Zoom content out", "Zoom Content Out (⌃⌘-)"), (plus, "plus", "Zoom content in", "Zoom Content In (⌃⌘=)")] {
             button.isBordered = false
+            button.refusesFirstResponder = true
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
             button.imagePosition = .imageOnly
@@ -935,6 +931,7 @@ private final class TileZoomControl: NSView {
             addSubview(button)
         }
         percent.isBordered = false
+        percent.refusesFirstResponder = true
         percent.target = self
         percent.action = #selector(reset)
         percent.toolTip = "Content zoom: click for 100% (⌃⌘0)"

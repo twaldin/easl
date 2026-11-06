@@ -21,6 +21,9 @@ final class HtmlTile: NSView, TileContent {
     private var live = true
     private(set) var hostBoardClosed = false
     private var building = false
+    private var acceptingNativeKeyboard = false
+    private var pendingKeyboardEntry = false
+    private var uncommittedNavigation: WKNavigation?
     private var loadFailure: NSTextField?
     private var hostImageFailure: NSTextField?
     private var hostImageFailures: [URL: String] = [:]
@@ -124,6 +127,9 @@ final class HtmlTile: NSView, TileContent {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     nonisolated override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool {
+        live && !hostBoardClosed && (acceptingNativeKeyboard || window?.firstResponder === self)
+    }
 
     var objectID: ObjectID { object.id }
     /// Where the page's relative `<img src>` paths resolve: the tile's link root (a scratch tile
@@ -223,7 +229,9 @@ final class HtmlTile: NSView, TileContent {
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
         pageShown = false
+        let pendingEntry = pendingKeyboardEntry && window?.firstResponder === self
         loadPage(in: web)
+        pendingKeyboardEntry = pendingEntry && window?.firstResponder === self
     }
 
     private func detach() {
@@ -235,6 +243,10 @@ final class HtmlTile: NSView, TileContent {
         readyWaiters.removeAll()
         work.cancelAll()
         guard let web = webView else { return }
+        if live, !hostBoardClosed, let responder = window?.firstResponder as? NSView,
+           responder === web || responder.isDescendant(of: web) {
+            _ = takeNativeKeyboard()
+        }
         webViewCount = nil
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.tile = nil
         web.stopLoading()
@@ -282,6 +294,7 @@ final class HtmlTile: NSView, TileContent {
     }
 
     private func loadPage(in web: WKWebView) {
+        pendingKeyboardEntry = false
         (web as? HtmlWebView)?.resetKeyboardAuthorization()
         (web.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
         hostImageFailures.removeAll()
@@ -289,7 +302,7 @@ final class HtmlTile: NSView, TileContent {
         hostImageFailure = nil
         loadFailure?.removeFromSuperview()
         loadFailure = nil
-        web.load(URLRequest(url: pageURL))
+        uncommittedNavigation = web.load(URLRequest(url: pageURL))
     }
 
     private func showFailure(_ message: String) {
@@ -442,6 +455,7 @@ final class HtmlTile: NSView, TileContent {
     func setHostBoardClosed(_ closed: Bool) {
         guard hostBoardClosed != closed else { return }
         hostBoardClosed = closed
+        if closed { pendingKeyboardEntry = false }
         if closed {
             suspendAssetWatch()
             (webView?.configuration.urlSchemeHandler(forURLScheme: HtmlKit.scheme) as? HtmlSchemeHandler)?.cancelHostReads()
@@ -459,7 +473,7 @@ final class HtmlTile: NSView, TileContent {
         self.live = live
         if !live {
             leaveKeyboard()
-            webView?.revokeSendPermit()
+            webView?.resetKeyboardAuthorization()
             suspendAssetWatch()
             webView?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         }
@@ -762,6 +776,7 @@ final class HtmlTile: NSView, TileContent {
         let previous = self.object
         let networkChanged = (object.props["allowNetwork"] ?? .array([])) != (previous.props["allowNetwork"] ?? .array([]))
         let pageChanged = ["html", "root", "ref"].contains { object.props[$0] != previous.props[$0] }
+        if networkChanged || pageChanged { pendingKeyboardEntry = false }
         self.object = object
         if networkChanged, board.isRemote {
             contentSecurityPolicy = HtmlKit.contentSecurityPolicy(allow: allowNetwork)
@@ -816,27 +831,46 @@ final class HtmlTile: NSView, TileContent {
         return hovered.rect.intersection(bounds)
     }
 
-    /// Whether clicking into the tile should take keyboard focus: a click in one of the page's
-    /// text fields does (`HtmlWebView.mouseDown`).
-    var takesKeyboardFocus: Bool { true }
+    func enterKeyboard() -> Bool {
+        guard live, !hostBoardClosed else { return false }
+        let awaitsCommit = webView == nil || uncommittedNavigation != nil
+        if webView?.takeKeyboard() == true {
+            pendingKeyboardEntry = awaitsCommit
+            return true
+        }
+        let accepted = takeNativeKeyboard()
+        pendingKeyboardEntry = accepted && awaitsCommit
+        return accepted
+    }
 
-    /// Return on the selected tile: the page takes the keyboard (its text fields type). False
-    /// while the page has no view to take it (a card, or a page still building).
-    func enterKeyboard() -> Bool { webView?.takeKeyboard() ?? false }
+    @discardableResult
+    func takeNativeKeyboard() -> Bool {
+        guard live, !hostBoardClosed else { return false }
+        acceptingNativeKeyboard = true
+        defer { acceptingNativeKeyboard = false }
+        return window?.makeFirstResponder(self) == true
+    }
 
-    /// Esc in the page, or the page parked while it had the keyboard: the canvas takes it back,
-    /// the tile stays selected (`CanvasView.leaveTile`). Only when the keyboard is in this tile.
+    override func selectAll(_ sender: Any?) {}
+
+    override func mouseDown(with event: NSEvent) {
+        webView?.beginSelectionClick(event)
+    }
+
     private func leaveKeyboard() {
         guard let canvas = enclosingScrollView as? CanvasView, let responder = window?.firstResponder as? NSView,
-              responder === webView || responder.isDescendant(of: self) else { return }
-        canvas.leaveTile(objectID)
+              responder === self || responder.isDescendant(of: self) else { return }
+        canvas.leaveTile()
     }
 
     /// A key the page didn't use can come up the responder chain to the tile; it must not act on
     /// the canvas (a tool's letter, Delete, Return, Esc) while the page has the keyboard.
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty {
+        guard event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return }
+        if event.keyCode == 53 {
             leaveKeyboard()
+        } else if window?.firstResponder === self, KeyboardFocus.entersSelection(keyCode: event.keyCode) {
+            _ = enterKeyboard()
         }
     }
 
@@ -882,8 +916,29 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
         return schemes.contains(url.scheme ?? "") ? .allow : .cancel
     }
 
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard webView === self.webView, navigation !== uncommittedNavigation else { return }
+        pendingKeyboardEntry = false
+        uncommittedNavigation = navigation
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard webView === self.webView else {
+            (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+            return
+        }
+        let matchesEntry = navigation != nil && navigation === uncommittedNavigation
+        let ownsNativeKeyboard = (window?.firstResponder as? NSView).map {
+            $0 === self || $0.isDescendant(of: self)
+        } ?? false
+        let grantEntry = matchesEntry && pendingKeyboardEntry && ownsNativeKeyboard
+        if matchesEntry {
+            pendingKeyboardEntry = false
+            uncommittedNavigation = nil
+        }
+        (webView as? HtmlWebView)?.resetKeyboardAuthorization()
+        if grantEntry { _ = (webView as? HtmlWebView)?.takeKeyboard() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -894,6 +949,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView === self.webView { pendingKeyboardEntry = false }
         (webView as? HtmlWebView)?.resetKeyboardAuthorization()
         guard !hostBoardClosed, !board.isClosed else { return }
         if webView === self.webView {

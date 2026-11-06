@@ -74,14 +74,13 @@ final class CanvasDocumentView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
 
     override func keyDown(with event: NSEvent) {
+        guard window?.firstResponder === self else { return super.keyDown(with: event) }
         guard canvas?.remote?.mirror.availability != .closed else { return }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let plain = modifiers.isEmpty
-        // Return hands the keyboard to the one selected tile (Esc in it hands it back).
         if plain, KeyboardFocus.entersSelection(keyCode: event.keyCode), canvas?.enterSelection() == true { return }
-        // Tab (⇧Tab) goes to an open panel's buttons, else nowhere: it never types into a tile.
         if event.keyCode == 48, plain || modifiers == .shift {
-            _ = canvas?.onTab?(modifiers == .shift)
+            if canvas?.onTab?(modifiers == .shift) != true { canvas?.cycleSelection(backward: modifiers == .shift) }
             return
         }
         switch (event.keyCode, plain) {
@@ -97,9 +96,18 @@ final class CanvasDocumentView: NSView {
     }
 
     override func cancelOperation(_ sender: Any?) { canvas?.escape() }
-    override func deleteBackward(_ sender: Any?) { canvas?.deleteSelection() }
-    override func deleteForward(_ sender: Any?) { canvas?.deleteSelection() }
-    override func selectAll(_ sender: Any?) { canvas?.selectAll() }
+    override func deleteBackward(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.deleteSelection()
+    }
+    override func deleteForward(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.deleteSelection()
+    }
+    override func selectAll(_ sender: Any?) {
+        guard window?.firstResponder === self else { return }
+        canvas?.selectAll()
+    }
 }
 
 /// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
@@ -138,6 +146,7 @@ final class CanvasView: NSScrollView {
     /// but in the blocked style (`AttentionStyle`).
     private var blocked: [ObjectID: AttentionMarker] = [:]
     private(set) var selection: Set<ObjectID> = []
+    private(set) var selectionSerial: UInt64 = 0
     /// The group being worked in: zoomed to, everything else dimmed.
     private(set) var enteredGroup: ObjectID?
     /// Read by drawing-layer extensions (e.g. hiding handles while rendering an object image).
@@ -150,6 +159,7 @@ final class CanvasView: NSScrollView {
     private var marquee: MarqueeGesture?
     private var monitoredMove = false
     private var mouseMonitor: Any?
+    private var responderObservation: NSKeyValueObservation?
     /// Terminals seen since their agent last started working (mirrors Board's seen set).
     private var seenLocally: Set<ObjectID> = []
     /// Who the activity log credits for viewport moves: the user, except while the app moves it.
@@ -209,12 +219,13 @@ final class CanvasView: NSScrollView {
 
     private struct MoveGesture {
         var start: NSPoint
-        /// Pressed object that was already part of a multi-selection: a click without a drag
-        /// narrows the selection to it.
-        var collapseTo: ObjectID?
+        var pressed: ObjectID
+        var extend: Bool
+        var doubleClick: Bool
+        var selectsOnRelease: Bool
         var tileOrigins: [ObjectID: NSPoint]
         var drawn: [ObjectID: NSRect]
-        var delta = NSSize.zero
+        var activatedDragDelta: NSSize?
     }
 
     private struct MarqueeGesture {
@@ -300,6 +311,7 @@ final class CanvasView: NSScrollView {
         mentionFlash?.cancel()
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
+        responderObservation = nil
         NotificationCenter.default.removeObserver(self)
         for tile in tiles.values {
             (tile.content as? TerminalTile)?.discard()
@@ -328,6 +340,13 @@ final class CanvasView: NSScrollView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        responderObservation = window?.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                self?.refreshRings()
+                self?.scheduleLiveness()
+            }
+        }
+        refreshRings()
         guard let window, mouseMonitor == nil else { return }
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown]) { [weak self] event in
             // Not `self?.handleMouse(event) ?? event`: that turns "consumed" (nil) back into the event.
@@ -359,7 +378,7 @@ final class CanvasView: NSScrollView {
         if object.type == .arrow, let spec = ArrowSpec(object.props), spec.hasHiddenEndpoint(in: board.objects) { return nil }
         if let tile = tiles[id] { return tile.frame }
         if let group = groups[id] { return group.isHidden ? nil : group.region }
-        if let start = move?.drawn[id], let delta = move?.delta { return start.offsetBy(dx: delta.width, dy: delta.height) }
+        if let start = move?.drawn[id], let delta = move?.activatedDragDelta { return start.offsetBy(dx: delta.width, dy: delta.height) }
         return shapeOutline?(id) ?? Self.docRect(object.frame)
     }
 
@@ -606,10 +625,9 @@ final class CanvasView: NSScrollView {
         tile.onDrawingMachine = { [weak self] machine in self?.moveDrawing(of: id, to: machine) }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
-        tile.onMoveBegan = { [weak self] event in self?.beginMove(event, pressing: id) }
+        tile.onMoveBegan = { [weak self] event in self?.beginMove(event, pressing: id, selectsOnRelease: true) }
         tile.onMoveDragged = { [weak self] event in self?.dragMove(event) }
         tile.onMoveEnded = { [weak self] event in self?.endMove(event) }
-        tile.onTitleDoubleClick = { [weak self] in self?.focus(tile: id) }
         tile.onMenu = { [weak self, weak tile] event in
             guard self?.remote?.mirror.availability != .closed else { return NSMenu() }
             // A right-click on the tile's body mentions what is under it; on its title bar, the tile.
@@ -618,7 +636,7 @@ final class CanvasView: NSScrollView {
         }
         tile.setHostBoardClosed(remote?.mirror.availability == .closed)
         tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
-        if preserved == nil, !(content is TerminalTile), !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
+        if preserved == nil, !(content is TerminalTile), !magnifying, !shouldBeLive(tile, scale: magnification, holder: focusedTile) { tile.startAsCard() }
         tile.updateProximity(to: documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin), admitColdCards: !magnifying)
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
@@ -630,10 +648,9 @@ final class CanvasView: NSScrollView {
     private func addGroup(_ object: CanvasObject) {
         guard groups[object.id] == nil, let view = GroupView(object: object) else { return }
         let id = object.id
-        view.onPress = { [weak self] event in self?.beginMove(event, pressing: id) }
+        view.onPress = { [weak self] event in self?.beginMove(event, pressing: id, selectsOnRelease: true) }
         view.onDrag = { [weak self] event in self?.dragMove(event) }
         view.onRelease = { [weak self] event in self?.endMove(event) }
-        view.onEnter = { [weak self] in self?.enter(group: id) }
         view.onMenu = { [weak self] in self?.groupMenu(for: id) }
         document.addSubview(view, positioned: .below, relativeTo: nil)
         groups[id] = view
@@ -684,18 +701,15 @@ final class CanvasView: NSScrollView {
     // MARK: Selection
 
     func select(_ id: ObjectID, extend: Bool) {
-        if extend {
-            setSelection(selection.symmetricDifference([id]))
-        } else {
-            setSelection([id])
-            (tiles[id]?.content as? TerminalTile)?.focus()
-        }
+        setSelection(extend ? selection.symmetricDifference([id]) : [id], cause: extend || groups[id] != nil ? .boardGesture : .user)
     }
 
     /// Selects `ids`, less any archived question: it isn't on the canvas, so
     /// no gesture or command (a ring, a move, Delete, ⌘W) acts on it there; the API still does.
-    func setSelection(_ ids: Set<ObjectID>) {
+    func setSelection(_ ids: Set<ObjectID>, cause: KeyboardFocus.SelectionCause = .programmatic) {
+        selectionSerial &+= 1
         let ids = ids.filter { board.objects[$0]?.isHidden != true }
+        defer { hand(KeyboardFocus.afterSelection(ids, cause: cause)) }
         guard ids != selection else { return }
         let added = ids.subtracting(selection)
         let removed = selection.subtracting(ids)
@@ -709,14 +723,7 @@ final class CanvasView: NSScrollView {
         if remote?.mirror.availability != .closed {
             for id in added where markers[id] != nil { board.clearAttention(id) }
         }
-        // The keyboard never stays behind in a tile the selection left (`KeyboardFocus`).
-        hand(KeyboardFocus.afterSelectionChange(ids, holder: keyboardHolder))
         onSelectionChange?()
-    }
-
-    /// The tile holding the keyboard, for `KeyboardFocus`.
-    private var keyboardHolder: KeyboardFocus.Holder? {
-        focusedTile.map { KeyboardFocus.Holder($0, isTerminal: tiles[$0]?.content is TerminalTile) }
     }
 
     /// Moves the keyboard as `KeyboardFocus` decided.
@@ -724,20 +731,110 @@ final class CanvasView: NSScrollView {
         switch handoff {
         case .stay: break
         case .canvas: window?.makeFirstResponder(document)
-        case .terminal(let id): (tiles[id]?.content as? TerminalTile)?.focus()
+        case .tile(let id):
+            guard Self.enterable.contains(board.objects[id]?.type ?? .group), let tile = tiles[id] else {
+                window?.makeFirstResponder(document)
+                return
+            }
+            if focusedTile == id, !(tile.content is HtmlTile && window?.firstResponder === tile.content) { return }
+            tile.setLive(true)
+            tile.zoomedOut = false
+            if !tile.content.enterKeyboard() { window?.makeFirstResponder(document) }
+        }
+    }
+
+    func cycleSelection(backward: Bool) {
+        let scope = enteredGroup.flatMap { groups[$0]?.members }.map(Set.init)
+        let ids = tiles.values.filter { !$0.isHidden && (scope?.contains($0.objectID) ?? true) }
+            .sorted {
+                if $0.frame.minY != $1.frame.minY { return $0.frame.minY < $1.frame.minY }
+                if $0.frame.minX != $1.frame.minX { return $0.frame.minX < $1.frame.minX }
+                return $0.objectID < $1.objectID
+            }.map(\.objectID)
+        guard !ids.isEmpty else { return }
+        let current = selection.count == 1 ? selection.first.flatMap { ids.firstIndex(of: $0) } : nil
+        let index = current.map { ($0 + (backward ? ids.count - 1 : 1)) % ids.count } ?? (backward ? ids.count - 1 : 0)
+        reveal(ids[index])
+        setSelection([ids[index]], cause: .user)
+    }
+
+    func selectionClickTarget(_ event: NSEvent, hit: NSView) -> ObjectID? {
+        guard remote?.mirror.availability != .closed, !movesTiles(), !drawingOwnsPoint(docPoint(event)), !HyperMonitor.isHyper(event.modifierFlags) else { return nil }
+        var view: NSView? = hit
+        while let current = view, !(current is TileFrameView) {
+            if current is NSScroller { return nil }
+            view = current.superview
+        }
+        guard let tile = view as? TileFrameView, tile.isLive, hit.isDescendant(of: tile.content) else { return nil }
+        if let note = tile.content as? NoteTile, note.followsLink(event) { return nil }
+        if let question = tile.content as? QuestionTile, question.handlesSelectionClick(event) { return nil }
+        return tile.objectID
+    }
+
+    enum SelectionClick {
+        case user
+        case board
+        case native
+        case extendText(NSTextView, anchor: Int)
+    }
+
+    func selectionClick(_ id: ObjectID, event: NSEvent, hit: NSView) -> SelectionClick {
+        guard event.modifierFlags.contains(.shift) else { return .user }
+        guard focusedTile == id else { return .board }
+        if let editor = window?.firstResponder as? NSTextView {
+            let control = editor.isFieldEditor ? editor.delegate as? NSView : editor
+            if let control, hit === control || hit.isDescendant(of: control) {
+                let range = editor.selectedRange()
+                return .extendText(editor, anchor: editor.selectionAffinity == .upstream ? NSMaxRange(range) : range.location)
+            }
+        }
+        return .native
+    }
+
+    func prepareSelectionClick(_ id: ObjectID, event: NSEvent, decision: SelectionClick) {
+        lastClickedTile = id
+        guard let html = tiles[id]?.content as? HtmlTile else { return }
+        switch decision {
+        case .board: select(id, extend: true)
+        case .user:
+            setSelection([id], cause: .user)
+            html.webView?.beginSelectionClick(event)
+        case .native, .extendText: break
+        }
+    }
+
+    func completeSelectionClick(_ id: ObjectID, serial: UInt64, decision: SelectionClick) {
+        guard selectionSerial == serial, move?.pressed != id else { return }
+        switch decision {
+        case .board:
+            if tiles[id]?.content is HtmlTile { hand(.canvas) }
+            else { select(id, extend: true) }
+        case .user:
+            if !(tiles[id]?.content is HtmlTile) { setSelection([id], cause: .user) }
+        case .extendText(let editor, let anchor):
+            guard window?.firstResponder === editor else { return }
+            let range = editor.selectedRange()
+            let end = range.location == anchor ? NSMaxRange(range)
+                : NSMaxRange(range) == anchor ? range.location
+                : editor.selectionAffinity == .upstream ? range.location : NSMaxRange(range)
+            editor.setSelectedRange(NSRange(location: min(anchor, end), length: abs(end - anchor)),
+                                    affinity: end < anchor ? .upstream : .downstream, stillSelecting: false)
+        case .native: break
         }
     }
 
     func selectAll() {
         guard remote?.mirror.availability != .closed else { return }
         let scope = enteredGroup.flatMap { groups[$0]?.members }.map(Set.init)
-        setSelection(Set(selectableRects().map(\.id).filter { scope?.contains($0) ?? true }))
+        setSelection(Set(selectableRects().map(\.id).filter { scope?.contains($0) ?? true }), cause: .boardGesture)
     }
 
     private func refreshRings() {
-        overlay.rings = chromeHidden ? [] : selection.sorted().compactMap { id in
+        let holder = focusedTile
+        let outlined = selection.union(holder.map { [$0] } ?? [])
+        overlay.rings = chromeHidden ? [] : outlined.sorted().compactMap { id in
             guard groups[id] == nil, let rect = docFrame(id) else { return nil }
-            return SceneOverlay.Ring(rect: rect, dashed: tiles[id] == nil)
+            return SceneOverlay.Ring(rect: rect, dashed: id != holder)
         }
         placeHandles()
     }
@@ -749,41 +846,14 @@ final class CanvasView: NSScrollView {
             .map { handles.convert(NSPoint(x: $0.frame.maxX, y: $0.frame.maxY), from: document) }
     }
 
-    /// A press on an object's handle (title bar, drawn stroke, group label): a plain press on an
-    /// unselected object selects just it; on a selected one it keeps the selection for dragging.
-    /// A plain press on a tile's title bar also turns the keyboard to that tile (a terminal) or
-    /// the canvas, away from whatever had it (`KeyboardFocus.afterTitleBarPress`).
-    private func press(_ id: ObjectID, extend: Bool) -> ObjectID? {
-        if movesTiles() {
-            hand(.canvas)
-            CanvasTerminalView.forgetRefocus()
-        }
-        if extend {
-            setSelection(selection.symmetricDifference([id]))
-            return nil
-        }
-        let holder = keyboardHolder
-        defer {
-            if let tile = tiles[id] {
-                lastClickedTile = id
-                if !movesTiles() {
-                    hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
-                }
-            }
-        }
-        if selection.contains(id) { return selection.count > 1 ? id : nil }
-        setSelection([id])
-        return nil
-    }
-
     /// The tile the user last clicked (its body or title bar): Code ▸ commands fall back to it
     /// (`KeyboardFocus.codeTarget`).
     private var lastClickedTile: ObjectID?
 
     /// Selection with groups expanded to their members: what a move or new group acts on.
-    private func expandedSelection() -> [ObjectID] {
+    private func expandedSelection(_ selected: Set<ObjectID>) -> [ObjectID] {
         var ids: Set<ObjectID> = []
-        for id in selection {
+        for id in selected {
             if let group = groups[id] {
                 ids.formUnion(group.members.filter { board.objects[$0] != nil && groups[$0] == nil })
             } else if board.objects[id] != nil {
@@ -857,25 +927,15 @@ final class CanvasView: NSScrollView {
             if let shape = shapeHitTest?(point) {
                 if event.clickCount >= 2 { return event }
                 monitoredMove = true
-                beginMove(event, pressing: shape)
+                beginMove(event, pressing: shape, selectsOnRelease: !movesTiles())
                 return nil
             }
             var view: NSView? = hit
             while let current = view, !(current is TileFrameView) { view = current.superview }
             if movesTiles(), let tile = view as? TileFrameView, hit.isDescendant(of: tile.content) {
                 monitoredMove = true
-                beginMove(event, pressing: tile.objectID)
+                beginMove(event, pressing: tile.objectID, selectsOnRelease: false)
                 return nil
-            }
-            if let tile = view as? TileFrameView, tile.isLive, hit.isDescendant(of: tile.content) {
-                // ⇧-click inside a tile is the tile's own (extending a text or line selection):
-                // it selects just that tile, as a plain click does; title bars ⇧-click to add.
-                lastClickedTile = tile.objectID
-                select(tile.objectID, extend: false)
-            } else if let tile = view as? TileFrameView, hit !== tile, !event.modifierFlags.contains(.shift) {
-                // A title-bar button (close, content zoom; the rest of the bar is the tile's own
-                // handle, `TileTitleBar`): the user turned to the tile, as a press on its bar does.
-                _ = press(tile.objectID, extend: false)
             }
             return event
         case .leftMouseDragged where monitoredMove:
@@ -895,21 +955,12 @@ final class CanvasView: NSScrollView {
         return content.hitTest(frame.convert(event.locationInWindow, from: nil))
     }
 
-    private var terminalHasFocus: Bool {
-        var view = window?.firstResponder as? NSView
-        while let current = view {
-            if current is TerminalTile { return true }
-            view = current.superview
-        }
-        return false
-    }
 
     func emptyMouseDown(_ event: NSEvent) {
-        // Keyboard focus stays in the prompt terminal while the mouse selects; otherwise the
-        // canvas takes it so Esc, Delete, and ⌘A act on the selection.
-        if !terminalHasFocus { window?.makeFirstResponder(document) }
+        guard hitView(event) === document else { return }
+        CanvasTerminalView.forgetRefocus()
         let extend = event.modifierFlags.contains(.shift)
-        if !extend { setSelection([]) }
+        setSelection(extend ? selection : [], cause: .boardGesture)
         let point = docPoint(event)
         marquee = MarqueeGesture(start: point, points: [point], base: selection, lasso: Self.lassoSelection)
     }
@@ -933,7 +984,7 @@ final class CanvasView: NSScrollView {
             path.lineWidth = 1 / max(magnification, 0.05)
             overlay.marquee = path
             // Box containment is cheap enough to show live.
-            setSelection(gesture.base.union(objects(inDocRect: rect)))
+            setSelection(gesture.base.union(objects(inDocRect: rect)), cause: .boardGesture)
         }
         marquee = gesture
     }
@@ -943,33 +994,35 @@ final class CanvasView: NSScrollView {
         marquee = nil
         overlay.marquee = nil
         if gesture.lasso, gesture.points.count >= 3 {
-            setSelection(gesture.base.union(objects(inLasso: gesture.points)))
+            setSelection(gesture.base.union(objects(inLasso: gesture.points)), cause: .boardGesture)
         }
     }
 
-    private func beginMove(_ event: NSEvent, pressing id: ObjectID) {
-        let collapse = press(id, extend: event.modifierFlags.contains(.shift))
+    private func beginMove(_ event: NSEvent, pressing id: ObjectID, selectsOnRelease: Bool) {
+        let intended = selection.contains(id) ? selection : [id]
         var origins: [ObjectID: NSPoint] = [:]
         var drawn: [ObjectID: NSRect] = [:]
-        for id in expandedSelection() {
+        for id in expandedSelection(intended) {
             if let tile = tiles[id] {
                 origins[id] = tile.frame.origin
             } else if let rect = docFrame(id) {
                 drawn[id] = rect
             }
         }
-        move = MoveGesture(start: docPoint(event), collapseTo: collapse, tileOrigins: origins, drawn: drawn)
+        move = MoveGesture(start: docPoint(event), pressed: id, extend: event.modifierFlags.contains(.shift), doubleClick: event.clickCount >= 2, selectsOnRelease: selectsOnRelease, tileOrigins: origins, drawn: drawn)
     }
 
     private func dragMove(_ event: NSEvent) {
         guard var gesture = move else { return }
         let point = docPoint(event)
-        gesture.delta = NSSize(width: point.x - gesture.start.x, height: point.y - gesture.start.y)
+        let delta = NSSize(width: point.x - gesture.start.x, height: point.y - gesture.start.y)
+        if gesture.activatedDragDelta == nil, hypot(delta.width, delta.height) * magnification < 3 { return }
+        gesture.activatedDragDelta = delta
         move = gesture
         for (id, origin) in gesture.tileOrigins {
-            tiles[id]?.setFrameOrigin(NSPoint(x: origin.x + gesture.delta.width, y: origin.y + gesture.delta.height))
+            tiles[id]?.setFrameOrigin(NSPoint(x: origin.x + delta.width, y: origin.y + delta.height))
         }
-        if !gesture.drawn.isEmpty { onSelectionDrag?(Set(gesture.drawn.keys), gesture.delta) }
+        if !gesture.drawn.isEmpty { onSelectionDrag?(Set(gesture.drawn.keys), delta) }
         objectsMoved()
     }
 
@@ -977,12 +1030,20 @@ final class CanvasView: NSScrollView {
     private func endMove(_ event: NSEvent) {
         guard let gesture = move else { return }
         move = nil
-        guard gesture.delta != .zero else {
-            if let id = gesture.collapseTo { setSelection([id]) }
+        guard let delta = gesture.activatedDragDelta else {
+            guard gesture.selectsOnRelease else { return }
+            if tiles[gesture.pressed] != nil { lastClickedTile = gesture.pressed }
+            if gesture.doubleClick, !gesture.extend {
+                if groups[gesture.pressed] != nil { enter(group: gesture.pressed) }
+                else if tiles[gesture.pressed] != nil { focus(tile: gesture.pressed) }
+            } else {
+                select(gesture.pressed, extend: gesture.extend)
+            }
             return
         }
         if !gesture.drawn.isEmpty { onSelectionDrag?(Set(gesture.drawn.keys), .zero) }
-        let dx = Double(gesture.delta.width), dy = Double(gesture.delta.height)
+        guard delta != .zero else { return }
+        let dx = Double(delta.width), dy = Double(delta.height)
         let moved = Set(gesture.tileOrigins.keys).union(gesture.drawn.keys)
         board.transaction {
             for id in moved.sorted() {
@@ -1026,7 +1087,7 @@ final class CanvasView: NSScrollView {
     }
 
     func groupSelection() {
-        let members = expandedSelection()
+        let members = expandedSelection(selection)
         guard members.count >= 2, let window else { return }
         let alert = NSAlert()
         alert.messageText = "Group \(members.count) objects"
@@ -1048,7 +1109,7 @@ final class CanvasView: NSScrollView {
         var props: [String: JSONValue] = ["members": .array(members.map(JSONValue.string))]
         if !name.isEmpty { props["title"] = .string(name) }
         let group = board.create(type: .group, props: .object(props))
-        setSelection([group.id])
+        setSelection([group.id], cause: .boardGesture)
     }
 
     /// Deletes the selected groups, and groups containing selected objects; members stay.
@@ -1059,13 +1120,13 @@ final class CanvasView: NSScrollView {
         board.transaction {
             for group in ids { try? board.delete(group.objectID) }
         }
-        setSelection(members.filter { board.objects[$0] != nil })
+        setSelection(members.filter { board.objects[$0] != nil }, cause: .boardGesture)
     }
 
     func enter(group id: ObjectID) {
         guard let view = groups[id], !view.isHidden else { return }
         enteredGroup = id
-        setSelection([])
+        setSelection([], cause: .boardGesture)
         fit(view.frame)
         refreshFocusHoles()
     }
@@ -1090,7 +1151,7 @@ final class CanvasView: NSScrollView {
         switch KeyboardFocus.escape(chromeHidden: chromeHidden, inGroup: enteredGroup != nil, hasSelection: !selection.isEmpty, panelOpen: panelOpen?() ?? false) {
         case .showChrome: chromeHidden = false
         case .exitGroup: exitGroup()
-        case .deselect: setSelection([])
+        case .deselect: setSelection([], cause: .boardGesture)
         case .closePanel: closePanel?()
         case .none: break
         }
@@ -1102,9 +1163,9 @@ final class CanvasView: NSScrollView {
 
     /// Deletes objects as one undo step. Closing a terminal ends its zmx session (the board
     /// reports it ended; see AppDelegate), so ask first, in a sheet: an app-modal alert would
-    /// stall every socket request until answered. `selectingNext`: ⌘W keeps going, the nearest
-    /// remaining tile takes the selection (and a terminal the keyboard), so the next ⌘W closes
-    /// that rather than the window.
+    /// stall every socket request until answered. `selectingNext`: ⌘W selects the nearest
+    /// remaining tile and gives it typing if it handles keys, so the next ⌘W closes that
+    /// tile rather than the window.
     func delete(_ ids: [ObjectID], selectingNext: Bool = false) {
         guard remote?.mirror.availability != .closed, !ids.isEmpty else { return }
         let terminals = ids.filter { tiles[$0]?.content is TerminalTile }
@@ -1150,8 +1211,7 @@ final class CanvasView: NSScrollView {
             if let index = Layout.nearest(to: area, among: candidates.map(\.frame)) {
                 let next = candidates[index].objectID
                 reveal(next)
-                setSelection([next])
-                return takeKeyboard(next)
+                return setSelection([next], cause: .user)
             }
         }
         // A closed tile that had the keyboard leaves it with the window: the canvas takes it,
@@ -1174,7 +1234,7 @@ final class CanvasView: NSScrollView {
 
     func bringToFront() {
         if let unavailable = board.hostHistoryUnavailable { return showNotice(unavailable) }
-        let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) < (board.objects[$1]?.z ?? 0) }
+        let ids = expandedSelection(selection).sorted { (board.objects[$0]?.z ?? 0) < (board.objects[$1]?.z ?? 0) }
         var top = board.objects.values.map(\.z).max() ?? 0
         board.transaction {
             for id in ids {
@@ -1186,7 +1246,7 @@ final class CanvasView: NSScrollView {
 
     func sendToBack() {
         if let unavailable = board.hostHistoryUnavailable { return showNotice(unavailable) }
-        let ids = expandedSelection().sorted { (board.objects[$0]?.z ?? 0) > (board.objects[$1]?.z ?? 0) }
+        let ids = expandedSelection(selection).sorted { (board.objects[$0]?.z ?? 0) > (board.objects[$1]?.z ?? 0) }
         var bottom = board.objects.values.map(\.z).min() ?? 0
         board.transaction {
             for id in ids {
@@ -1201,7 +1261,7 @@ final class CanvasView: NSScrollView {
     func createTerminal(at point: NSPoint? = nil) {
         let props: JSONValue = .object(["cwd": .string(board.workingRoot.path), "command": .array([])])
         guard let point else { return openForUser(.terminal, props: props) }
-        takeKeyboard(createHere(.terminal, props: props, at: point).id)
+        setSelection([createHere(.terminal, props: props, at: point).id], cause: .user)
     }
 
     /// A new terminal in `terminal`'s directory beside it (a Ghostty new window, tab or split
@@ -1230,33 +1290,9 @@ final class CanvasView: NSScrollView {
         showNew(board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor)))
     }
 
-    /// An object the user just made or opened: revealed with the least pan, selected, and given
-    /// the keyboard; an empty note starts editing (as Return would), so what they type right
-    /// away goes into it, and Esc then leaves it selected with the canvas holding the keyboard.
     func showNew(_ object: CanvasObject) {
         reveal(object.id)
-        setSelection([object.id])
-        if object.type == .note, object.props["markdown"]?.string?.isEmpty != false, enterSelection() { return }
-        takeKeyboard(object.id)
-    }
-
-    func takeKeyboard(_ id: ObjectID) {
-        let type = board.objects[id]?.type
-        guard type == .terminal || type == .question else {
-            window?.makeFirstResponder(document)
-            return
-        }
-        if type == .question {
-            // The canvas keeps it when the question is closed (it takes the keyboard only by
-            // Return, which then archives it: `QuestionTile.takesKeyboardFocus`).
-            window?.makeFirstResponder(document)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.selection == [id], let content = self.tiles[id]?.content, content.takesKeyboardFocus else { return }
-                _ = content.enterKeyboard()
-            }
-            return
-        }
-        (tiles[id]?.content as? TerminalTile)?.focus()
+        setSelection([object.id], cause: .user)
     }
 
     /// Tiles Return hands the keyboard to.
@@ -1269,23 +1305,29 @@ final class CanvasView: NSScrollView {
     /// canvas's).
     func enterSelection() -> Bool {
         guard selection.count == 1, let id = selection.first, let tile = tiles[id], let type = board.objects[id]?.type, Self.enterable.contains(type) else { return false }
-        if !tile.isLive, let rect = docFrame(id) {
+        if !tile.isLive || magnification * tile.zoom < tile.content.liveZoom, let rect = docFrame(id) {
             apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
         } else if let rect = landing(id, padding: Self.jumpPadding / magnification) {
             reveal(rect: rect)
         }
-        // On the next turn: a tile just made live builds its view in the liveness pass.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.selection == [id], let content = self.tiles[id]?.content else { return }
-            _ = content.enterKeyboard()
-        }
+        whenSelectionIsLive(id) { content in _ = content.enterKeyboard() }
         return true
     }
 
-    /// Esc in a tile that has the keyboard (or Leave Tile, ⌘Esc): the canvas takes it back, the
-    /// tile stays selected.
-    func leaveTile(_ id: ObjectID) {
-        if board.objects[id] != nil { setSelection([id]) }
+    private func whenSelectionIsLive(_ id: ObjectID, perform: @escaping (TileContent) -> Void) {
+        let serial = selectionSerial
+        DispatchQueue.main.async { [weak self, weak responder = window?.firstResponder] in
+            guard let self, self.selectionSerial == serial, self.window?.firstResponder === responder,
+                  self.selection == [id], let tile = self.tiles[id] else { return }
+            tile.setLive(true)
+            tile.zoomedOut = false
+            guard self.selectionSerial == serial, self.window?.firstResponder === responder else { return }
+            perform(tile.content)
+        }
+    }
+
+    func leaveTile() {
+        selectionSerial &+= 1
         window?.makeFirstResponder(document)
     }
 
@@ -1295,20 +1337,44 @@ final class CanvasView: NSScrollView {
     static func returnKeyboard(to previous: NSResponder?, in window: NSWindow) {
         var view = previous as? NSView
         while let current = view {
-            if let terminal = current as? TerminalTile, terminal.window === window { return terminal.focus() }
+            if let html = current as? HtmlWebView {
+                if html.restoreKeyboard(to: previous ?? html) { return }
+            }
+            if let html = current as? HtmlTile, html.window === window, !html.isHiddenOrHasHiddenAncestor,
+               html.takeNativeKeyboard() { return }
+            if let note = current as? NoteTile, note.window === window, !note.isHiddenOrHasHiddenAncestor {
+                let editor = previous as? NSTextView
+                let range = editor?.selectedRange()
+                if note.enterKeyboard() {
+                    if let editor, let range, !editor.isHiddenOrHasHiddenAncestor,
+                       NSMaxRange(range) <= (editor.textStorage?.length ?? 0) {
+                        editor.setSelectedRange(range)
+                        editor.scrollRangeToVisible(range)
+                    }
+                    return
+                }
+            }
+            if let terminal = current as? TerminalTile, terminal.window === window, !terminal.isHiddenOrHasHiddenAncestor {
+                terminal.focus()
+                if let focused = window.firstResponder as? NSView,
+                   focused === terminal || focused.isDescendant(of: terminal) { return }
+                window.makeFirstResponder(window.initialFirstResponder)
+                return
+            }
             view = current.superview
         }
-        if let previous = previous as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor {
-            window.makeFirstResponder(previous)
-        } else {
-            window.makeFirstResponder(window.initialFirstResponder)
-        }
+        if let previous = previous as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor,
+           window.makeFirstResponder(previous) { return }
+        window.makeFirstResponder(window.initialFirstResponder)
     }
 
     /// The tile holding keyboard focus (a terminal, a code tile's rows, a page, a note being
     /// edited, a code tile's find field).
     var focusedTile: ObjectID? {
         var responder = window?.firstResponder as? NSView
+        if let editor = responder as? NSTextView, editor.isFieldEditor, let control = editor.delegate as? NSView {
+            responder = control
+        }
         while let view = responder {
             if let tile = view as? TileFrameView { return tile.objectID }
             responder = view.superview
@@ -1370,8 +1436,7 @@ final class CanvasView: NSScrollView {
         guard let id = target, docFrame(id) != nil else { return }
         let before = viewport, selectedBefore = sources.count == 1 ? sources[0] : nil
         present(id, stop: stop)
-        setSelection([id])
-        if tiles[id] != nil { takeKeyboard(id) }
+        setSelection([id], cause: .user)
         guard navigationDepth == 0 else { return }
         navigation.record(NavigationHistory.Entry(from: before, to: viewport, reaim: nil, selectedBefore: selectedBefore, selectedAfter: id))
     }
@@ -1419,15 +1484,27 @@ final class CanvasView: NSScrollView {
         var props: [String: JSONValue] = ["base": .string(base.prop)]
         if let root { props["root"] = .string(root) }
         let spec = ChangesSpec(.object(props)), boardRoot = board.root
+        let serial = selectionSerial
+        weak var responder = window?.firstResponder
         Task { [weak self] in
             let set = await ChangeSet.load(root: boardRoot, spec: spec, highlight: false)
             guard let self else { return }
-            if let existing = self.board.changesTile(root: root, base: base.prop) { return self.go(to: existing) }
+            let cause: KeyboardFocus.SelectionCause = self.selectionSerial == serial && self.window?.firstResponder === responder ? .user : .programmatic
+            if let existing = self.board.changesTile(root: root, base: base.prop) {
+                if cause == .user { self.go(to: existing) }
+                else {
+                    self.reveal(existing)
+                    self.setSelection([existing])
+                }
+                return
+            }
             let full = Board.defaultSize(.changes)
             let compact = set.files.isEmpty ? ChangesMetrics.fit(set, maxWidth: full.w) : nil
             // The pan that shows the new tile is a place ⌘[ comes back from.
             self.navigating {
-                self.showNew(self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) }))
+                let object = self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) })
+                self.reveal(object.id)
+                self.setSelection([object.id], cause: cause)
                 return nil
             }
         }
@@ -1562,12 +1639,12 @@ final class CanvasView: NSScrollView {
     // MARK: Context menus
 
     func objectMenu(for id: ObjectID, at point: NSPoint? = nil) -> NSMenu {
-        if !selection.contains(id) { select(id, extend: false) }
+        setSelection(selection.contains(id) ? selection : [id], cause: .user)
         let count = selection.count
         let menu = NSMenu()
         if focusedTile == id {
             // How to get out of a terminal or page, whose Esc belongs to its program (View ▸ Leave Tile).
-            let leave = MenuAction.item("Leave Tile") { [weak self] in self?.leaveTile(id) }
+            let leave = MenuAction.item("Leave Tile") { [weak self] in self?.leaveTile() }
             AppShortcuts.apply(to: leave, id: "leaveTile")
             menu.addItem(leave)
             menu.addItem(.separator())
@@ -1582,7 +1659,7 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("Send to Back") { [weak self] in self?.sendToBack() })
         menu.addItem(.separator())
         if let zoom = contentZoomMenu() { menu.addItem(zoom) }
-        menu.addItem(MenuAction.item("Group Selection", enabled: expandedSelection().count >= 2) { [weak self] in self?.groupSelection() })
+        menu.addItem(MenuAction.item("Group Selection", enabled: expandedSelection(selection).count >= 2) { [weak self] in self?.groupSelection() })
         if count == 1, let terminal = board.objects[id], terminal.type == .terminal {
             // Off removes the follow tile; on, the agent's next file report brings it back.
             let following = terminal.props["follow"]?.bool != false
@@ -1678,7 +1755,7 @@ final class CanvasView: NSScrollView {
     }
 
     private func groupMenu(for id: ObjectID) -> NSMenu {
-        if !selection.contains(id) { setSelection([id]) }
+        setSelection(selection.contains(id) ? selection : [id], cause: .boardGesture)
         let menu = NSMenu()
         menu.addItem(MenuAction.item("Enter Group") { [weak self] in self?.enter(group: id) })
         menu.addItem(MenuAction.item("Ungroup") { [weak self] in self?.ungroupSelection() })
@@ -1970,17 +2047,13 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width; an
-    /// agent's terminal with its follow tile, `landing`), selected, and given the keyboard (a
-    /// terminal focuses; anything else leaves it with the canvas, so Delete, Esc and ⌘G act on it).
     func go(to id: ObjectID) {
         guard let rect = landing(id, padding: Self.fitPadding) else { return }
         navigating {
             fit(rect, readable: true)
             return nil
         }
-        setSelection([id])
-        takeKeyboard(id)
+        setSelection([id], cause: .user)
     }
 
     /// What landing on `id` (Go to, ⌘J, an ⌥⌘-arrow step, Return) shows: an agent's terminal
@@ -2001,12 +2074,13 @@ final class CanvasView: NSScrollView {
     /// tile: a long note shows its width with the heading at the top. One Back entry.
     func go(to id: ObjectID, heading line: Int) {
         let from = viewport
-        navigationDepth += 1
-        go(to: id)
-        navigationDepth -= 1
-        DispatchQueue.main.async { [weak self] in
+        guard let rect = landing(id, padding: Self.fitPadding) else { return }
+        fit(rect, readable: true)
+        setSelection([id])
+        window?.makeFirstResponder(document)
+        whenSelectionIsLive(id) { [weak self] content in
             guard let self else { return }
-            if let note = self.tiles[id]?.content as? NoteTile, let heading = note.reveal(heading: line), let frame = self.docFrame(id) {
+            if let note = content as? NoteTile, let heading = note.reveal(heading: line), let frame = self.docFrame(id) {
                 let top = self.document.convert(heading, from: note).minY
                 self.fit(NSRect(x: frame.minX, y: top, width: frame.width, height: max(1, frame.maxY - top)), readable: true)
             }
@@ -2051,14 +2125,9 @@ final class CanvasView: NSScrollView {
     func focus(tile id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
-        setSelection([id])
-        (tiles[id]?.content as? TerminalTile)?.focus()
+        setSelection([id], cause: .user)
     }
 
-    /// An attention edge pill: framed like Go to (one step of Navigate Back), and the marker is
-    /// acknowledged (the user went there). Selection and keyboard focus stay, except on a
-    /// walkthrough (a stop, or a group holding stops: an agent's "Start here"), which is selected
-    /// with the canvas holding the keyboard so ⌥⌘→ steps from it (`StepOrder`).
     func jumpToAttention(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         navigating {
@@ -2067,8 +2136,7 @@ final class CanvasView: NSScrollView {
         }
         board.clearAttention(id)
         if StepOrder.step(from: id, forward: true, in: board.objects) != .none || StepOrder.start(from: id, center: .zero, in: board.objects) != nil {
-            setSelection([id])
-            takeKeyboard(id)
+            setSelection([id], cause: .user)
         }
     }
 
@@ -2246,16 +2314,9 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// The browser tile a web link opened or found (`Board.openLink`, from a terminal's URL, a
-    /// page, a note, code, or `view.open_url`), shown without taking anything from the user: the
-    /// least pan that shows it, never so far that `source`, the tile the link is in, leaves
-    /// view. Keyboard focus stays where it was: the tile is selected only when that leaves the
-    /// keyboard alone (`KeyboardFocus.afterSelectionChange`: a terminal, or the board, holds
-    /// it), so a note being edited, a page being typed in or code rows keep both the keyboard and
-    /// their selection.
     func showOpenedLink(_ id: ObjectID, openedFrom source: ObjectID?) {
         reveal(id, openedFrom: source.flatMap(docFrame) ?? .null)
-        if KeyboardFocus.afterSelectionChange([id], holder: keyboardHolder) == .stay { setSelection([id]) }
+        setSelection([id])
     }
 
     /// An object shown whole like a slide (an agent's terminal with its follow tile, `landing`):
@@ -2420,7 +2481,6 @@ final class CanvasView: NSScrollView {
                 view.onClick = { [weak self] in
                     self?.reveal(id, bottomFirst: true)
                     self?.select(id, extend: false)
-                    self?.takeKeyboard(id)
                 }
                 attention.addSubview(view)
                 blocked[id] = view
@@ -2544,10 +2604,11 @@ final class CanvasView: NSScrollView {
         if !magnifying {
             let closed = remote?.mirror.availability == .closed
             let scale = magnification
+            let holder = focusedTile
             for tile in tiles.values {
                 if closed, !(tile.content is NoteTile || tile.content is CodeTile || tile.content is TerminalTile || tile.content is QuestionTile || tile.content is ChangesTile) { continue }
-                tile.setLive(shouldBeLive(tile, scale: scale))
-                tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
+                tile.setLive(shouldBeLive(tile, scale: scale, holder: holder))
+                tile.zoomedOut = tile.objectID != holder && RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }
             // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
             if !closed, scale != settledMagnification {
@@ -2565,7 +2626,8 @@ final class CanvasView: NSScrollView {
     /// Live: readable at `scale` (a scaled-up tile's content is bigger on screen, so it stays live
     /// further out) and near the viewport; a live tile stays live a little further out and zoomed
     /// out (hysteresis), so small pans and zooms don't swap it back and forth.
-    private func shouldBeLive(_ tile: TileFrameView, scale: CGFloat) -> Bool {
+    private func shouldBeLive(_ tile: TileFrameView, scale: CGFloat, holder: ObjectID?) -> Bool {
+        if holder == tile.objectID { return true }
         let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
         let readable = scale * tile.zoom >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
         return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))

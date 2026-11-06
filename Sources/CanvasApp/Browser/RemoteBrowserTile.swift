@@ -104,7 +104,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         chrome.onSubmit = { [weak self] text in self?.submitAddress(text) }
         chrome.onEscape = { [weak self] in
             guard let self else { return }
-            (self.enclosingScrollView as? CanvasView)?.leaveTile(self.object.id)
+            (self.enclosingScrollView as? CanvasView)?.leaveTile()
         }
         chrome.setAddress(object.props["url"]?.string ?? "")
         picture.imageScaling = .scaleProportionallyUpOrDown
@@ -1510,7 +1510,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     var headerHeight: CGFloat { chromeExtent }
 
-    var takesKeyboardFocus: Bool { true }
 
     func enterKeyboard() -> Bool {
         window?.makeFirstResponder(self)

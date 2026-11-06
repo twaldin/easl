@@ -64,5 +64,4 @@ final class CardTile: NSView, TileContent {
 
     func outline(for target: MentionTarget) -> NSRect? { bounds }
 
-    var takesKeyboardFocus: Bool { false }
 }

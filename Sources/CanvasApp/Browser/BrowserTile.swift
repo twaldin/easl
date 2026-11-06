@@ -860,7 +860,7 @@ final class BrowserTile: NSView, TileContent {
     }
 
     private func leave() {
-        (enclosingScrollView as? CanvasView)?.leaveTile(objectID)
+        (enclosingScrollView as? CanvasView)?.leaveTile()
     }
 
     /// A key the page didn't handle comes back up the responder chain, whose next stops past the
@@ -1121,7 +1121,6 @@ final class BrowserTile: NSView, TileContent {
         cover.isHidden = !covering
     }
 
-    var takesKeyboardFocus: Bool { true }
 
     /// Remote navigation follows host URL intent, never observed URL metadata.
     /// Another `profile` builds the page again in that profile's store (from `props.url`).
@@ -1472,6 +1471,9 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
+    private lazy var pageUndoManager = UndoManager()
+    override var undoManager: UndoManager? { pageUndoManager }
+
     /// A click or key press reached the page: this Mac's user's, or a viewer's streamed one
     /// (`SurfaceEventQueue.isSynthesized`).
     var onUserInput: ((NSEvent) -> Void)?

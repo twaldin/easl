@@ -87,7 +87,7 @@ final class CodeTile: NSView, TileContent {
         rowsView.onEditHere = { [weak self] point in self?.editHere(at: point) }
         rowsView.onEscape = { [weak self] in
             guard let self else { return }
-            (self.enclosingScrollView as? CanvasView)?.leaveTile(self.object.id)
+            (self.enclosingScrollView as? CanvasView)?.leaveTile()
         }
         header.onBase = { [weak self] base in self?.setBase(base) }
         header.onChange = { [weak self] forward in self?.jumpToChange(forward: forward) }
@@ -1198,7 +1198,6 @@ extension CodeTile {
         return convert(rect, from: rowsView).intersection(rowsView.frame)
     }
 
-    var takesKeyboardFocus: Bool { false }
 
     var headerHeight: CGFloat { header.height }
 

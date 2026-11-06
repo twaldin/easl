@@ -439,13 +439,6 @@ final class ComposerTextView: NSTextView {
     func leave() {
         guard let window else { return }
         let before = previous === self ? nil : previous
-        if let view = before as? NSView, view.window === window, view.isHiddenOrHasHiddenAncestor {
-            var ancestor: NSView? = view
-            while let current = ancestor {
-                if let note = current as? NoteTile, note.enterKeyboard() { return }
-                ancestor = current.superview
-            }
-        }
         CanvasView.returnKeyboard(to: before, in: window)
     }
 
