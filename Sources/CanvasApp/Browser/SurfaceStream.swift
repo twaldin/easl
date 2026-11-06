@@ -50,12 +50,12 @@ final class SurfaceStream {
         let page: NSView
         let responder: NSView
         let point: NSPoint
-        var timestamp: TimeInterval
-        var phase: UInt
-        var momentum: UInt
-        var gesture: Int?
+        let gesture: Int?
+        var firstDirectional: PageWheelID?
+        var rejected = false
     }
     var wheelDestination: WheelDestination?
+    var wheelBoundary = ScrollGesture()
     private var pipeline: Task<Void, Never>?
     private var queued = 0
     // Ack 0 proves the viewer has its stream id and easld has registered its private route.

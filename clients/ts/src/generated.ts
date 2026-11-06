@@ -97,6 +97,8 @@ export type SurfaceInputEvent = {
   phase?: number;
   momentum?: number;
   mods?: number;
+  /** Retained wheel gesture identity. Send only when surface.stream advertises scrollGestures. */
+  gesture?: number;
 } | {
   kind: "key";
   seq: number;
@@ -204,6 +206,12 @@ export type SurfaceNotice = {
   state?: string;
 };
 
+/** The drawing Mac rejected this gesture's first directional native wheel event. Private to the subscribed stream owner, once per gesture. Later events of that rejected gesture do not reach the page. */
+export type SurfaceScrollUnhandled = {
+  stream: SurfaceStream;
+  gesture: number;
+};
+
 /** Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection. */
 export type SurfaceEvent = {
   event: "surface.frame";
@@ -213,6 +221,10 @@ export type SurfaceEvent = {
   event: "surface.dialog";
   board: Id;
   data: SurfaceDialog;
+} | {
+  event: "surface.scrollUnhandled";
+  board: Id;
+  data: SurfaceScrollUnhandled;
 } | {
   event: "surface.notice";
   board: Id;
@@ -1168,6 +1180,8 @@ export type SurfaceStreamResult = {
   stream: SurfaceStream;
   size: SurfaceSize;
   scale: number;
+  /** Accepts optional scroll gesture identities and can report first-event rejection through surface.scrollUnhandled when native WebKit handoff is available. */
+  scrollGestures?: boolean;
 };
 
 export type SurfaceAckParams = {
@@ -2563,7 +2577,7 @@ export interface CanvasApi {
     open(params: RelayOpenParams): Promise<RelayOpenResult>;
   };
   events: {
-    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog and surface.notice use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
+    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?, raisedAt?}), composer.returned and composer.submitted (ComposerReceipt: {receipt, event, viewer, terminal, ids}, original staged mention ids for the originating viewer, never captured targets), client.changed ({clients}, the current attached-client snapshot for this board; transient, never stored), board.closed and board.opened (BoardLifecycleEvent envelopes with canonical board and empty data). A composer submission receipt follows actual queue consumption, not typing or a peek; board.get replays the newest 2000 receipts after a reconnect. Lifecycle events follow successful close and newly opened board transitions only. Subscriptions stay connected across close and reopen; board and event-name filters apply to lifecycle events as to object events. Private surface.frame, surface.dialog, surface.notice and surface.scrollUnhandled use SurfaceEvent envelopes and are sent only to a stream's owning connection after its matching canonical-board subscription, never broadcast to other board subscribers. */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
   viewer: {

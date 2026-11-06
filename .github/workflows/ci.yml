@@ -105,6 +105,17 @@ jobs:
           name: selection-typing
           path: ${{ runner.temp }}/selection-typing
           if-no-files-found: error
+      - name: Native tile scroll ownership regression
+        id: tile-scrolling
+        if: ${{ !cancelled() && steps.selection-typing-build.outcome == 'success' }}
+        run: python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/tile-scrolling"
+      - name: Preserve tile scroll ownership evidence
+        if: always() && steps.tile-scrolling.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tile-scrolling
+          path: ${{ runner.temp }}/tile-scrolling
+          if-no-files-found: error
       - name: Native main-thread stall capture regression
         run: python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/stall-sampler" --ci-timing-report-only
       - name: Native board save responsiveness and atomic crash regression

@@ -52,16 +52,6 @@ final class HtmlTile: NSView, TileContent {
     private var assetWatch: HostFileWatch?
     private var assetReload: DispatchWorkItem?
 
-    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
-        guard let webView, webView.superview != nil, !webView.isLoading else { return completion(nil) }
-        var local = webView.convert(point, from: self)
-        guard webView.bounds.contains(local) else { return completion(nil) }
-        if !webView.isFlipped { local.y = webView.bounds.height - local.y }
-        let zoom = webView.pageZoom * webView.magnification
-        PageScrollCapability.query(in: webView, point: CGPoint(x: local.x / zoom, y: local.y / zoom),
-                                   direction: direction, completion: completion)
-    }
-
     private func suspendAssetWatch() {
         assetWatch?.cancel()
         assetWatch = nil
@@ -229,6 +219,7 @@ final class HtmlTile: NSView, TileContent {
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.wheelHandoffEnabled = PageWheelHandoff.configure(web)
         web.underPageBackgroundColor = .textBackgroundColor
         web.onEscape = { [weak self, weak web] in
             guard let self, let web, self.webView === web else { return }
@@ -741,6 +732,7 @@ final class HtmlTile: NSView, TileContent {
         }
         web.navigationDelegate = self
         web.uiDelegate = self
+        web.wheelHandoffEnabled = PageWheelHandoff.configure(web)
         web.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         web.appearance = appearance
         web.underPageBackgroundColor = .textBackgroundColor
@@ -915,6 +907,12 @@ final class HtmlTile: NSView, TileContent {
 }
 
 extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
+    @objc(_webView:didNotHandleWheelEvent:)
+    func webView(_ webView: WKWebView, didNotHandleWheelEvent event: NSEvent) {
+        guard (webView as? HtmlWebView)?.wheelHandoffEnabled == true else { return }
+        (webView.window as? CanvasWindow)?.pageWheelUnhandled(event, from: webView)
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard !hostBoardClosed, !board.isClosed else { return .cancel }
         guard let url = action.request.url else { return .cancel }

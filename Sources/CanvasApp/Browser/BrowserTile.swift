@@ -361,6 +361,7 @@ final class BrowserTile: NSView, TileContent {
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
         view.uiDelegate = self
+        view.wheelHandoffEnabled = PageWheelHandoff.configure(view)
         view.allowsBackForwardNavigationGestures = true
         view.isInspectable = true
         webView = view
@@ -946,11 +947,6 @@ final class BrowserTile: NSView, TileContent {
         return CGPoint(x: local.x / zoom, y: local.y / zoom)
     }
 
-    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
-        guard let webView, let point = pagePoint(point), !webView.isLoading else { return completion(nil) }
-        PageScrollCapability.query(in: webView, point: point, direction: direction, completion: completion)
-    }
-
     private func viewRect(_ pageRect: CGRect) -> NSRect? {
         guard let webView, webView.superview === pageHost else { return nil }
         let zoom = webView.pageZoom * webView.magnification
@@ -1324,6 +1320,13 @@ final class BrowserTile: NSView, TileContent {
 }
 
 extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
+    @objc(_webView:didNotHandleWheelEvent:)
+    func webView(_ webView: WKWebView, didNotHandleWheelEvent event: NSEvent) {
+        guard (webView as? BrowserWebView)?.wheelHandoffEnabled == true else { return }
+        (webView.window as? CanvasWindow)?.pageWheelUnhandled(event, from: webView)
+        surface?.pageWheelUnhandled(event, from: webView)
+    }
+
     /// Schemes a page loads itself; anything else is another app's link (`openInOtherApp`).
     static let pageSchemes: Set<String> = ["http", "https", "about", "file", "data", "blob", "javascript", "webkit-extension", "safari-web-extension"]
 
@@ -1476,6 +1479,8 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
+    var wheelHandoffEnabled = false
+
     private lazy var pageUndoManager = UndoManager()
     override var undoManager: UndoManager? { pageUndoManager }
 

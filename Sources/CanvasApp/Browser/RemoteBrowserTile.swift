@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 /// board's server (`remote.host.connection()`), never through `BoardMirror` and never by
 /// constructing WebKit.
 ///
-/// One connection per live period. It listens for `surface.frame`, `surface.dialog` and
-/// `surface.notice` on the canonical board before `surface.stream`. The page's Mac holds frame 0
+/// One connection per live period. It subscribes to private surface events on the canonical
+/// board before `surface.stream`. The page's Mac holds frame 0
 /// until `surface.ack` 0, then one frame is outstanding. A dropped link or stream opens a new
 /// stream and does not replay input. The last image stays up. On easld a stream also ends when
 /// its drawing Mac goes offline or the page moves to another Mac; the tile says so and opens again
@@ -55,8 +55,16 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var nextSeq = 0
     private var outbound: [Queued] = []
     private var lastWheel: SurfaceScroll?
-    private var lastWheelTimestamp: TimeInterval = 0
+    private var wheelBoundary = ScrollGesture()
     private var wheelGesture = 0
+    private struct PageWheel {
+        let first: PageWheelID
+        let epoch: Int
+        let stream: String
+        var gesture: Int?
+        let onUnhandled: @MainActor () -> Void
+    }
+    private var pageWheel: PageWheel?
     private var inputWait: CheckedContinuation<Void, Never>?
     private var mouseIsDown = false
     private var keysDown: Set<UInt16> = []
@@ -249,7 +257,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         let epoch = linkEpoch
         let events = connection.events()
         let states = connection.states()
-        connection.subscribe(board: board, events: ["surface.frame", "surface.dialog", "surface.notice"])
+        connection.subscribe(board: board, events: ["surface.frame", "surface.dialog", "surface.notice", "surface.scrollUnhandled"])
         linkTasks.append(Task { [weak self] in await self?.watchEvents(events, epoch: epoch) })
         linkTasks.append(Task { [weak self] in await self?.watchStates(states, epoch: epoch) })
         linkTasks.append(Task { [weak self] in await self?.pump(epoch: epoch) })
@@ -304,7 +312,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         opening = false
         outbound.removeAll()
         lastWheel = nil
-        lastWheelTimestamp = 0
+        wheelBoundary = ScrollGesture()
+        pageWheel = nil
         wheelGesture = 0
         clicks.removeAll()
         dialogs.keys.forEach { dialogs[$0] = true }
@@ -360,6 +369,13 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 if let dialog = SurfaceWire.dialog(event.data) { receive(dialog) }
             case "surface.notice":
                 if let notice = SurfaceWire.notice(event.data) { receive(notice) }
+            case "surface.scrollUnhandled":
+                guard let reply = SurfaceScrollUnhandled(event.data),
+                      let pending = pageWheel, pending.epoch == streamEpoch,
+                      pending.stream == streamID, reply.stream == pending.stream,
+                      reply.gesture == pending.gesture, reply.gesture == wheelGesture else { continue }
+                pageWheel = nil
+                pending.onUnhandled()
             default:
                 break
             }
@@ -632,7 +648,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     // MARK: Input
 
     @discardableResult
-    private func enqueue(_ event: SurfaceInput) -> Int? {
+    private func enqueue(_ event: SurfaceInput, preservingWheelBoundary: Bool = false) -> Int? {
         guard streamID != nil else { return nil }
         if decodingRefinement != nil || assemblingRefinement != nil {
             video = SurfaceVideoDecoder()
@@ -647,10 +663,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             refreshAssembly.reset()
             self.assemblingRefinement = nil
         }
-        var preservesWheelBoundary = false
+        var preservesWheelBoundary = preservingWheelBoundary
         if case .scroll(let scroll) = event {
             if let previous = lastWheel {
-                preservesWheelBoundary = scroll.phase != previous.phase || scroll.momentum != previous.momentum
+                preservesWheelBoundary = preservesWheelBoundary || scroll.phase != previous.phase || scroll.momentum != previous.momentum
                     || scroll.gesture != previous.gesture
                     || (scroll.phase != 0 && scroll.phase != NSEvent.Phase.changed.rawValue)
                     || (scroll.momentum != 0 && scroll.momentum != NSEvent.Phase.changed.rawValue)
@@ -899,34 +915,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         return enqueue(.mouse(action, x: point.x, y: point.y, clicks: max(1, event.clickCount), mods: mods(event)))
     }
 
-    func pageScrollCapability(at point: NSPoint, direction: CGVector,
-                              completion: @escaping @MainActor (Bool?) -> Void) {
-        guard supportsScrollGestures, let host = hostPoint(point, clamp: false), let size = pageSize,
-              let stream = streamID, let connection = owned.current() else {
-            completion(nil)
-            return
-        }
-        let generation = streamEpoch
-        let id = object.id
-        let script = PageScrollCapability.script(
-            point: CGPoint(x: host.x / size.width, y: host.y / size.height),
-            dx: direction.dx, dy: direction.dy, normalizedPoint: true)
-        Task { [weak self] in
-            do {
-                let result = try await connection.request("browser.call", .object([
-                    "id": .string(id), "method": .string("browser.eval"),
-                    "params": .object(["script": .string(script)]),
-                ]), timeout: .milliseconds(150))
-                guard let self, generation == self.streamEpoch, self.streamID == stream,
-                      self.object.id == id, self.owned.current() === connection else {
-                    completion(nil)
-                    return
-                }
-                completion(result["value"]?.bool)
-            } catch {
-                completion(nil)
-            }
-        }
+    func beginPageWheel(_ event: NSEvent, onUnhandled: @escaping @MainActor () -> Void) {
+        pageWheel = nil
+        guard supportsScrollGestures, let stream = streamID else { return }
+        pageWheel = PageWheel(first: PageWheelID(event), epoch: streamEpoch, stream: stream,
+                              onUnhandled: onUnhandled)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -941,18 +934,22 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         lastPointer = local
         guard let point = hostPoint(local, clamp: true) else { return }
         lastHost = point
-        let phaseless = event.phase.isEmpty && event.momentumPhase.isEmpty
-        let starts = lastWheel == nil
-            || (event.phase.contains(.mayBegin) && lastWheel?.phase != NSEvent.Phase.mayBegin.rawValue)
-            || (event.phase.contains(.began) && lastWheel?.phase != NSEvent.Phase.mayBegin.rawValue)
-            || (phaseless && (lastWheel!.phase != 0 || lastWheel!.momentum != 0
-                || event.timestamp - lastWheelTimestamp > 0.25 || event.timestamp < lastWheelTimestamp))
+        let starts = wheelBoundary.starts(step: ScrollGesture.Step(event), timestamp: event.timestamp)
         if starts { wheelGesture += 1 }
-        lastWheelTimestamp = event.timestamp
+        let isFirstDirectional = pageWheel?.first == PageWheelID(event)
+        if let pending = pageWheel {
+            if pending.first == PageWheelID(event) {
+                pageWheel?.gesture = wheelGesture
+            } else if starts, pending.gesture != nil {
+                pageWheel = nil
+            }
+        }
         enqueue(.scroll(SurfaceScroll(x: point.x, y: point.y,
                         dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
                         precise: event.hasPreciseScrollingDeltas, phase: event.phase.rawValue,
-                        momentum: event.momentumPhase.rawValue, mods: UInt(mods(event)), gesture: wheelGesture)))
+                        momentum: event.momentumPhase.rawValue, mods: UInt(mods(event)),
+                        gesture: supportsScrollGestures ? wheelGesture : nil)),
+                preservingWheelBoundary: starts || isFirstDirectional)
     }
 
     /// Page pinch, rotate, and swipe are not on the wire. Forward them so the canvas can still zoom.

@@ -120,9 +120,8 @@ protocol TileContent: NSView {
     /// The page elements under `rect` (this view's coordinates), for a mention of a shape drawn
     /// over the tile; nil for tiles without a page, and while the page isn't there to ask.
     func pageElements(in rect: NSRect) async -> PageElements?
-    /// A precommit page query. Nil means the native page cannot establish directional extent.
-    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void)
-    /// Height of the controls strip at the top of the content.
+    /// Height of the controls strip at the top of the content (a browser's address bar, a code
+    /// tile's header), which attention bubbles keep off, like the title bar above it.
     var headerHeight: CGFloat { get }
     /// Relative luminance (0 black … 1 white) of what the content shows: a web page's
     /// background, an image, a terminal's theme. Drawings in the default ink over the tile are
@@ -157,9 +156,6 @@ extension TileContent {
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? { nil }
 
     func pageElements(in rect: NSRect) async -> PageElements? { nil }
-    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
-        completion(nil)
-    }
 
     func scrollToMention(_ target: MentionTarget) {}
 
