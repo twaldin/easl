@@ -27,7 +27,7 @@ The board format is unchanged, still format 3. The persisted object model is unc
 
 ### Fixed
 
-- Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; modifiers and Move eligibility are read at the first event. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
+- Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; initial modifiers and Move choose owner eligibility, while board-owned pan/zoom modifiers still apply per event. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
 - Pages receive wheel input first and hand off only on WebKit's first-event unhandled result. JavaScript pages that prevent default keep their gesture even at a bound; typing terminals without scrollback keep Ghostty's behavior, so a short normal shell may not move. Pages lose native edge bounce. Missing private WebKit selectors or older remote hosts keep page-first input without handoff.
 - Main-thread board-save work now has metrics spans for snapshot capture, scheduling, queue bookkeeping, and completion, including close and quit continuations. The metrics HUD shows their timings so stall records can attribute save work.
 - Focus-ring styling changes repaint only the perimeter instead of the terminal interior, avoiding the terminal-focus draw stall.
