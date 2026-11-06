@@ -306,6 +306,10 @@ For a baseline comparison, freeze the final Swift harness and Python runner outs
 
 Use a separate output directory for each revision. `--resources` supplies that revision's schema, fixtures, and cleanup script instead of resolving them relative to the copied runner. Omit `--scenario` to require every case. Retain `cases.json`, `results.json`, input hashes, child-process receipts, and cleanup results from both arms. Native HID screenshots in a frozen app qualify the user interaction separately.
 
+The four `damage-*` cases observe the ring overlay and its descendants during Escape from the composer, resignation to the composer or Go to, and a pure tile move. They record actual invalidation and clipped drawing rectangles in document coordinates. Focus changes must produce observable ring damage without intersecting the terminal view's content bounds; a pure move must produce neither invalidation nor drawing. The observer forwards every intercepted AppKit call and restores the original methods afterward.
+
+These assertions cover the damage boundary, not terminal draw latency or draw counts. For focus-ring rendering changes, also queue Escape, Command-P, a tile title, and Return in an isolated release app at a real tool approval. Compare matched compiler/backend/SDK builds, retain own-window images and `app.metrics` before and after, and require no main-thread stretch of 50 ms or more.
+
 ## Native browsing-data regression
 
 Build with `swift build --build-system native -j 2 --product Easl -Xswiftc -enable-testing`, then run `python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"` in the queued guest. It uses an isolated home and reads back real cookies from the default, local, remote-only, and closed-board-only profile stores after confirming the native sheet. The latter two stores are absent from the supplied local profile names and the in-memory named-store cache. CI runs the same fixture.

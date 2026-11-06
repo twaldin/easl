@@ -834,7 +834,7 @@ final class CanvasView: NSScrollView {
         let outlined = selection.union(holder.map { [$0] } ?? [])
         overlay.rings = chromeHidden ? [] : outlined.sorted().compactMap { id in
             guard groups[id] == nil, let rect = docFrame(id) else { return nil }
-            return SceneOverlay.Ring(rect: rect, dashed: id != holder)
+            return SceneOverlay.Ring(rect: rect, dashed: id != holder, terminal: tiles[id]?.content is TerminalTile)
         }
         placeHandles()
     }
