@@ -55,7 +55,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var nextSeq = 0
     private var outbound: [Queued] = []
     private var lastWheel: SurfaceScroll?
-    private var wheelBoundary = ScrollGesture()
     private var wheelGesture = 0
     private struct PageWheel {
         let first: PageWheelID
@@ -312,9 +311,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         opening = false
         outbound.removeAll()
         lastWheel = nil
-        wheelBoundary = ScrollGesture()
         pageWheel = nil
-        wheelGesture = 0
         clicks.removeAll()
         dialogs.keys.forEach { dialogs[$0] = true }
         let sheets = Array(dialogSheets.values)
@@ -921,8 +918,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         return enqueue(.mouse(action, x: point.x, y: point.y, clicks: max(1, event.clickCount), mods: mods(event)))
     }
 
-    func beginPageWheel(_ event: NSEvent, onUnhandled: @escaping @MainActor () -> Void) {
+    func beginPageWheel(_ event: NSEvent, gesture: Int, onUnhandled: @escaping @MainActor () -> Void) {
         pageWheel = nil
+        wheelGesture = gesture
         guard supportsScrollGestures, let stream = streamID else { return }
         pageWheel = PageWheel(first: PageWheelID(event), epoch: streamEpoch, stream: stream,
                               onUnhandled: onUnhandled)
@@ -940,22 +938,14 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         lastPointer = local
         guard let point = hostPoint(local, clamp: true) else { return }
         lastHost = point
-        let starts = wheelBoundary.starts(step: ScrollGesture.Step(event), timestamp: event.timestamp)
-        if starts { wheelGesture += 1 }
         let isFirstDirectional = pageWheel?.first == PageWheelID(event)
-        if let pending = pageWheel {
-            if pending.first == PageWheelID(event) {
-                pageWheel?.gesture = wheelGesture
-            } else if starts, pending.gesture != nil {
-                pageWheel = nil
-            }
-        }
+        if isFirstDirectional { pageWheel?.gesture = wheelGesture }
         enqueue(.scroll(SurfaceScroll(x: point.x, y: point.y,
                         dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
                         precise: event.hasPreciseScrollingDeltas, phase: event.phase.rawValue,
                         momentum: event.momentumPhase.rawValue, mods: UInt(mods(event)),
                         gesture: supportsScrollGestures ? wheelGesture : nil)),
-                preservingWheelBoundary: starts || isFirstDirectional)
+                preservingWheelBoundary: isFirstDirectional)
     }
 
     /// Page pinch, rotate, and swipe are not on the wire. Forward them so the canvas can still zoom.
