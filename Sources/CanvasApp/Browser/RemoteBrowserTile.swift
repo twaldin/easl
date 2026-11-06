@@ -661,7 +661,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             self.assemblingRefinement = nil
         }
         var preservesWheelBoundary = preservingWheelBoundary
-        if case .scroll(let scroll) = event, supportsScrollGestures {
+        if case .scroll(let scroll) = event, scroll.gesture != nil {
             if let previous = lastWheel {
                 preservesWheelBoundary = preservesWheelBoundary || scroll.phase != previous.phase || scroll.momentum != previous.momentum
                     || scroll.gesture != previous.gesture
@@ -944,7 +944,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                         dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
                         precise: event.hasPreciseScrollingDeltas, phase: event.phase.rawValue,
                         momentum: event.momentumPhase.rawValue, mods: UInt(mods(event)),
-                        gesture: supportsScrollGestures ? wheelGesture : nil)),
+                        gesture: supportsScrollGestures && (window as? CanvasWindow)?.deliveringContentWheel == true ? wheelGesture : nil)),
                 preservingWheelBoundary: isFirstDirectional)
     }
 

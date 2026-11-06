@@ -676,8 +676,13 @@ final class BrowserSurface {
     }
 
     private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView, stream: SurfaceStream) {
-        let starts = scroll.gesture.map { stream.wheelDestination?.gesture != $0 }
-            ?? stream.wheelBoundary.starts(step: scroll.gestureStep, timestamp: ProcessInfo.processInfo.systemUptime)
+        let starts: Bool
+        if let gesture = scroll.gesture {
+            starts = stream.wheelDestination?.gesture != gesture
+        } else {
+            let fallback = stream.wheelBoundary.starts(step: scroll.gestureStep, timestamp: ProcessInfo.processInfo.systemUptime)
+            starts = stream.wheelDestination?.gesture != nil || fallback
+        }
         if starts {
             let point = Self.point(scroll.x, scroll.y, in: webView)
             stream.wheelDestination = SurfaceStream.WheelDestination(
