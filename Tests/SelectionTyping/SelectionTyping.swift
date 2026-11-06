@@ -1594,8 +1594,10 @@ private enum SelectionTyping {
                 "pure-move observer control must see real invalidation")
             let before = f.canvas.overlay.rings
             try require(!before.isEmpty, "pure move requires a visible selection ring")
-            let moved = before.map {
-                SceneOverlay.Ring(rect: $0.rect.offsetBy(dx: 23, dy: 19), dashed: $0.dashed)
+            let moved = before.map { ring in
+                var moved = ring
+                moved.rect = ring.rect.offsetBy(dx: 23, dy: 19)
+                return moved
             }
             observer.begin()
             f.canvas.overlay.rings = moved

@@ -13,18 +13,22 @@ final class SceneOverlay: NSView {
         var rect: NSRect
         /// Selected objects are dashed unless they own keyboard input.
         var dashed: Bool
+        var terminal: Bool
     }
     var rings: [Ring] = [] {
         didSet {
             guard rings != oldValue else { return }
-            while ringViews.count > rings.count { ringViews.removeLast().remove() }
-            for (index, ring) in rings.enumerated() {
+            foreground.rings = rings
+            var index = 0
+            for ring in rings where ring.terminal {
                 if index == ringViews.count {
                     ringViews.append(SceneRing(ring, in: self, below: foreground))
                 } else {
                     ringViews[index].update(ring)
                 }
+                index += 1
             }
+            while ringViews.count > index { ringViews.removeLast().remove() }
         }
     }
     /// The canvas sets `lineWidth` to one screen point at the current zoom.
@@ -143,6 +147,13 @@ private final class RingStrip: NSView {
 }
 
 private final class SceneForeground: NSView {
+    var rings: [SceneOverlay.Ring] = [] {
+        didSet {
+            guard !rings.lazy.filter({ !$0.terminal }).elementsEqual(oldValue.lazy.filter({ !$0.terminal })) else { return }
+            invalidate(nil, nil)
+            needsDisplay = true
+        }
+    }
     var outline: NSRect? { didSet { invalidate(oldValue, outline) } }
     var marquee: NSBezierPath? {
         didSet { invalidate(oldValue.map { $0.bounds.insetBy(dx: -$0.lineWidth, dy: -$0.lineWidth) }, marquee.map { $0.bounds.insetBy(dx: -$0.lineWidth, dy: -$0.lineWidth) }) }
@@ -155,13 +166,20 @@ private final class SceneForeground: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     private func invalidate(_ old: NSRect?, _ new: NSRect?) {
-        isHidden = outline == nil && marquee == nil && flash == nil
+        isHidden = rings.allSatisfy(\.terminal) && outline == nil && marquee == nil && flash == nil
         for rect in [old, new].compactMap({ $0 }) where !rect.isNull {
             setNeedsDisplay(rect.insetBy(dx: -6, dy: -6))
         }
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        for ring in rings where !ring.terminal {
+            let path = NSBezierPath(roundedRect: ring.rect.insetBy(dx: -3, dy: -3), xRadius: 9, yRadius: 9)
+            path.lineWidth = 2.5
+            if ring.dashed { path.setLineDash([6, 4], count: 2, phase: 0) }
+            NSColor.controlAccentColor.setStroke()
+            path.stroke()
+        }
         if let marquee {
             NSColor.controlAccentColor.withAlphaComponent(0.08).setFill()
             marquee.fill()
