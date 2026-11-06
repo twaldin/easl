@@ -450,6 +450,7 @@ enum DevInput {
             // continuous: AppKit reports them as lines, without precise deltas).
             let lines = fields["lines"] != nil
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: lines ? .line : .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
+            cg.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
             if lines { cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 0) }
             // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
             let at = point("x", "y")

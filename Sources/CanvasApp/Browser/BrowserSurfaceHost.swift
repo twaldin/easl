@@ -694,21 +694,24 @@ final class BrowserSurface {
             target = responder(at: local, in: webView)
         }
         func wheel(_ delta: Double) -> Int32 { Int32(max(-100_000, min(100_000, delta)).rounded()) }
+        let dx = wheel(scroll.dx), dy = wheel(scroll.dy)
+        let first = scroll.gesture != nil && stream.wheelDestination?.firstDirectional == nil
+            && (dx != 0 || dy != 0)
         guard webView.window != nil,
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: scroll.precise ? .pixel : .line, wheelCount: 2,
-                               wheel1: wheel(scroll.dy), wheel2: wheel(scroll.dx), wheel3: 0) else { return }
+                               wheel1: dy, wheel2: dx, wheel3: 0) else { return }
+        cg.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
         cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: scroll.precise ? 1 : 0)
         if let phase = scrollPhases[scroll.phase], let field = CGEventField(rawValue: 99) { cg.setIntegerValueField(field, value: phase) }
         if let phase = momentumPhases[scroll.momentum], let field = CGEventField(rawValue: 123) { cg.setIntegerValueField(field, value: phase) }
         cg.flags = CGEventFlags(rawValue: UInt64(scroll.mods))
         // The event has no window, and WebKit reads its location as its view's window's
         // coordinates: the window-local point goes where that reading gives it back unchanged.
-        let inWindow = webView.convert(local, to: nil)
+        let inWindow = PageWheelHandoff.point(webView.convert(local, to: nil), first: first, in: webView)
         cg.location = CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.height ?? 0) - inWindow.y)
         guard let event = NSEvent(cgEvent: cg) else { return }
         SurfaceEventQueue.adopt(event)
-        if scroll.gesture != nil, stream.wheelDestination?.firstDirectional == nil,
-           event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+        if first {
             stream.wheelDestination?.firstDirectional = PageWheelID(event)
         }
         target.scrollWheel(with: event)

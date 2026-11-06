@@ -1893,9 +1893,10 @@ final class CanvasWindow: NSWindow {
             target.pageFallback?.include(event)
             deliveringContentWheel = true
             defer { deliveringContentWheel = false }
-            if responder is WKWebView {
+            if let webView = responder as? WKWebView {
                 guard let cg = event.cgEvent?.copy() else { return }
-                let point = root.convert(target.point, to: nil)
+                let point = PageWheelHandoff.point(root.convert(target.point, to: nil),
+                    first: target.pageFallback?.first == PageWheelID(event), in: webView)
                 cg.location = CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.height ?? 0) - point.y)
                 guard let pinned = NSEvent(cgEvent: cg) else { return }
                 SurfaceEventQueue.adopt(pinned)

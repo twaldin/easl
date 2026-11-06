@@ -16,6 +16,15 @@ struct PageWheelID: Equatable {
 
 @MainActor
 enum PageWheelHandoff {
+    // WebKit reports the last native event in a coalesced group. Keep the first
+    // directional event separate so only its own unhandled result can hand off.
+    static func point(_ point: NSPoint, first: Bool, in webView: WKWebView) -> NSPoint {
+        guard first else { return point }
+        var local = webView.convert(point, from: nil)
+        local.x += local.x <= webView.bounds.midX ? 1 : -1
+        return webView.convert(local, to: nil)
+    }
+
     static func configure(_ webView: WKWebView) -> Bool {
         let getter = NSSelectorFromString("_rubberBandingEnabled")
         let setter = NSSelectorFromString("_setRubberBandingEnabled:")

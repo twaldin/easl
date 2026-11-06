@@ -449,8 +449,8 @@ lose WebKit's edge bounce. Remote pages follow the same rule on the drawing Mac,
 without a blocking probe. The [terminal disposition table](design.md) records the
 accepted typing/no-scrollback limit imposed by pinned Ghostty's missing mode getters.
 
-The native ownership regressions link the existing testing-enabled release objects.
-Run them in the claimed macOS guest; use the same harness for baseline and candidate:
+The native ownership regressions link the existing testing-enabled release objects and run
+in Mac CI. For manual baseline/candidate comparison, use the claimed macOS guest and the same harness:
 
 ```sh
 swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
@@ -464,6 +464,9 @@ dispatch**, not HID or physical-trackpad evidence. The image control exercises s
 began/changed/ended followed by nonzero momentum began/changed/ended. Wheel timestamps
 must use the live monotonic clock; zero timestamps suppressed momentum on both baseline
 and candidate in the paired guest control.
+WebKit may coalesce queued wheel events and return the last event's native identity.
+The first directional page event is delivered one page point inward from the pinned
+point so its result stays distinct; later page events keep the pinned point.
 
 ```sh
 scripts/bundle.sh
