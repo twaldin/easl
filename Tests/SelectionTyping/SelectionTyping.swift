@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import Darwin
+import ObjectiveC
 
 @testable import CanvasCore
 
@@ -130,6 +131,10 @@ private enum SelectionTyping {
         for type in [ObjectType.html, .browser] {
             cases.append(Scenario(name: "\(type.rawValue)-page-scrollbar", baseline: "order95 contract"))
         }
+        for name in ["damage-composer-escape-terminal", "damage-terminal-resign-composer",
+                     "damage-terminal-resign-navigator", "damage-ring-pure-move"] {
+            cases.append(Scenario(name: name, baseline: "terminal focus damage regression"))
+        }
         return cases
     }
 
@@ -176,6 +181,135 @@ private enum SelectionTyping {
 
     private static func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    @MainActor
+    private final class OverlayDamage {
+        struct Sample {
+            let operation: String
+            let view: String
+            let overlayRect: NSRect
+            let documentRect: NSRect
+            let terminalRect: NSRect
+        }
+
+        private let overlay: NSView
+        private let document: NSView
+        private let terminal: NSView
+        private var replacements: [(method: Method, original: IMP, replacement: IMP)] = []
+        private(set) var samples: [Sample] = []
+        var recording = false
+
+        init(overlay: NSView, document: NSView, terminal: NSView) {
+            self.overlay = overlay
+            self.document = document
+            self.terminal = terminal
+            let invalidate = NSSelectorFromString("setNeedsDisplay:")
+            let invalidateRect = #selector(NSView.setNeedsDisplay(_:))
+            let draw = #selector(NSView.draw(_:))
+            var classes: [AnyClass] = []
+            var seen = Set<ObjectIdentifier>()
+            for view in descendants(overlay) {
+                var candidate: AnyClass? = type(of: view)
+                while let current = candidate, current !== NSObject.self {
+                    if seen.insert(ObjectIdentifier(current)).inserted { classes.append(current) }
+                    candidate = class_getSuperclass(current)
+                }
+            }
+            for type in classes {
+                var count: UInt32 = 0
+                guard let methods = class_copyMethodList(type, &count) else { continue }
+                defer { free(methods) }
+                for index in 0..<Int(count) {
+                    let method = methods[index]
+                    let selector = method_getName(method)
+                    let original = method_getImplementation(method)
+                    let replacement: IMP
+                    if selector == invalidate {
+                        typealias SetDisplay = @convention(c) (AnyObject, Selector, Bool) -> Void
+                        let forward = unsafeBitCast(original, to: SetDisplay.self)
+                        let block: @convention(block) (NSView, Bool) -> Void = { [self] view, value in
+                            if Thread.isMainThread, value {
+                                MainActor.assumeIsolated { record("invalidate-all", view, view.bounds) }
+                            }
+                            forward(view, selector, value)
+                        }
+                        replacement = imp_implementationWithBlock(block)
+                    } else if selector == invalidateRect || selector == draw {
+                        typealias RectMethod = @convention(c) (AnyObject, Selector, NSRect) -> Void
+                        let forward = unsafeBitCast(original, to: RectMethod.self)
+                        let block: @convention(block) (NSView, NSRect) -> Void = { [self] view, rect in
+                            if Thread.isMainThread {
+                                MainActor.assumeIsolated {
+                                    if selector == draw { recordDraw(view, rect) }
+                                    else { record("invalidate-rect", view, rect) }
+                                }
+                            }
+                            forward(view, selector, rect)
+                        }
+                        replacement = imp_implementationWithBlock(block)
+                    } else { continue }
+                    replacements.append((method, original, replacement))
+                    method_setImplementation(method, replacement)
+                }
+            }
+        }
+
+        func restore() {
+            recording = false
+            for entry in replacements.reversed() {
+                method_setImplementation(entry.method, entry.original)
+                imp_removeBlock(entry.replacement)
+            }
+            replacements.removeAll()
+        }
+
+        func begin() {
+            samples.removeAll()
+            recording = true
+        }
+
+        private func recordDraw(_ view: NSView, _ dirtyRect: NSRect) {
+            guard recording, view === overlay || view.isDescendant(of: overlay) else { return }
+            var rects: UnsafePointer<NSRect>?
+            var count = 0
+            view.getRectsBeingDrawn(&rects, count: &count)
+            let clip = NSGraphicsContext.current?.cgContext.boundingBoxOfClipPath ?? dirtyRect
+            if let rects, count > 0 {
+                for index in 0..<count { record("draw-clip", view, rects[index].intersection(clip)) }
+            } else {
+                record("draw-clip", view, dirtyRect.intersection(clip))
+            }
+        }
+
+        private func record(_ operation: String, _ view: NSView, _ rect: NSRect) {
+            guard recording, view === overlay || view.isDescendant(of: overlay),
+                  !view.isHiddenOrHasHiddenAncestor else { return }
+            let damage = rect.intersection(view.bounds)
+            guard !damage.isEmpty, !damage.isNull else { return }
+            samples.append(Sample(operation: operation, view: NSStringFromClass(type(of: view)),
+                overlayRect: view.convert(damage, to: overlay),
+                documentRect: view.convert(damage, to: document),
+                terminalRect: terminal.convert(terminal.bounds, to: overlay)))
+        }
+
+        func report(_ transition: String) {
+            print("DAMAGE \(transition) terminal.overlay=\(NSStringFromRect(terminal.convert(terminal.bounds, to: overlay))) terminal.document=\(NSStringFromRect(terminal.convert(terminal.bounds, to: document))) samples=\(samples.count)")
+            for sample in samples {
+                let intersection = sample.overlayRect.intersection(sample.terminalRect)
+                print("DAMAGE \(transition) \(sample.operation) view=\(sample.view) overlay=\(NSStringFromRect(sample.overlayRect)) document=\(NSStringFromRect(sample.documentRect)) terminal=\(NSStringFromRect(sample.terminalRect)) intersection=\(NSStringFromRect(intersection))")
+            }
+        }
+
+        func requireBoundary(_ transition: String) throws {
+            recording = false
+            try require(samples.contains { $0.operation.hasPrefix("invalidate-") },
+                "\(transition) must observe real overlay invalidation; a silent observer cannot pass")
+            try require(samples.contains { $0.operation == "draw-clip" },
+                "\(transition) must observe a real overlay draw clip; a silent observer cannot pass")
+            try require(samples.allSatisfy { $0.overlayRect.intersection($0.terminalRect).isEmpty },
+                "\(transition) overlay damage must not intersect the actual terminal view bounds")
+        }
     }
 
     private static func js(_ web: WKWebView, _ expression: String) async -> Any? {
@@ -1406,6 +1540,114 @@ private enum SelectionTyping {
         try require(f.read(object.id) == before + Data([0x1b]), "Leave Tile must not send a second Escape byte to the terminal")
     }
 
+    private static func exerciseTerminalDamage(_ name: String, _ f: Fixture) async throws {
+        let object = try await f.create(.terminal)
+        try await click(try f.point(object.id), in: f.window)
+        guard let tile = f.canvas.tiles[object.id]?.content as? TerminalTile,
+              let root = f.window.contentView,
+              let composer = descendants(root).compactMap({ $0 as? ComposerBar }).first else {
+            throw Failure("damage fixture requires the actual terminal and composer views")
+        }
+        try await wait("damage fixture must start with real terminal typing") {
+            f.window.firstResponder === tile.terminal && f.canvas.focusedTerminal == object.id
+        }
+        try await typed("ready", in: f.window)
+        try await wait("damage fixture terminal must receive native keys") {
+            f.read(object.id) == Data("ready".utf8)
+        }
+        if name == "damage-composer-escape-terminal" {
+            try await post([key(34, "i", flags: .command, in: f.window)])
+            try await wait("Command-I must give the real composer its responder") {
+                f.window.firstResponder === composer.text && f.canvas.focusedTile == nil
+            }
+        }
+        f.window.layoutIfNeeded()
+        f.window.displayIfNeeded()
+        await MainTurns.next()
+        f.window.displayIfNeeded()
+        let terminalRect = tile.terminal.convert(tile.terminal.bounds, to: f.canvas.overlay)
+        let contentRect = tile.convert(tile.bounds, to: f.canvas.overlay)
+        print("GEOMETRY \(name) terminal=\(NSStringFromRect(terminalRect)) content=\(NSStringFromRect(contentRect)) terminal-within-content=\(contentRect.contains(terminalRect)) visible=\(NSStringFromRect(f.canvas.overlay.visibleRect))")
+        try require(tile.terminal.window === f.window && tile.surface != nil
+            && terminalRect.width > 0 && terminalRect.height > 0
+            && f.canvas.overlay.visibleRect.contains(terminalRect),
+            "damage boundary must be the fully visible, laid-out real terminal view, not an arbitrary inset")
+        let observer = OverlayDamage(overlay: f.canvas.overlay, document: f.canvas.document, terminal: tile.terminal)
+        defer {
+            observer.recording = false
+            observer.report(name)
+            observer.restore()
+        }
+        if name == "damage-ring-pure-move" {
+            observer.begin()
+            try await post([key(34, "i", flags: .command, in: f.window)])
+            try await wait("move observer control must really transfer terminal typing to composer") {
+                f.window.firstResponder === composer.text && f.canvas.focusedTile == nil
+            }
+            try await wait("move observer control must see an actual overlay draw") {
+                f.window.displayIfNeeded()
+                return observer.samples.contains { $0.operation == "draw-clip" }
+            }
+            observer.recording = false
+            observer.report("pure-move-observer-control")
+            try require(observer.samples.contains { $0.operation.hasPrefix("invalidate-") },
+                "pure-move observer control must see real invalidation")
+            let before = f.canvas.overlay.rings
+            try require(!before.isEmpty, "pure move requires a visible selection ring")
+            let moved = before.map {
+                SceneOverlay.Ring(rect: $0.rect.offsetBy(dx: 23, dy: 19), dashed: $0.dashed)
+            }
+            observer.begin()
+            f.canvas.overlay.rings = moved
+            f.window.displayIfNeeded()
+            await MainTurns.next()
+            f.window.displayIfNeeded()
+            await MainTurns.next()
+            observer.recording = false
+            observer.report(name)
+            try require(f.canvas.overlay.rings == moved && f.window.firstResponder === composer.text
+                && f.canvas.selection == [object.id], "pure translation must preserve ring appearance and keyboard ownership")
+            try require(observer.samples.isEmpty, "pure ring translation must reuse rendered content without invalidation or drawing")
+            return
+        }
+        observer.begin()
+        switch name {
+        case "damage-composer-escape-terminal":
+            try await post([key(53, "\u{1b}", in: f.window)])
+            try await wait("composer Escape must return real terminal typing") {
+                f.window.firstResponder === tile.terminal && f.canvas.focusedTerminal == object.id
+            }
+        case "damage-terminal-resign-composer":
+            try await post([key(34, "i", flags: .command, in: f.window)])
+            try await wait("terminal must resign real typing to the composer") {
+                f.window.firstResponder === composer.text && f.canvas.focusedTile == nil
+            }
+        case "damage-terminal-resign-navigator":
+            try await post([key(35, "p", flags: .command, in: f.window)])
+            try await wait("terminal must resign real typing to the navigator field editor") {
+                (f.window.firstResponder as? NSTextView)?.isFieldEditor == true
+                    && f.window.firstResponder !== composer.text && f.canvas.focusedTile == nil
+            }
+        default: throw Failure("unknown terminal damage transition")
+        }
+        try require(f.canvas.selection == [object.id], "damage transitions must preserve the terminal selection")
+        try await wait("focus transition must produce an observed native overlay draw") {
+            f.window.displayIfNeeded()
+            return observer.samples.contains { $0.operation == "draw-clip" }
+        }
+        await MainTurns.next()
+        f.window.displayIfNeeded()
+        try observer.requireBoundary(name)
+        try require(f.read(object.id) == Data("ready".utf8),
+            "focus transition keys must not leak into the real terminal program")
+        if name == "damage-composer-escape-terminal" {
+            try await typed("returned", in: f.window)
+            try await wait("Escape must restore actual terminal input, not only responder bookkeeping") {
+                f.read(object.id) == Data("readyreturned".utf8)
+            }
+        }
+    }
+
     private static func exerciseUndo(_ type: ObjectType, _ f: Fixture, interleaved: Bool = false) async throws {
         let object = try await f.create(type, x: interleaved ? 470 : 30)
         let moved = Frame(x: object.frame.x + 30, y: object.frame.y + 20, w: object.frame.w, h: object.frame.h)
@@ -2320,7 +2562,9 @@ private enum SelectionTyping {
                 return
             }
         }
-        if name.hasPrefix("shift-body-") {
+        if name.hasPrefix("damage-") {
+            try await exerciseTerminalDamage(name, f)
+        } else if name.hasPrefix("shift-body-") {
             let single = name.hasSuffix("-single")
             let suffix = String(name.dropFirst("shift-body-".count))
             let typeName = single ? String(suffix.dropLast("-single".count)) : suffix
