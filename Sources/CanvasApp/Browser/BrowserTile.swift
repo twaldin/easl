@@ -946,6 +946,11 @@ final class BrowserTile: NSView, TileContent {
         return CGPoint(x: local.x / zoom, y: local.y / zoom)
     }
 
+    func pageScrollCapability(at point: NSPoint, direction: CGVector, completion: @escaping @MainActor (Bool?) -> Void) {
+        guard let webView, let point = pagePoint(point), !webView.isLoading else { return completion(nil) }
+        PageScrollCapability.query(in: webView, point: point, direction: direction, completion: completion)
+    }
+
     private func viewRect(_ pageRect: CGRect) -> NSRect? {
         guard let webView, webView.superview === pageHost else { return nil }
         let zoom = webView.pageZoom * webView.magnification

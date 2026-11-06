@@ -96,11 +96,12 @@ public struct SurfaceInputEvent: Sendable, Equatable {
             action = .mouse(SurfaceMouse(phase: phase, x: try f.coordinate("x"), y: try f.coordinate("y"),
                                          clicks: try f.integer("clicks", 1...SurfaceRequest.maxInteger, optional: true) ?? 1, mods: try f.mods()))
         case "scroll":
-            keys = ["x", "y", "dx", "dy", "precise", "phase", "momentum", "mods"]
+            keys = ["x", "y", "dx", "dy", "precise", "phase", "momentum", "mods", "gesture"]
             action = .scroll(SurfaceScroll(x: try f.coordinate("x"), y: try f.coordinate("y"), dx: try f.coordinate("dx"), dy: try f.coordinate("dy"),
                                            precise: try f.bool("precise", optional: true) ?? true,
                                            phase: UInt(try f.integer("phase", 0...SurfaceRequest.maxInteger, optional: true) ?? 0),
-                                           momentum: UInt(try f.integer("momentum", 0...SurfaceRequest.maxInteger, optional: true) ?? 0), mods: try f.mods()))
+                                           momentum: UInt(try f.integer("momentum", 0...SurfaceRequest.maxInteger, optional: true) ?? 0),
+                                           mods: try f.mods(), gesture: try f.integer("gesture", 1...SurfaceRequest.maxInteger, optional: true)))
         case "key":
             keys = ["action", "code", "chars", "plain", "repeat", "mods"]
             let down: Bool
@@ -213,6 +214,21 @@ public struct SurfaceScroll: Sendable, Equatable {
     public let phase: UInt
     public let momentum: UInt
     public let mods: UInt
+    /// Viewer-assigned gesture identity, unchanged by queue coalescing or network buffering.
+    public let gesture: Int?
+
+    public init(x: Double, y: Double, dx: Double, dy: Double, precise: Bool,
+                phase: UInt, momentum: UInt, mods: UInt, gesture: Int? = nil) {
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+        self.precise = precise
+        self.phase = phase
+        self.momentum = momentum
+        self.mods = mods
+        self.gesture = gesture
+    }
 }
 
 public struct SurfaceKey: Sendable, Equatable {

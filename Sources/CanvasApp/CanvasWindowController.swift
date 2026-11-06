@@ -1572,21 +1572,46 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
 /// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
-/// is on it, over a tile too. Plain scrolling over an oversized browser first reveals its clipped
-/// edge, then scrolls the page. A middle-button drag pans the canvas from anywhere on it.
+/// is on it, over a tile too. Wheel ownership stays with its initial board or content destination.
+/// Middle-drag and board-key Space-drag pan from anywhere on the canvas.
 final class CanvasWindow: NSWindow {
     /// A middle-button press on the canvas, and the press itself to hand on if it ends a click.
     private var middlePan: (pan: CanvasDragPan, press: NSEvent)?
     private var discardingMiddleSequence = false
-    private(set) var scrollSequence: UInt64 = 0
-    private var browserScroll = ScrollGesture()
-    private var browserScrollStart: (sequence: UInt64, tile: ObjectIdentifier)?
+    private var wheelBoundary = ScrollGesture()
+    private var wheelGeneration: UInt64 = 0
+    private var wheelState: WheelState = .idle
+    private var pageDeadline: DispatchWorkItem?
+    private(set) var deliveringContentWheel = false
+    private var spaceHeld = false
+    private var spacePan: CanvasDragPan?
+    private var discardingSpaceSequence = false
+
+    private final class WheelTarget {
+        weak var tile: TileFrameView?
+        weak var responder: NSView?
+        let point: NSPoint
+        init(tile: TileFrameView, responder: NSView, point: NSPoint) {
+            self.tile = tile
+            self.responder = responder
+            self.point = point
+        }
+    }
+
+    private enum WheelState {
+        case idle
+        case choosing(WheelTarget, [NSEvent])
+        case pendingPage(WheelTarget, [NSEvent])
+        case board
+        case content(WheelTarget)
+    }
     private var boardSelectionSerial: UInt64?
     private var dispatchingSelectionMouse = false
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         NotificationCenter.default.addObserver(self, selector: #selector(cancelMiddlePan), name: NSApplication.didResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(cancelCanvasGestures), name: NSApplication.didResignActiveNotification, object: nil)
     }
 
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
@@ -1627,6 +1652,7 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`handleScroll`), and a middle-button drag pans it
     /// (`middleDragPans`). Every event monitor has seen the event by now.
     override func sendEvent(_ event: NSEvent) {
+        if handleSpacePan(event) { return }
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
         if event.type == .scrollWheel, handleScroll(event, at: event.locationInWindow) { return }
         if middleDragPans(event) { return }
@@ -1638,6 +1664,7 @@ final class CanvasWindow: NSWindow {
     }
 
     func sendSelectionMouse(_ event: NSEvent, dispatch: () -> Void) {
+        if handleSpacePan(event) { return }
         guard !dispatchingSelectionMouse,
               attachedSheet == nil, NSApp.modalWindow == nil else { return dispatch() }
         dispatchingSelectionMouse = true
@@ -1667,6 +1694,7 @@ final class CanvasWindow: NSWindow {
     override func resignKey() {
         super.resignKey()
         cancelMiddlePan()
+        cancelCanvasGestures()
         boardSelectionSerial = nil
     }
 
@@ -1677,62 +1705,233 @@ final class CanvasWindow: NSWindow {
         return (canvas, hit)
     }
 
-    /// Called for both AppKit input and the development replay, which targets a view directly.
+    /// Called for AppKit input and development replay before native responder dispatch.
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
+        guard let canvas = (windowController as? CanvasWindowController)?.canvas,
+              attachedSheet == nil, NSApp.modalWindow == nil else { return false }
         let step = ScrollGesture.Step(event)
-        if step == .began || step == nil { scrollSequence &+= 1 }
-        guard let (canvas, hit) = canvas(at: point) else { return false }
-        if canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command {
+        let starts = wheelBoundary.starts(step: step, timestamp: event.timestamp)
+        if starts {
+            resolvePendingPage(asContent: false)
+            wheelGeneration &+= 1
+            wheelState = .idle
+            if let (_, hit) = self.canvas(at: point) {
+                if let step, step != .began, step != .mayBegin {
+                    wheelState = .board
+                    canvas.scrollWheel(with: event)
+                    return true
+                }
+                var view: NSView? = hit
+                while let current = view, !(current is TileFrameView) { view = current.superview }
+                if let tile = view as? TileFrameView, tile.isLive,
+                   hit === tile.content || hit.isDescendant(of: tile.content) {
+                    wheelState = .choosing(WheelTarget(tile: tile, responder: hit, point: tile.content.convert(point, from: nil)), [])
+                } else {
+                    wheelState = .board
+                }
+            }
+        }
+        if case .idle = wheelState {
+            guard self.canvas(at: point) != nil else { return false }
+            wheelState = .board
+        }
+        if case .choosing = wheelState,
+           canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command {
+            wheelState = .board
             canvas.scrollWheel(with: event)
             return true
         }
-        return revealBrowser(event, at: point, from: hit, on: canvas, step: step)
-    }
-
-    private func revealBrowser(_ event: NSEvent, at point: NSPoint, from hitView: NSView, on canvas: CanvasView, step: ScrollGesture.Step?) -> Bool {
-        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-              let document = canvas.documentView else { return false }
-        var hit: NSView? = hitView
-        while let view = hit, !(view is TileFrameView) { hit = view.superview }
-        guard let tile = hit as? TileFrameView, tile.isLive,
-              tile.content is BrowserTile || tile.content is RemoteBrowserTile else { return false }
-        let browser = tile.content
-        let page = NSRect(x: 0, y: browser.headerHeight, width: browser.bounds.width,
-                          height: max(0, browser.bounds.height - browser.headerHeight))
-        guard page.contains(browser.convert(point, from: nil)) else { return false }
-        let rect = browser.convert(page, to: document)
-        let visible = canvas.clearVisibleRect(of: document)
-        let oversized = rect.width > visible.width || rect.height > visible.height
-        var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
-        if case .pan(let x, let y) = CanvasWheel.action(dx: dx, dy: dy, precise: event.hasPreciseScrollingDeltas,
-                                                      command: false, shift: event.modifierFlags.contains(.shift)) {
-            dx = x
-            dy = y
-        }
-        func reveal(_ delta: CGFloat, min lower: CGFloat, max upper: CGFloat, visibleMin start: CGFloat, visibleMax end: CGFloat) -> CGFloat {
-            delta < 0 ? max(delta, -max(0, upper - end) * canvas.magnification)
-                : min(delta, max(0, start - lower) * canvas.magnification)
-        }
-        let pan = oversized
-            ? CGSize(width: reveal(dx, min: rect.minX, max: rect.maxX, visibleMin: visible.minX, visibleMax: visible.maxX),
-                     height: reveal(dy, min: rect.minY, max: rect.maxY, visibleMin: visible.minY, visibleMax: visible.maxY))
-            : .zero
-        let revealsDirection = abs(dx) > abs(dy) ? pan.width != 0 : pan.height != 0
-        if let step {
-            if step == .began { browserScrollStart = (scrollSequence, ObjectIdentifier(tile)) }
-            guard browserScrollStart?.sequence == scrollSequence,
-                  browserScrollStart?.tile == ObjectIdentifier(tile) else {
-                canvas.scrollWheel(with: event)
+        switch wheelState {
+        case .choosing(let target, var initialEvents):
+            let direction = CanvasWheel.direction(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                                                  precise: event.hasPreciseScrollingDeltas, shift: event.modifierFlags.contains(.shift))
+            initialEvents.append(event)
+            guard direction.dx != 0 || direction.dy != 0 else {
+                if initialEvents.count >= 128 {
+                    wheelState = .board
+                    for initial in initialEvents { deliverWheel(initial, on: canvas) }
+                } else {
+                    wheelState = .choosing(target, initialEvents)
+                }
                 return true
             }
-            guard browserScroll.owner(of: step, sequence: scrollSequence, dx: dx, dy: dy,
-                                      tileTakes: !revealsDirection) == .canvas else { return false }
-            if step == .ended || step == .momentumEnded { return false }
-        } else if !revealsDirection {
+            guard let tile = target.tile, tile.isLive, tile.window === self,
+                  let responder = target.responder, responder.window === self else {
+                wheelState = .board
+                for initial in initialEvents { deliverWheel(initial, on: canvas) }
+                return true
+            }
+            let content = tile.content
+            if content is HtmlTile || content is BrowserTile || content is RemoteBrowserTile {
+                guard target.point.y >= content.headerHeight else {
+                    wheelState = .board
+                    for initial in initialEvents { deliverWheel(initial, on: canvas) }
+                    return true
+                }
+                wheelState = .pendingPage(target, initialEvents)
+                let generation = wheelGeneration
+                let deadline = DispatchWorkItem { [weak self] in
+                    guard let self, self.wheelGeneration == generation else { return }
+                    self.resolvePendingPage(asContent: false)
+                }
+                pageDeadline = deadline
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(150), execute: deadline)
+                content.pageScrollCapability(at: target.point, direction: direction) { [weak self] capable in
+                    guard let self, self.wheelGeneration == generation else { return }
+                    self.resolvePendingPage(asContent: capable == true)
+                }
+                return true
+            }
+            if let destination = nativeWheelDestination(target, direction: direction) {
+                target.responder = destination
+                wheelState = .content(target)
+            } else {
+                wheelState = .board
+            }
+            for initial in initialEvents { deliverWheel(initial, on: canvas) }
+        case .pendingPage(let target, var buffered):
+            buffered.append(event)
+            wheelState = .pendingPage(target, buffered)
+            if buffered.count >= 128 { resolvePendingPage(asContent: false) }
+        case .board, .content:
+            deliverWheel(event, on: canvas)
+        case .idle:
             return false
         }
-        canvas.pan(by: pan)
         return true
+    }
+
+    private func nativeWheelDestination(_ target: WheelTarget, direction: CGVector) -> NSView? {
+        guard let tile = target.tile, let hit = target.responder else { return nil }
+        if let terminal = tile.content as? TerminalTile {
+            return terminal.canScroll(direction) ? terminal.terminal : nil
+        }
+        if let note = tile.content as? NoteTile {
+            return canScroll(note.wheelScrollView, direction: direction) ? note.wheelScrollView : nil
+        }
+        if let changes = tile.content as? ChangesTile {
+            return target.point.y >= ChangesMetrics.headerHeight && changes.canScroll(direction) ? changes : nil
+        }
+        if let diagram = tile.content as? DiagramTile {
+            return diagram.canScroll(at: target.point, direction: direction) ? diagram : nil
+        }
+        var view: NSView? = hit
+        while let current = view, current !== tile {
+            if let note = current as? NoteTile, canScroll(note.wheelScrollView, direction: direction) { return note.wheelScrollView }
+            if let rows = current as? CodeRowsView { return rows.canScroll(direction) ? rows : nil }
+            if let scroll = current as? NSScrollView, canScroll(scroll, direction: direction) { return scroll }
+            view = current.superview
+        }
+        return nil
+    }
+
+    private func canScroll(_ scroll: NSScrollView, direction: CGVector) -> Bool {
+        guard let document = scroll.documentView else { return false }
+        let visible = scroll.contentView.bounds
+        if direction.dx != 0 {
+            return CanvasWheel.canScroll(offset: visible.minX - document.bounds.minX,
+                                         maximum: document.frame.width - visible.width, delta: direction.dx)
+        }
+        let maximum = document.frame.height - visible.height
+        let offset = document.isFlipped ? visible.minY - document.bounds.minY : document.bounds.maxY - visible.maxY
+        return CanvasWheel.canScroll(offset: offset, maximum: maximum, delta: direction.dy)
+    }
+
+    private func resolvePendingPage(asContent: Bool) {
+        guard case .pendingPage(let target, let events) = wheelState,
+              let canvas = (windowController as? CanvasWindowController)?.canvas else { return }
+        pageDeadline?.cancel()
+        pageDeadline = nil
+        wheelState = asContent ? .content(target) : .board
+        for event in events { deliverWheel(event, on: canvas) }
+    }
+
+    private func deliverWheel(_ event: NSEvent, on canvas: CanvasView) {
+        switch wheelState {
+        case .board:
+            canvas.scrollWheel(with: event)
+        case .content(let target):
+            guard let tile = target.tile, tile.isLive, tile.window === self, !tile.isHiddenOrHasHiddenAncestor,
+                  let responder = target.responder, responder.window === self, !responder.isHiddenOrHasHiddenAncestor,
+                  responder === tile.content || responder.isDescendant(of: tile.content) else { return }
+            if let terminal = tile.content as? TerminalTile, !terminal.acceptsRetainedWheel { return }
+            deliveringContentWheel = true
+            defer { deliveringContentWheel = false }
+            if tile.content is HtmlTile || tile.content is BrowserTile {
+                guard let cg = event.cgEvent?.copy() else { return }
+                let point = tile.content.convert(target.point, to: nil)
+                cg.location = CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.height ?? 0) - point.y)
+                guard let pinned = NSEvent(cgEvent: cg) else { return }
+                SurfaceEventQueue.adopt(pinned)
+                responder.scrollWheel(with: pinned)
+            } else {
+                responder.scrollWheel(with: event)
+            }
+        default:
+            break
+        }
+    }
+
+    func handleSpacePan(_ event: NSEvent) -> Bool {
+        let canvas = (windowController as? CanvasWindowController)?.canvas
+        let boardKeys = isKeyWindow && NSApp.isActive && attachedSheet == nil && NSApp.modalWindow == nil
+            && firstResponder === canvas?.documentView
+        if event.type == .keyUp, event.keyCode == 49, spaceHeld {
+            spaceHeld = false
+            return true
+        }
+        if event.type == .keyDown, event.keyCode == 49, boardKeys,
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            spaceHeld = true
+            return true
+        }
+        if spaceHeld && !boardKeys { cancelSpacePan() }
+        switch event.type {
+        case .leftMouseDown:
+            guard spaceHeld, boardKeys, self.canvas(at: event.locationInWindow) != nil else { return false }
+            spacePan = CanvasDragPan(at: event.locationInWindow)
+            discardingSpaceSequence = false
+            return true
+        case .leftMouseDragged:
+            guard var pan = spacePan else { return discardingSpaceSequence }
+            let wasPanning = pan.panning
+            let delta = pan.move(to: event.locationInWindow)
+            spacePan = pan
+            if let delta {
+                if !wasPanning { NSCursor.closedHand.push() }
+                canvas?.pan(by: delta)
+            }
+            return true
+        case .leftMouseUp:
+            guard let pan = spacePan else {
+                let discard = discardingSpaceSequence
+                discardingSpaceSequence = false
+                return discard
+            }
+            spacePan = nil
+            if pan.panning { NSCursor.pop() }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func cancelSpacePan() {
+        spaceHeld = false
+        if let pan = spacePan {
+            if pan.panning { NSCursor.pop() }
+            discardingSpaceSequence = true
+        }
+        spacePan = nil
+    }
+
+    @objc private func cancelCanvasGestures() {
+        cancelSpacePan()
+        pageDeadline?.cancel()
+        pageDeadline = nil
+        wheelGeneration &+= 1
+        wheelState = .idle
+        wheelBoundary = ScrollGesture()
     }
 
     /// Middle-button presses, drags and releases (`CanvasDragPan`): true when the event was taken.
@@ -1782,8 +1981,10 @@ final class CanvasWindow: NSWindow {
 extension ScrollGesture.Step {
     init?(_ event: NSEvent) {
         switch (event.phase, event.momentumPhase) {
-        case let (phase, _) where phase.contains(.began) || phase.contains(.mayBegin): self = .began
-        case let (phase, _) where phase.contains(.ended) || phase.contains(.cancelled): self = .ended
+        case let (phase, _) where phase.contains(.mayBegin): self = .mayBegin
+        case let (phase, _) where phase.contains(.began): self = .began
+        case let (phase, _) where phase.contains(.cancelled): self = .cancelled
+        case let (phase, _) where phase.contains(.ended): self = .ended
         case let (phase, _) where !phase.isEmpty: self = .changed
         case let (_, momentum) where momentum.contains(.began): self = .momentumBegan
         case let (_, momentum) where momentum.contains(.ended) || momentum.contains(.cancelled): self = .momentumEnded

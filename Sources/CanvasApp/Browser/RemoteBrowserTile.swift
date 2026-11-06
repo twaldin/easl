@@ -36,6 +36,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var opening = false
 
     private var streamID: String?
+    private var supportsScrollGestures = false
     private var credit: Credit = .idle
     private var stashed: [HostFrame] = []
     private var lastAcked = 0
@@ -53,6 +54,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     private var nextSeq = 0
     private var outbound: [Queued] = []
+    private var lastWheel: SurfaceScroll?
+    private var lastWheelTimestamp: TimeInterval = 0
+    private var wheelGesture = 0
     private var inputWait: CheckedContinuation<Void, Never>?
     private var mouseIsDown = false
     private var keysDown: Set<UInt16> = []
@@ -80,6 +84,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private struct Queued {
         var seq: Int
         var event: SurfaceInput
+        var preservesWheelBoundary = false
     }
 
     private struct MarkedText {
@@ -286,6 +291,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         streamTasks.values.forEach { $0.cancel() }
         streamTasks.removeAll()
         streamID = nil
+        supportsScrollGestures = false
         credit = .idle
         stashed.removeAll()
         lastAcked = 0
@@ -297,6 +303,9 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         nextSeq = 0
         opening = false
         outbound.removeAll()
+        lastWheel = nil
+        lastWheelTimestamp = 0
+        wheelGesture = 0
         clicks.removeAll()
         dialogs.keys.forEach { dialogs[$0] = true }
         let sheets = Array(dialogSheets.values)
@@ -404,6 +413,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     return
                 }
                 self.streamID = stream
+                self.supportsScrollGestures = result["scrollGestures"]?.bool == true
                 self.pageSize = CGSize(width: w, height: h)
                 self.credit = .owingZero
                 self.lastAcked = 0
@@ -637,7 +647,19 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             refreshAssembly.reset()
             self.assemblingRefinement = nil
         }
-        if coalesce(event) { return outbound.last?.seq }
+        var preservesWheelBoundary = false
+        if case .scroll(let scroll) = event {
+            if let previous = lastWheel {
+                preservesWheelBoundary = scroll.phase != previous.phase || scroll.momentum != previous.momentum
+                    || scroll.gesture != previous.gesture
+                    || (scroll.phase != 0 && scroll.phase != NSEvent.Phase.changed.rawValue)
+                    || (scroll.momentum != 0 && scroll.momentum != NSEvent.Phase.changed.rawValue)
+            } else {
+                preservesWheelBoundary = true
+            }
+            lastWheel = scroll
+        }
+        if !preservesWheelBoundary, coalesce(event) { return outbound.last?.seq }
         while outbound.count >= 128, dropOldestMotion() {}
         guard outbound.count < 128 else {
             endLink()
@@ -645,7 +667,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             return nil
         }
         nextSeq += 1
-        outbound.append(Queued(seq: nextSeq, event: event))
+        outbound.append(Queued(seq: nextSeq, event: event, preservesWheelBoundary: preservesWheelBoundary))
         if DevInput.surfaceTrace, let stream = streamID {
             DevInput.traceSurface(stage: "input.queued", stream: stream, seq: nextSeq)
         }
@@ -668,8 +690,15 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         case (.mouse(.move, _, _, _, _), .mouse(.move, let x, let y, let clicks, let mods)):
             outbound[index].event = .mouse(.move, x: x, y: y, clicks: clicks, mods: mods)
             return true
-        case (.scroll(_, _, let dx, let dy, let precise, _), .scroll(let x, let y, let ndx, let ndy, let nprecise, let mods)) where precise == nprecise:
-            outbound[index].event = .scroll(x: x, y: y, dx: dx + ndx, dy: dy + ndy, precise: precise, mods: mods)
+        case (.scroll(let previous), .scroll(let scroll))
+            where !outbound[index].preservesWheelBoundary
+                && previous.phase == scroll.phase && previous.momentum == scroll.momentum
+                && previous.precise == scroll.precise && previous.mods == scroll.mods
+                && previous.gesture == scroll.gesture:
+            outbound[index].event = .scroll(SurfaceScroll(
+                x: previous.x, y: previous.y, dx: previous.dx + scroll.dx, dy: previous.dy + scroll.dy,
+                precise: previous.precise, phase: previous.phase, momentum: previous.momentum,
+                mods: previous.mods, gesture: previous.gesture))
             return true
         default:
             return false
@@ -679,7 +708,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func dropOldestMotion() -> Bool {
         guard let index = outbound.firstIndex(where: {
             if case .mouse(.move, _, _, _, _) = $0.event { return true }
-            if case .scroll = $0.event { return true }
+            if case .scroll = $0.event { return !$0.preservesWheelBoundary }
             return false
         }) else { return false }
         outbound.remove(at: index)
@@ -870,6 +899,36 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         return enqueue(.mouse(action, x: point.x, y: point.y, clicks: max(1, event.clickCount), mods: mods(event)))
     }
 
+    func pageScrollCapability(at point: NSPoint, direction: CGVector,
+                              completion: @escaping @MainActor (Bool?) -> Void) {
+        guard supportsScrollGestures, let host = hostPoint(point, clamp: false), let size = pageSize,
+              let stream = streamID, let connection = owned.current() else {
+            completion(nil)
+            return
+        }
+        let generation = streamEpoch
+        let id = object.id
+        let script = PageScrollCapability.script(
+            point: CGPoint(x: host.x / size.width, y: host.y / size.height),
+            dx: direction.dx, dy: direction.dy, normalizedPoint: true)
+        Task { [weak self] in
+            do {
+                let result = try await connection.request("browser.call", .object([
+                    "id": .string(id), "method": .string("browser.eval"),
+                    "params": .object(["script": .string(script)]),
+                ]), timeout: .milliseconds(150))
+                guard let self, generation == self.streamEpoch, self.streamID == stream,
+                      self.object.id == id, self.owned.current() === connection else {
+                    completion(nil)
+                    return
+                }
+                completion(result["value"]?.bool)
+            } catch {
+                completion(nil)
+            }
+        }
+    }
+
     override func scrollWheel(with event: NSEvent) {
         let at: NSPoint
         if event.window == nil, let cg = event.cgEvent, let window {
@@ -882,9 +941,18 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         lastPointer = local
         guard let point = hostPoint(local, clamp: true) else { return }
         lastHost = point
-        // Phaseless. `precise` false is a mouse-wheel line delta. Omitting it would default to pixels.
-        enqueue(.scroll(x: point.x, y: point.y, dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
-                        precise: event.hasPreciseScrollingDeltas, mods: mods(event)))
+        let phaseless = event.phase.isEmpty && event.momentumPhase.isEmpty
+        let starts = lastWheel == nil
+            || (event.phase.contains(.mayBegin) && lastWheel?.phase != NSEvent.Phase.mayBegin.rawValue)
+            || (event.phase.contains(.began) && lastWheel?.phase != NSEvent.Phase.mayBegin.rawValue)
+            || (phaseless && (lastWheel!.phase != 0 || lastWheel!.momentum != 0
+                || event.timestamp - lastWheelTimestamp > 0.25 || event.timestamp < lastWheelTimestamp))
+        if starts { wheelGesture += 1 }
+        lastWheelTimestamp = event.timestamp
+        enqueue(.scroll(SurfaceScroll(x: point.x, y: point.y,
+                        dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
+                        precise: event.hasPreciseScrollingDeltas, phase: event.phase.rawValue,
+                        momentum: event.momentumPhase.rawValue, mods: UInt(mods(event)), gesture: wheelGesture)))
     }
 
     /// Page pinch, rotate, and swipe are not on the wire. Forward them so the canvas can still zoom.
@@ -1524,7 +1592,7 @@ private enum SurfaceInput {
     enum Command: String { case copy, paste, selectAll, back, forward, reload, stop }
 
     case mouse(MouseAction, x: Double, y: Double, clicks: Int, mods: Int)
-    case scroll(x: Double, y: Double, dx: Double, dy: Double, precise: Bool, mods: Int)
+    case scroll(SurfaceScroll)
     case key(KeyAction, code: Int, chars: String, plain: String, repeating: Bool, mods: Int)
     case text(String)
     case compose(String, start: Int, length: Int)
@@ -1548,14 +1616,17 @@ private enum SurfaceInput {
             fields["y"] = .number(y)
             if clicks != 1 { fields["clicks"] = .number(Double(clicks)) }
             if mods != 0 { fields["mods"] = .number(Double(mods)) }
-        case .scroll(let x, let y, let dx, let dy, let precise, let mods):
+        case .scroll(let scroll):
             fields["kind"] = .string("scroll")
-            fields["x"] = .number(x)
-            fields["y"] = .number(y)
-            fields["dx"] = .number(dx)
-            fields["dy"] = .number(dy)
-            fields["precise"] = .bool(precise)
-            if mods != 0 { fields["mods"] = .number(Double(mods)) }
+            fields["x"] = .number(scroll.x)
+            fields["y"] = .number(scroll.y)
+            fields["dx"] = .number(scroll.dx)
+            fields["dy"] = .number(scroll.dy)
+            fields["precise"] = .bool(scroll.precise)
+            fields["phase"] = .number(Double(scroll.phase))
+            fields["momentum"] = .number(Double(scroll.momentum))
+            if let gesture = scroll.gesture { fields["gesture"] = .number(Double(gesture)) }
+            if scroll.mods != 0 { fields["mods"] = .number(Double(scroll.mods)) }
         case .key(let action, let code, let chars, let plain, let repeating, let mods):
             fields["kind"] = .string("key")
             fields["action"] = .string(action.rawValue)
