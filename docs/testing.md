@@ -462,6 +462,14 @@ WebKit may coalesce queued wheel events and return the last event's native ident
 The first directional page event is delivered one page point inward from the pinned
 point so its result stays distinct; later page events keep the pinned point.
 
+The real Unix-socket viewer regression covers absent/false gesture advertisements,
+legacy input, stale gesture and stream replies, and current-answer board fallback.
+It runs WebKit and the actual remote tile through the native application event loop:
+
+```sh
+python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --case remote-wheel
+```
+
 ```sh
 scripts/bundle.sh
 python3 Tests/BrowserScrolling/run.py --app .build/easl.app --out /tmp/easl-browser-scrolling
