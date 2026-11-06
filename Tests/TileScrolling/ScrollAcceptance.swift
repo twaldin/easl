@@ -205,7 +205,8 @@ private enum SelectionTyping {
                 let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-                for y in 0..<8 { for x in 0..<8 { image.setColor(.blue, atX: x, y: y) } }
+                let blue = NSColor(deviceRed: 0, green: 0, blue: 1, alpha: 1)
+                for y in 0..<8 { for x in 0..<8 { image.setColor(blue, atX: x, y: y) } }
                 try image.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("image.png"))
                 props = .object(["path": "image.png"])
             default: throw Failure("unsupported fixture type \(type.rawValue)")
@@ -330,8 +331,7 @@ private enum SelectionTyping {
               let phaseField = CGEventField(rawValue: 99),
               let momentumField = CGEventField(rawValue: 123),
               let screen = NSScreen.screens.first else { throw Failure("CG scroll construction failed") }
-        let global = f.window.convertPoint(toScreen: point)
-        cg.location = CGPoint(x: global.x, y: screen.frame.maxY - global.y)
+        cg.location = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
         cg.flags = flags
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(f.window.windowNumber))
         cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(f.window.windowNumber))
