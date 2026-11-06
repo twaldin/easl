@@ -4,11 +4,11 @@ Each version's section is its GitHub release's notes.
 
 ## 0.3.7
 
-easl 0.3.7 gives a tile typing when you select it, while marquee, multi-selection, and agent or API selection keep keys on the board. Text measurement runs off the main thread, and needs-you refreshes no longer decode every question. Save work on the main thread is tagged in metrics, and the roughly half-second freeze when Escape returns from a note to a terminal is fixed.
+easl 0.3.7 gives a tile typing on selection, including a click on its web page's scrollbar, while marquee, multi-selection, and agent or API selection do not take typing. Delegated text measurement runs off the main thread, and needs-you refreshes no longer decode every question. Save work on the main thread is tagged in metrics, and the new selection rings no longer cause a roughly half-second freeze when Escape in the composer returns keys to a terminal.
 
 ### easld, the app, and the CLI
 
-Selection and typing, save metrics spans, text measurement, needs-you refreshes, and the terminal-focus stall fix need the 0.3.7 app. They do not need a new easld or CLI. A press on a web page's own scrollbar counts as a click and gives that tile typing.
+Selection and typing, save metrics spans, text measurement, needs-you refreshes, and the terminal-focus stall fix need the 0.3.7 app. They do not need a new easld or CLI.
 
 The only easld change is the `view.open_url` description and its generated `SchemaHash`. The API schema stays at version 2. The release check exercised the 0.3.7 candidate app with easld 0.3.6 and the 0.3.6 app with candidate easld, including both CLIs against both app and host sockets. All 32 CLI calls passed without a schema-hash warning.
 
@@ -19,11 +19,11 @@ The board format is unchanged, still format 3. The persisted object model is unc
 ### Known limits
 
 - A selected tile that is not taking typing has a dashed ring. The typing tile has a solid ring. Terminal ring corners are tighter, with radius 5 instead of 9, so the ring stays outside the text.
-- An `easl` CLI open-url call occasionally opens a second browser instead of reusing the open one. This intermittent also occurred before the 0.3.7 fix.
-- Three needs-you refreshes still took about 52 ms each in the release check. Their cause remains unexplained.
-- A true relayed browser, with separate drawing and viewing Macs, loses queued input completion and Command-Z, as on 0.3.6.
+- An `easl view.open_url` call occasionally opens a second browser instead of reusing the open one. This intermittent was also seen before the terminal-focus stall fix.
+- The paired needs-you stress check still recorded three main-thread pauses of about 52 ms each. An earlier check recorded 63.5 ms. Their cause remains unexplained.
+- With separate drawing and viewing Macs, a relayed browser page receives typed keys, but the viewing Mac's picture can stop short of the last ones, and Command-Z does not undo them. This also happens on 0.3.6.
 - CI's native tests run on macOS 27. The runtime release check ran on macOS 26.6.2.
-- The scroll rule in #235 and Pele in #210 are not included.
+- The cross-tile scroll-ownership rule in #235 is not included.
 
 ### Fixed
 
