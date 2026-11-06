@@ -40,8 +40,10 @@ public enum CanvasBasics {
             Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects, and M moves tiles by dragging anywhere on them, a terminal's body too. Hyper-click a drawing to show the agent what it marks."),
         ]),
         Section(title: "Reading a board", items: [
-            Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%. Over terminals, vertical scrolling stays with the tile, focused or not; sideways pans. Over an oversized browser, scroll first reveals its clipped edge, then scrolls the page. A trackpad gesture keeps its first owner through momentum; start another gesture after revealing the edge. With Move on, scrolling pans the board over tiles too."),
-            Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; drag with the middle button to pan from anywhere, tiles included."),
+            Item(term: "Scroll · pinch", text: "scroll content when it can move that way; empty board, fitting content, and a starting content edge pan the board. One owner keeps the whole gesture through tile crossings and momentum; start another gesture to pan at an edge. Pinch zooms; ⌘9 shows everything, ⌘0 is 100%. With Move on, new scroll gestures pan the board."),
+            Item(term: "Space-drag", text: "hold Space and drag anywhere to pan while the board holds the keys. With a typing tile, Space types normally; middle-drag pans without leaving typing."),
+            Item(term: "Terminal scrolling", text: "scrollback scrolls with or without typing. Without scrollback, the board pans unless the terminal has typing. Ghostty then keeps the input for full-screen programs; a short normal shell moves nothing because pinned Ghostty cannot report its active screen or alternate-scroll mode."),
+            Item(term: "With a mouse", text: "the wheel follows the same content-first rule; ⌘-scroll zooms around the pointer, ⇧-scroll uses the horizontal direction; middle-drag pans from anywhere, tiles included."),
             Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
             Item(term: "Captions", text: "the line under a code tile's header says why those lines matter. The tile keeps them as code moves; \"⚠︎ stale\" in its header means they're gone."),
             Item(term: "⌥⌘-arrows", text: "move between tiles: ⌥⌘↑ ⌥⌘↓ ⌥⌘← ⌥⌘→ go to the nearest tile that way and give it typing when it handles keys. ⌥⌘→ and ⌥⌘← step along the board's next-step arrows when the selected tile has one (\"Last step\" ends the walk). A tile not in view is centered."),
@@ -97,7 +99,7 @@ public enum CanvasBasics {
             Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the board says its ⌘ key."),
             Item(term: "⌃ stays the terminal's", text: "in a terminal ⌃C interrupts and ⌃D ends input; copy the selection with ⌘C and paste with ⌘V."),
             Item(term: "⌥ is Alt", text: "⌥ (Option) is the Alt key. For Alt as Meta in the shell (Alt-B, Alt-F), set macos-option-as-alt = true in your Ghostty config."),
-            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways, a middle-button drag pans; right-click the board or a tile for its menu."),
+            Item(term: "Mouse", text: "the wheel follows the content-first rule, ⌘-scroll zooms around the pointer, ⇧-scroll uses the horizontal direction, middle-drag pans; with board keys, Space-drag pans anywhere. Right-click the board or a tile for its menu."),
             Item(term: "⌥⌘-arrows", text: "move between tiles like a tiling window manager; a terminal you land on takes the keyboard, and ⌘Esc leaves it."),
         ]),
     ]
