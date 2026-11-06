@@ -98,7 +98,6 @@ private final class SceneRing {
 
     private func place() {
         let outer = NSRect(origin: .zero, size: ring.rect.size).insetBy(dx: -6, dy: -6)
-        // All four bounds are outside ring.rect; radius 5 fits the full 2.5-point stroke plus AA at 1x.
         let height = min(6, outer.height / 2), width = min(6, outer.width / 2)
         strips[0].place(NSRect(x: outer.minX, y: outer.minY, width: outer.width, height: height), origin: ring.rect.origin)
         strips[1].place(NSRect(x: outer.minX, y: outer.maxY - height, width: outer.width, height: height), origin: ring.rect.origin)
