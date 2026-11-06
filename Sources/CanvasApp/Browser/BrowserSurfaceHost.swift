@@ -702,7 +702,7 @@ final class BrowserSurface {
         cg.location = CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.height ?? 0) - inWindow.y)
         guard let event = NSEvent(cgEvent: cg) else { return }
         SurfaceEventQueue.adopt(event)
-        if stream.wheelDestination?.firstDirectional == nil, scroll.dx != 0 || scroll.dy != 0 {
+        if stream.wheelDestination?.firstDirectional == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
             stream.wheelDestination?.firstDirectional = PageWheelID(event)
         }
         destination.responder.scrollWheel(with: event)

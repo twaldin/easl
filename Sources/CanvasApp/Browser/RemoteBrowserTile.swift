@@ -35,6 +35,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private var opening = false
 
     private var streamID: String?
+    var hasOpenStream: Bool { streamID != nil }
     private var supportsScrollGestures = false
     private var credit: Credit = .idle
     private var stashed: [HostFrame] = []
@@ -675,6 +676,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             lastWheel = scroll
         }
         if !preservesWheelBoundary, coalesce(event) { return outbound.last?.seq }
+        if outbound.count >= 128, let latest = lastWheel?.gesture {
+            outbound.removeAll {
+                guard case .scroll(let scroll) = $0.event, let gesture = scroll.gesture else { return false }
+                return gesture != latest
+            }
+        }
         while outbound.count >= 128, dropOldestMotion() {}
         guard outbound.count < 128 else {
             endLink()

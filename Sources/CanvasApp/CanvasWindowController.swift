@@ -1754,11 +1754,11 @@ final class CanvasWindow: NSWindow {
                     wheelState = .choosing(WheelTarget(tile: nil, root: canvas, responder: hit,
                                                        point: canvas.convert(point, from: nil)), [])
                 }
+            } else if let root = contentView?.superview ?? contentView {
+                let hit = root.hitTest(root.superview?.convert(point, from: nil) ?? point) ?? root
+                wheelState = .content(WheelTarget(tile: nil, root: hit, responder: hit,
+                                                   point: hit.convert(point, from: nil)))
             }
-        }
-        if case .idle = wheelState {
-            guard self.canvas(at: point) != nil else { return false }
-            wheelState = .board
         }
         if case .choosing = wheelState,
            canvas.movesTiles() || event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command {
@@ -1793,7 +1793,8 @@ final class CanvasWindow: NSWindow {
                 target.responder = page
                 target.pageFallback = PageFallback(event)
                 wheelState = .content(target)
-            } else if let remote = content as? RemoteBrowserTile, target.point.y >= remote.headerHeight {
+            } else if let remote = content as? RemoteBrowserTile, remote.hasOpenStream,
+                      target.point.y >= remote.headerHeight {
                 target.responder = remote
                 target.pageFallback = PageFallback(event)
                 wheelState = .content(target)
@@ -1945,7 +1946,7 @@ final class CanvasWindow: NSWindow {
                 return discard
             }
             spacePan = nil
-            return finishPan(ended)
+            return finishPan(ended, release: event)
         default:
             return false
         }
@@ -1968,6 +1969,7 @@ final class CanvasWindow: NSWindow {
     /// A press on the canvas is held back until the pointer moves (a pan) or the button comes up
     /// first (a click, so the press and then the release go on to what's under it).
     private func middleDragPans(_ event: NSEvent) -> Bool {
+        guard !replayingPanClick else { return false }
         switch event.type {
         case .otherMouseDown where event.buttonNumber == 2:
             cancelMiddlePan()
@@ -1987,25 +1989,22 @@ final class CanvasWindow: NSWindow {
         case .otherMouseUp where event.buttonNumber == 2:
             guard let ended = middlePan else { return discardingMiddleSequence }
             middlePan = nil
-            return finishPan(ended)
+            return finishPan(ended, release: event)
         default:
             return false
         }
     }
 
-    private func finishPan(_ ended: (pan: CanvasDragPan, press: NSEvent)) -> Bool {
+    private func finishPan(_ ended: (pan: CanvasDragPan, press: NSEvent), release: NSEvent) -> Bool {
         if ended.pan.panning {
             NSCursor.pop()
             return true
         }
         replayingPanClick = true
         defer { replayingPanClick = false }
-        if ended.press.type == .leftMouseDown {
-            sendSelectionMouse(ended.press) { super.sendEvent(ended.press) }
-        } else {
-            super.sendEvent(ended.press)
-        }
-        return false
+        NSApp.postEvent(release, atStart: true)
+        NSApp.sendEvent(ended.press)
+        return true
     }
 
     @objc private func cancelMiddlePan() {

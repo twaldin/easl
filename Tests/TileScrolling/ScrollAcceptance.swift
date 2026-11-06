@@ -25,6 +25,12 @@ private enum SelectionTyping {
         let name: String
         let baseline: String
     }
+
+    @MainActor
+    private final class ButtonCounter: NSObject {
+        var count = 0
+        @objc func press(_ sender: Any?) { count += 1 }
+    }
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw Failure(message) }
     }
@@ -203,6 +209,7 @@ private enum SelectionTyping {
                 for y in 0..<8 { for x in 0..<8 { image.setColor(blue, atX: x, y: y) } }
                 try image.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent("image.png"))
                 props = .object(["path": "image.png"])
+            case .shape: props = .object(["kind": "rect"])
             default: throw Failure("unsupported fixture type \(type.rawValue)")
             }
             let object = board.create(type: type, props: props, frame: Frame(x: x, y: y, w: width, h: height))
@@ -560,12 +567,88 @@ private enum SelectionTyping {
         Scenario(name: "space-board-over-tile", baseline: "expected regression failure: Space-drag is not implemented"),
         Scenario(name: "space-typing-once", baseline: "existing-pass control, NOT a fail-before claim"),
         Scenario(name: "space-click-replays", baseline: "new Space-pan click replay regression; baseline ordinary click is the control"),
+        Scenario(name: "space-click-shape", baseline: "ordinary shape-click control at94969df3; regression at0d9e1593"),
+        Scenario(name: "space-click-move-terminal", baseline: "Move click keeps board keys at94969df3; regression at0d9e1593"),
+        Scenario(name: "space-click-native-button", baseline: "ordinary native button-click control; tracking regression at0d9e1593"),
+        Scenario(name: "outside-board-retains-wheel", baseline: "outside scroll view must retain its gesture across the board"),
         Scenario(name: "terminal-horizontal-unfocused", baseline: "safety control: horizontal wheel must never send non-typing program bytes"),
         Scenario(name: "terminal-empty-unfocused", baseline: "expected regression failure: unfocused no-history vertical scroll swallowed"),
         Scenario(name: "terminal-alternate-typing", baseline: "existing-pass control: native alternate-scroll arrows preserved")
     ]
 
     private static func run(_ name: String, _ f: Fixture) async throws {
+        if name == "outside-board-retains-wheel" {
+            guard let root = f.window.contentView else { throw Failure("missing window content") }
+            let scroll = NSScrollView(frame: NSRect(x: 15, y: 15, width: 240, height: 170))
+            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 220, height: 5000))
+            text.isEditable = false
+            text.string = (1...200).map { "Outside board row \($0)\n" }.joined()
+            scroll.documentView = text
+            scroll.hasVerticalScroller = true
+            root.addSubview(scroll)
+            defer { scroll.removeFromSuperview() }
+            f.window.layoutIfNeeded()
+            let point = text.convert(NSPoint(x: 40, y: text.visibleRect.minY + 40), to: nil)
+            try require(!scroll.isDescendant(of: f.canvas)
+                        && f.hit(point)?.isDescendant(of: scroll) == true
+                        && text.bounds.height > scroll.contentSize.height,
+                        "outside-board fixture must be a hittable overflowing native sibling")
+            try await boardKeys(f)
+            let viewport = f.canvas.viewport, origin = scroll.contentView.bounds.origin
+            try await wheel(point, dy: -60, phase: 1, in: f)
+            try await wait("outside native scroll view must move on its first event") {
+                scroll.contentView.bounds.origin != origin
+            }
+            let afterBegin = scroll.contentView.bounds.origin
+            try await wheel(try boardPoint(f), dy: -60, phase: 2, in: f)
+            try await wheel(try boardPoint(f), dy: 0, phase: 4, in: f)
+            try await wheel(try boardPoint(f), dy: -40, momentum: 1, in: f)
+            try await wheel(try boardPoint(f), dy: 0, momentum: 3, in: f)
+            try require(f.canvas.viewport == viewport && scroll.contentView.bounds.origin.y > afterBegin.y,
+                        "outside native owner must keep continuation and momentum without panning board")
+            return
+        }
+        if name == "space-click-shape" || name == "space-click-move-terminal" || name == "space-click-native-button" {
+            let type: ObjectType = name == "space-click-shape" ? .shape
+                : name == "space-click-move-terminal" ? .terminal : .note
+            let object = try await f.create(type)
+            try await boardKeys(f)
+            var point = try f.point(object.id)
+            let counter = ButtonCounter()
+            if name == "space-click-native-button" {
+                guard let tile = f.canvas.tiles[object.id] else { throw Failure("missing button tile") }
+                let button = NSButton(title: "Native click receipt", target: counter, action: #selector(ButtonCounter.press(_:)))
+                button.frame = NSRect(x: 20, y: 35, width: 190, height: 32)
+                tile.content.addSubview(button)
+                point = try f.checked(button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil),
+                                      target: button, label: "native button")
+                try await click(point, in: f.window)
+                try require(counter.count == 1, "ordinary click must activate the native control")
+                counter.count = 0
+                try await boardKeys(f)
+            } else if name == "space-click-move-terminal" {
+                try await post([key(46, "m", in: f.window), key(46, "m", type: .keyUp, in: f.window)])
+                try require(f.canvas.movesTiles(), "native M shortcut must activate Move before Space click")
+            }
+            let viewport = f.canvas.viewport, frame = f.board.objects[object.id]?.frame
+            let before = f.read(object.id)
+            try await post([key(49, " ", in: f.window)])
+            try await click(point, in: f.window)
+            try await post([key(49, " ", type: .keyUp, in: f.window)])
+            try require(f.canvas.viewport == viewport && f.board.objects[object.id]?.frame == frame,
+                        "replayed click must neither pan nor move its object")
+            if name == "space-click-shape" {
+                try require(f.canvas.selection == [object.id] && f.window.firstResponder === f.canvas.document,
+                            "Space click must select the drawn shape through the app monitor")
+            } else if name == "space-click-move-terminal" {
+                try require(f.canvas.movesTiles() && f.window.firstResponder === f.canvas.document
+                            && f.read(object.id) == before,
+                            "Space click with Move must keep board keys and send no terminal bytes")
+            } else {
+                try require(counter.count == 1, "Space click must complete native button tracking exactly once")
+            }
+            return
+        }
         if name == "hover-panel-outside-tile" || name == "references-panel-outside-tile"
             || name == "browser-native-panel" || name == "html-native-panel" {
             try await nativePanel(name, f)
