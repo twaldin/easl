@@ -3,6 +3,48 @@ import Testing
 @testable import CanvasCore
 
 struct SurfaceProtocolTests {
+    @Test func wheelGestureIdentityIsOptionalAndStrict() throws {
+        let base: [String: JSONValue] = ["kind": "scroll", "seq": 1, "x": 2, "y": 3, "dx": 0, "dy": -4,
+                                              "phase": 4, "momentum": 0]
+        for gesture in [nil, .number(7)] as [JSONValue?] {
+            var event = base
+            event["gesture"] = gesture
+            let request = try SurfaceRequest(method: "surface.input", params: .object([
+                "stream": "str_page", "events": .array([.object(event)]),
+            ]))
+            guard let request, case .input(_, let events) = request, case .scroll(let scroll) = events[0].action else {
+                Issue.record("Expected native scroll input")
+                continue
+            }
+            #expect(scroll.gesture == (gesture == nil ? nil : 7))
+        }
+        for invalid in [.number(0), .number(-1), .number(1.5), .string("7"), .bool(true)] as [JSONValue] {
+            var event = base
+            event["gesture"] = invalid
+            #expect(throws: ApiRouter.Failure.self) {
+                try SurfaceRequest(method: "surface.input", params: .object([
+                    "stream": "str_page", "events": .array([.object(event)]),
+                ]))
+            }
+        }
+    }
+
+    @Test func wheelRejectionRequiresExactStreamAndPositiveGestureFields() {
+        let valid = SurfaceScrollUnhandled.data(stream: "str_page", gesture: 7)
+        #expect(SurfaceScrollUnhandled(valid)?.stream == "str_page")
+        #expect(SurfaceScrollUnhandled(valid)?.gesture == 7)
+        for invalid in [
+            .object(["stream": "obj_page", "gesture": 7]),
+            .object(["stream": "str_page", "gesture": 0]),
+            .object(["stream": "str_page", "gesture": .number(1.5)]),
+            .object(["stream": "str_page", "gesture": "7"]),
+            .object(["stream": "str_page"]),
+            .object(["stream": "str_page", "gesture": 7, "extra": .bool(true)]),
+        ] as [JSONValue] {
+            #expect(SurfaceScrollUnhandled(invalid) == nil)
+        }
+    }
+
     @Test func progressIsASeparatePrivateRequest() throws {
         #expect(try SurfaceRequest(method: "surface.progress", params: .object([
             "stream": "str_refresh", "frame": 7, "offset": 16384,

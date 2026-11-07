@@ -434,16 +434,61 @@ python3 Tests/SceneStacking/run.py --bin-path "$(swift build --build-system nati
 
 The runner uses disposable homes and links the prebuilt `CanvasApp`. It checks actual `view.render` pixels and object order in normal and full-content modes, snapshot metadata, native hit testing, both stacking commands, arrow and ink transitions, and unfilled-interior pass-through. It never rebuilds the app. This is not WindowServer proof. Capture the real overlapping note and rectangle locally and in both remote viewers before and after restacking.
 
-### Scrolling oversized browser tiles
+### Tile scroll ownership
 
-Plain scrolling over an oversized live local or streamed browser first reveals any browser edge clipped
-in that direction by the canvas window, clear of the toolbar and tray. The pan stops at that
-edge; further wheel steps scroll the page itself. A phased gesture keeps the owner selected by its first movement through
-momentum, so another gesture may be needed after revealing the edge. A browser resize during
-a gesture does not change that gesture's owner. A gesture that began outside the browser page
-continues panning the canvas when that browser arrives under the pointer. The tile's frame,
-page viewport size, and board layout stay unchanged. Move and ⌘-scroll keep their existing
-pan and zoom behavior.
+Local and remote boards use content-first directional ownership. A new gesture scrolls the
+tile's content when it can move that way; fitting content or an initial limit pans the board.
+The original owner keeps crossings, resize, both axes, and momentum. A wheel burst ends
+after a 250 ms gap. Space-drag pans anywhere with board keys and never intercepts typed
+spaces. New Move-tool and Command-scroll gestures retain pan and zoom behavior.
+
+Pages receive wheel input first. Only WebKit's unhandled reply for the first directional
+event hands the gesture to the board. Missing private selectors leave the gesture with
+the page, and a page that cancels the wheel keeps it even at its bound. Browser tiles
+lose WebKit's edge bounce. Remote pages follow the same rule on the drawing Mac,
+without a blocking probe. The [terminal disposition table](design.md) records the
+accepted typing/no-scrollback limit imposed by pinned Ghostty's missing mode getters.
+
+The native ownership regressions link the existing testing-enabled release objects and run
+in Mac CI. For manual baseline/candidate comparison, use the claimed macOS guest and the same harness:
+
+```sh
+swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /tmp/easl-tile-scrolling
+```
+
+This runner checks native panel scrolling, tile crossings, edges, momentum, focus loss,
+Space-drag and click replay, and the terminal disposition table. Its CG-built wheel events
+enter the real `CanvasWindow` through `NSApp.sendEvent`. Label them **synthetic, AppKit
+dispatch**, not HID or physical-trackpad evidence. The image control exercises scroll
+began/changed/ended followed by nonzero momentum began/changed/ended. Wheel timestamps
+must use the live monotonic clock; zero timestamps suppressed momentum on both baseline
+and candidate in the paired guest control.
+WebKit may coalesce queued wheel events and return the last event's native identity.
+The first directional page event is delivered one page point inward from the pinned
+point so its result stays distinct; later page events keep the pinned point.
+
+The run-4 native-panel ruling excludes the plain sibling `NSScrollView` synthetic fixture:
+its continuation fails on baseline and candidate. The real sibling Basics panel, verified
+outside `CanvasView`, retains a CuaDriver phaseless burst on the fix when its layout
+constraint moves it away from the HID target (panel06 proof `a2404b0d`). Baseline pans
+instead. This is fixture-driven panel motion, not HID pointer-motion proof. The tracked
+`basics-panel-outside-canvas` case checks first-event delivery and board isolation with
+AppKit dispatch; full content continuation is qualified by the HID probe.
+
+An actual `94969df3` drawing app and `560f49fc` viewer also preserved a complete phased/momentum
+sequence over the socket: 160 host points for the phaseless control, 161 for the same
+deltas with phases (proof `15ab494f`). The fixture timestamp failure above does not
+establish an older-host replay regression. Only gesture identity is advertisement-gated;
+phase and momentum remain forwarded to older hosts.
+
+The real Unix-socket viewer regression covers absent/false gesture advertisements,
+legacy input, stale gesture and stream replies, and current-answer board fallback.
+It runs WebKit and the actual remote tile through the native application event loop:
+
+```sh
+python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --case remote-wheel
+```
 
 ```sh
 scripts/bundle.sh
@@ -453,11 +498,16 @@ python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --arrival
 python3 Tests/BrowserScrolling/resize.py --app .build/easl.app --drift
 ```
 
-The runner launches a real app with a disposable home and a local oversized document. It
-replays native precise and line-based scrolls through the full document on both axes. Phased
-trackpad replay checks canvas reveal with a viewport-sized document, because directly replayed
-WebKit gestures drop later steps (`DevInput.swift`). START and END must become visible inside
-the window. A final END-marker WindowServer capture checks that native chrome, including
+The runner launches a real app with a disposable home and a local oversized document. Its
+precise and line-based events are synthetic AppKit replay, not HID or physical trackpad input.
+It checks content-first movement, board panning at an initial limit or over fitting content,
+and full-document START/END access on both axes. Phased replay checks observable ownership,
+not full-document WebKit traversal; qualify full traversal separately. These browser runners
+emit no momentum. Separately qualify phased
+plus momentum input through the real `CanvasWindow` with `NSApp.sendEvent` or
+`window.sendEvent`, labelled **synthetic, AppKit dispatch**, and retain native event
+receipts. CuaDriver targeted phaseless wheel input remains the real-HID proof. A final
+END-marker WindowServer capture checks that native chrome, including
 the toolbar and tray, does not cover its colored border. The runner also checks that the tile frame and WebKit viewport
 stay unchanged. The runner never builds the app or touches the installed app's boards.
 The fixture hides page scrollbars and waits for native overlay scrollers to fade.

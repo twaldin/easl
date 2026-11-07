@@ -41,6 +41,8 @@ jobs:
         run: python3 Tests/MoveEscape/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native browser initial admission regression
         run: python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
+      - name: Native remote browser wheel negotiation regression
+        run: python3 Tests/BrowserInitialAdmission/run.py --bin-path "$(swift build --build-system native --show-bin-path)" --case remote-wheel
       - name: Native clear browsing data regression
         run: python3 Tests/ClearBrowsingData/run.py --bin-path "$(swift build --build-system native --show-bin-path)"
       - name: Native browser wait navigation regression
@@ -104,6 +106,17 @@ jobs:
         with:
           name: selection-typing
           path: ${{ runner.temp }}/selection-typing
+          if-no-files-found: error
+      - name: Native tile scroll ownership regression
+        id: tile-scrolling
+        if: ${{ !cancelled() && steps.selection-typing-build.outcome == 'success' }}
+        run: python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/tile-scrolling"
+      - name: Preserve tile scroll ownership evidence
+        if: always() && steps.tile-scrolling.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tile-scrolling
+          path: ${{ runner.temp }}/tile-scrolling
           if-no-files-found: error
       - name: Native main-thread stall capture regression
         run: python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/stall-sampler" --ci-timing-report-only

@@ -76,7 +76,8 @@ final class BrowserSurfaceHost: NSObject {
         surface.add(stream)
         watch()
         NSLog("easl: browser %@ streams as %@ (%@, %.2f px/pt)", id, stream.id, format.rawValue, stream.scale)
-        return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size), "scale": .number(stream.scale)])
+        return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size),
+                        "scale": .number(stream.scale), "scrollGestures": .bool(peer.hears("surface.scrollUnhandled", on: board))])
     }
 
     private func surface(for tile: BrowserTile) -> BrowserSurface {
@@ -544,7 +545,7 @@ final class BrowserSurface {
             }
             Self.mouse(mouse.phase, at: point, clicks: mouse.clicks, mods: mouse.mods, on: webView, target: target)
         case .scroll(let scroll):
-            Self.scroll(scroll, on: webView)
+            Self.scroll(scroll, on: webView, stream: stream)
         case .key(let key):
             if key.down {
                 stream.heldKeys[key.code] = (key.chars, key.plain)
@@ -661,23 +662,59 @@ final class BrowserSurface {
         if down { webView.keyDown(with: event) } else { webView.keyUp(with: event) }
     }
 
-    private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView) {
+    func pageWheelUnhandled(_ event: NSEvent, from webView: WKWebView) {
+        guard tile?.webView === webView else { return }
+        let first = PageWheelID(event)
+        for stream in streams where !stream.closed {
+            guard var destination = stream.wheelDestination,
+                  destination.page === webView, destination.firstDirectional == first,
+                  !destination.rejected else { continue }
+            destination.rejected = true
+            stream.wheelDestination = destination
+            stream.push("surface.scrollUnhandled", SurfaceScrollUnhandled.data(stream: stream.id, gesture: destination.gesture))
+        }
+    }
+
+    private static func scroll(_ scroll: SurfaceScroll, on webView: WKWebView, stream: SurfaceStream) {
+        let local: NSPoint
+        let target: NSView
+        if let gesture = scroll.gesture {
+            if stream.wheelDestination?.gesture != gesture {
+                let point = Self.point(scroll.x, scroll.y, in: webView)
+                stream.wheelDestination = SurfaceStream.WheelDestination(
+                    page: webView, responder: responder(at: point, in: webView), point: point,
+                    gesture: gesture)
+            }
+            guard let destination = stream.wheelDestination,
+                  destination.page === webView, !destination.rejected else { return }
+            local = destination.point
+            target = destination.responder
+        } else {
+            local = Self.point(scroll.x, scroll.y, in: webView)
+            target = responder(at: local, in: webView)
+        }
         func wheel(_ delta: Double) -> Int32 { Int32(max(-100_000, min(100_000, delta)).rounded()) }
+        let dx = wheel(scroll.dx), dy = wheel(scroll.dy)
+        let first = scroll.gesture != nil && stream.wheelDestination?.firstDirectional == nil
+            && (dx != 0 || dy != 0)
         guard webView.window != nil,
               let cg = CGEvent(scrollWheelEvent2Source: nil, units: scroll.precise ? .pixel : .line, wheelCount: 2,
-                               wheel1: wheel(scroll.dy), wheel2: wheel(scroll.dx), wheel3: 0) else { return }
+                               wheel1: dy, wheel2: dx, wheel3: 0) else { return }
+        cg.timestamp = CGEventTimestamp(ProcessInfo.processInfo.systemUptime * 1_000_000_000)
         cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: scroll.precise ? 1 : 0)
         if let phase = scrollPhases[scroll.phase], let field = CGEventField(rawValue: 99) { cg.setIntegerValueField(field, value: phase) }
         if let phase = momentumPhases[scroll.momentum], let field = CGEventField(rawValue: 123) { cg.setIntegerValueField(field, value: phase) }
         cg.flags = CGEventFlags(rawValue: UInt64(scroll.mods))
         // The event has no window, and WebKit reads its location as its view's window's
         // coordinates: the window-local point goes where that reading gives it back unchanged.
-        let local = Self.point(scroll.x, scroll.y, in: webView)
-        let inWindow = webView.convert(local, to: nil)
+        let inWindow = PageWheelHandoff.point(webView.convert(local, to: nil), first: first, in: webView)
         cg.location = CGPoint(x: inWindow.x, y: (NSScreen.screens.first?.frame.height ?? 0) - inWindow.y)
         guard let event = NSEvent(cgEvent: cg) else { return }
         SurfaceEventQueue.adopt(event)
-        responder(at: local, in: webView).scrollWheel(with: event)
+        if first {
+            stream.wheelDestination?.firstDirectional = PageWheelID(event)
+        }
+        target.scrollWheel(with: event)
     }
 
     /// The page's selected text, read in the helper's world (`selectedText`): never through this

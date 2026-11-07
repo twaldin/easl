@@ -38,6 +38,7 @@ final class SurfaceStream {
             if closed {
                 inputRevision.advance()
                 refinementTransfer = nil
+                wheelDestination = nil
             }
         }
     }
@@ -45,6 +46,15 @@ final class SurfaceStream {
     var heldButton: NSPoint?
     weak var mouseTarget: NSView?
     var heldKeys: [UInt16: (chars: String, plain: String)] = [:]
+    struct WheelDestination {
+        let page: NSView
+        let responder: NSView
+        let point: NSPoint
+        let gesture: Int
+        var firstDirectional: PageWheelID?
+        var rejected = false
+    }
+    var wheelDestination: WheelDestination?
     private var pipeline: Task<Void, Never>?
     private var queued = 0
     // Ack 0 proves the viewer has its stream id and easld has registered its private route.

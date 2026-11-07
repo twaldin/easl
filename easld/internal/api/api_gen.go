@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "5320b0584cbdc4e4"
+const SchemaHash = "8b6bda8201bbc5a3"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -451,9 +451,15 @@ type SurfaceNotice struct {
 	State  *string `json:"state,omitempty"`
 }
 
+// SurfaceScrollUnhandled: The drawing Mac rejected this gesture's first directional native wheel event. Private to the subscribed stream owner, once per gesture. Later events of that rejected gesture do not reach the page.
+type SurfaceScrollUnhandled struct {
+	Stream  SurfaceStream `json:"stream"`
+	Gesture int           `json:"gesture"`
+}
+
 // SurfaceEvent: Private pushed events, never board broadcasts. Canonical board id and matching subscription are required on the owning connection.
 //
-// SurfaceEvent is a union of JSON objects (variants: "", "", ""); decode it as a generic map.
+// SurfaceEvent is a union of JSON objects (variants: "", "", "", ""); decode it as a generic map.
 type SurfaceEvent = map[string]any
 
 // BoardLifecycleEvent: Board availability after a successful registry transition. The envelope names the canonical board and data is empty. Closing does not disconnect subscriptions; reopening the board announces its availability on those same subscriptions.

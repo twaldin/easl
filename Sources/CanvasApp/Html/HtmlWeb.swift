@@ -448,6 +448,8 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 }
 
 final class HtmlWebView: WKWebView {
+    var wheelHandoffEnabled = false
+
     private lazy var pageUndoManager = UndoManager()
     override var undoManager: UndoManager? { pageUndoManager }
 

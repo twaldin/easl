@@ -41,50 +41,48 @@ public enum CanvasWheel {
     public static func sideways(dx: CGFloat, dy: CGFloat, precise: Bool, shift: Bool) -> Bool {
         abs(dx) > abs(dy) || (!precise && shift && dx == 0 && dy != 0)
     }
+
+    public static func direction(dx: CGFloat, dy: CGFloat, precise: Bool, shift: Bool) -> CGVector {
+        if sideways(dx: dx, dy: dy, precise: precise, shift: shift) {
+            return CGVector(dx: dx == 0 ? dy : dx, dy: 0)
+        }
+        return CGVector(dx: 0, dy: dy)
+    }
+
+    public static func canScroll(offset: CGFloat, maximum: CGFloat, delta: CGFloat) -> Bool {
+        maximum > 0.5 && (delta > 0 ? offset > 0.5 : delta < 0 && offset < maximum - 0.5)
+    }
 }
 
-/// Who a trackpad gesture over a tile that scrolls goes to: the tile or the canvas behind it.
-/// Its first movement decides, and the gesture keeps that owner to its end, momentum included,
-/// so neither hands a gesture to the other halfway. A gesture whose start the tile didn't see
-/// (a pan or its momentum slid the tile under the pointer) stays the canvas's.
 public struct ScrollGesture: Sendable {
-    public enum Owner: Equatable, Sendable { case tile, canvas }
-
-    /// Where an event sits in its gesture (NSEvent's `phase`, then its `momentumPhase`).
     public enum Step: Equatable, Sendable {
-        case began, changed, ended, momentumBegan, momentumChanged, momentumEnded
+        case mayBegin, began, changed, ended, cancelled, momentumBegan, momentumChanged, momentumEnded
     }
 
-    private var owner: Owner?
     private var last: Step?
-    private var sequence: UInt64?
-
+    private var lastTimestamp: Double?
     public init() {}
 
-    /// Returns nil until the gesture moves. `tileTakes` says whether the tile accepts its first movement.
-    /// The window increments `sequence` at each gesture start and phaseless step, even outside this tile.
-    public mutating func owner(of step: Step, sequence: UInt64, dx: CGFloat, dy: CGFloat, tileTakes: Bool) -> Owner? {
-        if self.sequence != sequence {
-            self.sequence = sequence
-            owner = nil
-            last = nil
+    public mutating func starts(step: Step?, timestamp: Double) -> Bool {
+        defer {
+            last = step
+            lastTimestamp = timestamp
         }
-        if step == .began {
-            owner = nil
-        } else if !continues(step) {
-            owner = .canvas
+        guard let step else {
+            return last != nil || (lastTimestamp.map { timestamp - $0 >= 0.250 || timestamp < $0 } ?? true)
         }
-        if owner == nil, dx != 0 || dy != 0 { owner = tileTakes ? .tile : .canvas }
-        last = step == .ended && owner == nil ? nil : step
-        return owner
-    }
-
-    private func continues(_ step: Step) -> Bool {
         switch step {
-        case .began: false
-        case .changed, .ended: last == .began || last == .changed
-        case .momentumBegan: last == .ended
-        case .momentumChanged, .momentumEnded: last == .momentumBegan || last == .momentumChanged
+        case .mayBegin:
+            return last != .mayBegin
+        case .began:
+            return last != .mayBegin
+        case .changed, .ended, .cancelled:
+            return last != .mayBegin && last != .began && last != .changed
+        case .momentumBegan, .momentumChanged, .momentumEnded:
+            switch last {
+            case .began?, .changed?, .ended?, .momentumBegan?, .momentumChanged?: return false
+            default: return true
+            }
         }
     }
 }

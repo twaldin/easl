@@ -52,7 +52,7 @@ func (v *surfaceViewer) closed() map[string]any {
 	return out
 }
 
-var allSurfaceEvents = []any{"surface.frame", "surface.dialog", "surface.notice"}
+var allSurfaceEvents = []any{"surface.frame", "surface.dialog", "surface.notice", "surface.scrollUnhandled"}
 
 // attachDrawer is a Mac that draws identity's browser tiles on the fixture's board.
 func attachDrawer(t *testing.T, f *fixture, identity string) *diagramPeer {
