@@ -23,7 +23,7 @@ The initial layout owner is `agent:<EASL_TILE_ID>` for placement only. After a c
 
 ## Publish an existing round headlessly
 
-Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `READOUT_REPORT` to an existing frozen standalone JSON report: `{"round":"latency-2026-11-07-r1","measuredAt":"…","question":"…","answer":"…","revision":"…","environment":"…","method":"…","limitations":"…","numbers":[{"label":"latency","value":12,"unit":"ms"},{"label":"samples","value":100,"unit":"requests"}],"chartPath":"/absolute/frozen-chart.png","evidenceUrl":"https://…"}`. Use a host-local chart path, absolute or relative to the board root, and never overwrite it. This is not the engine report schema or an easl API extension. No measurement is run.
+Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `READOUT_REPORT` to an existing frozen standalone JSON report: `{"round":"latency-2026-11-07-r1","measuredAt":"…","question":"…","answer":"…","revision":"…","environment":"…","method":"…","limitations":"…","numbers":[{"label":"latency","value":12,"unit":"ms"},{"label":"samples","value":100,"unit":"requests"}],"chartPath":"/absolute/board-root/frozen-chart.png","evidenceUrl":"https://…"}`. Use a frozen host-local chart within the board root, with an absolute or board-relative path, and never overwrite it. Remote viewers reject files outside that root, including symlink escapes. This is not the engine report schema or an easl API extension. No measurement is run.
 
 ```sh
 python3 - <<'PY'
@@ -34,11 +34,13 @@ with open(os.environ["READOUT_REPORT"]) as f:
 	r = json.load(f)
 assert 2 <= len(r["numbers"]) <= 4
 c = Easl()
+root = Path(c.board.get()["root"]).resolve()
 chart = Path(r["chartPath"])
 if not chart.is_absolute():
-	chart = Path(c.board.get()["root"]) / chart
-assert chart.is_file(), "Use an existing frozen host-local chart"
-r["chartPath"] = str(chart.resolve())
+	chart = root / chart
+chart = chart.resolve()
+assert chart.is_relative_to(root) and chart.is_file(), "Use an existing frozen chart within the board root"
+r["chartPath"] = str(chart)
 w = r["round"]
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "A readout round is immutable; choose a new round"

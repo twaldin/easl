@@ -86,8 +86,9 @@ At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons a
 `untouched` measures content age. Moving or resizing a tile does not make its content fresh.
 Delete your own task objects even when they are too young for this list. Use the manifest's member keys to find them.
 Do not delete foreign tiles, the user's live browser, or a terminal during cleanup. Deleting a terminal kills its session.
-If the user retains evidence, update `expires` on every retained tile, group and manifest to the agreed deadline (`null` for declared standing state).
-Then record the new owner and lifetime before hand-back; a manifest note alone does not change deletion.
+Create terminals with `expires: null`. A deletion deadline ends their sessions even without an explicit cleanup call.
+If the user retains evidence, update `expires` on every retained object in Member keys, including arrows and shapes, the group and the manifest, to the agreed deadline (`null` for declared standing state).
+Then record the refresher and lifetime before hand-back; keep `Layout owner: user`. A manifest note alone does not change deletion.
 Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetimes-and-cleanup).
 
 ## Claim a region, then respect its owner
@@ -109,11 +110,11 @@ Include these fields in the note, with real values:
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
 Place your region once with layout helpers. Run `layout.check`, fix your objects, then set `Layout owner: user` in the manifest.
 The user's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
-To add a member after hand-back, place only the new tile near an existing member with `layout.place`, then update `members` and check the region.
+To add a member after hand-back, place only the new tile near an existing member with `layout.place`, then update the group's `members` and the manifest's Member keys, and check the region.
 If the result is not clean, move or delete only the new tile and hand the issue back. Never move existing members.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
-Hand back by updating the owner to the user or a named successor, or by deleting your own task tiles, group and manifest.
-Keep sources and member keys current until hand-back. A standing region must name who refreshes it and when it retires.
+Hand back by naming the user or a successor as refresher in the manifest, or by deleting your own task tiles, group and manifest. Once `Layout owner: user` is set it stays `user` unless the user asks.
+Keep sources and member keys current until the region is deleted or handed to a successor. A standing region must name who refreshes it and when it retires.
 `tstack/*` regions are `renderer:tstack` owned. Read them, but never claim, re-layout, overwrite or clean up their objects.
 The [orchestration playbook](references/playbooks/orchestration.md) explains the shipped engine, including its standing lifetimes and reserved keys.
 

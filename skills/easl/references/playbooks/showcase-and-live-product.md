@@ -18,7 +18,7 @@ Use browser tiles for the running product URL, `video` tiles for clip files on t
 - For a standing product region, use `expires: null` for each retained member, group, and manifest. Name its producer and refresh trigger in the manifest. Captures remain dated even in a standing region.
 - Reload the browser after the running build changes. Add new capture keys for a new capture round. Remove superseded task captures after the review.
 
-The initial layout owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. Content refreshes use update-by-id without `frame`, `size` or layout helpers. Respect the user's moves. At handoff, name the successor or delete your members, manifest and group.
+The initial layout owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. Content refreshes use update-by-id without `frame`, `size` or layout helpers. Respect the user's moves. At handoff, name the successor as refresher, keeping `Layout owner: user`, or delete your members, manifest and group.
 
 ## Create a headless review example
 

@@ -26,7 +26,7 @@ A finding's source is the artifact, not the note describing it. Preserve the com
 
 Refresh after a new observation, changed hypothesis, or changed live source. A pinned tile intentionally stays at its commit. If new code changes the conclusion, add evidence for the new revision rather than silently relabeling the old result. For live excerpts, read `object.get` metadata such as `rangeStatus` or note `fences` before relying on them. Missing or stale anchors are not proof.
 
-When the answer is settled, write the durable finding in the task's source document, with evidence references. Delete your investigation objects at task end unless the user retains them. If retained, set the manifest owner to `user` or a named successor and choose an explicit retention deadline. Do not delete source logs or commits as board cleanup.
+When the answer is settled, write the durable finding in the task's source document, with evidence references. Delete your investigation objects at task end unless the user retains them. If retained, keep `Layout owner: user`, name the successor as refresher and choose an explicit retention deadline. Do not delete source logs or commits as board cleanup.
 
 ## Worked example: inspect the question schema at a commit
 

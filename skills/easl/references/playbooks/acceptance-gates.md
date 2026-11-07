@@ -15,7 +15,7 @@ Source thresholds from the accepted task or release criteria. Source values from
 
 Give each summary, artifact, group, and manifest `expiresIn: "1d"` at creation. Delete the region at task end unless explicitly retained. For a standing release gate region, use `expires: null` on every object and name its measurement producer and refresh cadence in the manifest.
 
-Refresh when a measured run finishes, the tested revision changes, or criteria change. Mark old-revision results stale until replaced. Do not rerun measurements just to make the board look current. The initial owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. For later content, find by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. At handoff, name the successor or delete your task tiles, manifest and group.
+Refresh when a measured run finishes, the tested revision changes, or criteria change. Mark old-revision results stale until replaced. Do not rerun measurements just to make the board look current. The initial owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. For later content, find by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. At handoff, name the successor as refresher, keeping `Layout owner: user`, or delete your task tiles, manifest and group.
 
 ## Display an existing gate report headlessly
 

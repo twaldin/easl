@@ -28,7 +28,7 @@ Keep later content updates in place. Omit `frame`, `size`, and layout helpers. N
 
 A question's `answer` and the linked decision record are the evidence. Do not infer approval from a page-state value or an unanswered recommended option. Use `correct` and `askConfidence` only for a genuinely graded question, not a preference.
 
-On answer, cancel, or timeout, update the source decision record. Let closed questions archive normally, with no `keep`. At task end, delete your round's question, context, manifest, and group unless explicitly retained. If handing off a retained region, name `user` or the successor as layout owner.
+On answer, cancel, or timeout, update the source decision record. Let closed questions archive normally, with no `keep`. At task end, delete your round's question, context, manifest, and group unless explicitly retained. If handing off a retained region, keep `Layout owner: user` and name the successor as refresher.
 
 ## Worked example: ask about a file-backed plan
 
@@ -39,7 +39,7 @@ Set `PLAN_SUMMARY` to a short, sourced summary of the real plan. The question al
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from easl_sdk import canvas
+from easl_sdk import CanvasError, canvas
 
 base = "region/plan-review-round-1"
 keys = [base, f"{base}/manifest", f"{base}/context", f"{base}/question/approve"]
@@ -67,6 +67,17 @@ result = canvas.object.batch(ops=[
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
 check = canvas.layout.check(ids=ids)
 if any(v for k, v in check.items() if k not in ("approximate", "hints")):
+	question = canvas.object.get(id=ids[2])["object"]
+	if question["props"]["status"] == "open":
+		try:
+			question = canvas.object.update(id=ids[2], rev=question["rev"], props={"status": "cancelled"})["object"]
+		except CanvasError as error:
+			if error.code != "conflict":
+				raise
+			question = canvas.object.get(id=ids[2])["object"]
+	if question["props"]["status"] not in ("cancelled", "expired"):
+		print("Round retained:", ids[2], question["props"]["status"], question["props"].get("answer"))
+		raise RuntimeError(f"Layout failed; record any answer in the plan before cleanup or retry: {check}")
 	for identity in ids:
 		canvas.object.delete(id=identity)
 	raise RuntimeError(f"Round removed after layout failure; correct the inputs before retrying: {check}")
@@ -74,4 +85,4 @@ canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout own
 print("Read the answer with: easl ask get", ids[2])
 ```
 
-The recommendation is deliberately conservative for this demonstration, not a review verdict. Choose the real recommendation from the evidence before posting a real round. Headless layout checks can use approximate text measurements. See the [question API](../../../../schema/easl-api.json) and [client conventions](../api.md) for the full schema.
+The recommendation is deliberately conservative for this demonstration, not a review verdict. Choose the real recommendation from the evidence before posting a real round. Headless layout checks can use approximate text measurements. Run `easl methods QuestionProps` for the question schema; see [client conventions](../api.md) for API usage.

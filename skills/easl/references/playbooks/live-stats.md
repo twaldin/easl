@@ -21,7 +21,7 @@ For a continuing measurement, create each tile, the manifest, and the group with
 
 Refresh after the producer publishes, not when a number is convenient. Keep failed reads visible as unavailable or stale, without replacing the last sample timestamp with now. Write source JSON and chart files atomically where practical. Do not derive a current value from a screenshot or an old readout.
 
-When measurement stops, remove your stat and chart tiles, group, manifest, and generated chart, or hand the retained region to a named successor. Do not delete the producer's source data as board cleanup. Engine-managed `tstack/*` cards remain the renderer's responsibility.
+When measurement stops, remove your stat and chart tiles, group, manifest, and generated chart, or name a successor as refresher while keeping `Layout owner: user`. Do not delete the producer's source data as board cleanup. Engine-managed `tstack/*` cards remain the renderer's responsibility.
 
 ## Worked example: publish a producer's measurement
 

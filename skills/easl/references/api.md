@@ -473,5 +473,5 @@ Always pass a lifetime when upsert may create. For a content-only refresh that m
 Find closed-ticket regions by `object.find --keyPrefix <prefix>`, then inspect ownership before deleting.
 Claim a region with the core's plain manifest note. This note does not enforce ownership in the API.
 The manifest's layout owner takes precedence over the fact that you created an object.
-When a producer retires, remove its own standing region or hand its manifest to the named successor.
+When a producer retires, remove its own standing region or name its successor as refresher in the manifest, without changing `Layout owner: user`.
 

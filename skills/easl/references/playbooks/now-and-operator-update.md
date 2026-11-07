@@ -22,7 +22,7 @@ The source Markdown is an authored report, not a measurement. Preserve its updat
 
 Refresh only your content. Find it by key, then `object.update` its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. Keep the update within the user's dimensions. Do not change selection or typing to announce it. Use `view.attention` when needed.
 
-At task end, delete the now note, your supporting notes, group, and manifest unless explicitly retained. For a retained feed, name its next producer and set the manifest owner to `user` or the named successor. Delete neither source documents nor someone else's tiles.
+At task end, delete the now note, your supporting notes, group, and manifest unless explicitly retained. For a retained feed, name its next producer and refresher while keeping `Layout owner: user`. Delete neither source documents nor someone else's tiles.
 
 ## Worked example: publish a file-backed update
 
