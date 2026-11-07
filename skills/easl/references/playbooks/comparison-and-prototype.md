@@ -5,9 +5,9 @@ Use this to choose between two to four variants on explicitly fake data. Do not 
 ## Keep the comparison apart from live work
 
 1. Inspect the board and choose an empty area separate from live regions. Check `region/<work>/manifest` for another owner. Never claim another owner's region or `tstack/*`.
-2. Put `region/<work>/manifest` above the comparison. Label the group and every variant `PROTOTYPE`. Use `<work>/variant/a` through `<work>/variant/d` as stable keys.
-3. Place variants side by side at equal size, with a 60-point gap. Hold viewport, sample data, and scenario constant. Put `<work>/criteria` above the variants with the decision criteria and fake-data disclosure.
-4. Put one `<work>/pick` question below the variants. Link the variants as context. Ask for one choice, and allow rejection when none meets the criteria. Group all members under `region/<work>`.
+2. Put `region/<work>/manifest` above the comparison. Label the group and every variant `PROTOTYPE`. Use `region/<work>/variant/a` through `region/<work>/variant/d` as stable keys.
+3. Place variants side by side at equal size, with a 60-point gap. Hold viewport, sample data, and scenario constant. Put `region/<work>/criteria` above the variants with the decision criteria and fake-data disclosure.
+4. Put one `region/<work>/pick` question below the variants. Link the variants as context. Ask for one choice, and allow rejection when none meets the criteria. Group all members under `region/<work>`.
 
 Source the scenario and criteria from the task. Source fake fixtures from labelled example data or declare them inline as invented. Do not insert customer data or mirror live status into a prototype. Use [HTML explainers](../html-explainers.md) for richer variants and [question API details](../api.md) for the choice. Do not change selection or focus to take typing from the user.
 
@@ -30,7 +30,7 @@ w = "demo-prototype-choice"
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
 x, y = float(os.environ["PROTOTYPE_X"]), float(os.environ["PROTOTYPE_Y"])
-keys = [w+"/criteria", w+"/variant/a", w+"/variant/b", w+"/pick"]
+keys = [g+"/criteria", g+"/variant/a", g+"/variant/b", g+"/pick"]
 def manifest(owner):
 	return (f"Purpose: Choose a prototype summary layout\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
 		"Sources of truth: Inline invented fixtures, not live product state\n\nRefresh trigger: Comparison inputs change; new round after a closed question\n\nLifetimes: All task evidence expiresIn 1d; record the answer before deletion")

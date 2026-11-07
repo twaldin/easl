@@ -5,8 +5,8 @@ Use this when a release or task has named acceptance criteria with measurements 
 ## Put failing gates first
 
 1. Choose `<work>`. Inspect the board and `region/<work>/manifest` before claiming a region. Never claim another owner's region or `tstack/*`.
-2. Put `region/<work>/manifest` above `<work>/gates`, a 960-point-wide checklist note. Each row names the gate, measured value and unit, threshold, observation time, tested revision, and evidence link. Order failing gates first, missing or stale evidence next, and passing gates last.
-3. Put `<work>/evidence/<gate>` artifacts below their gate summary, in reading order. Use existing report links, images, or pinned code tiles. Group the manifest, summary, and artifact tiles under `region/<work>`.
+2. Put `region/<work>/manifest` above `region/<work>/gates`, a 960-point-wide checklist note. Each row names the gate, measured value and unit, threshold, observation time, tested revision, and evidence link. Order failing gates first, missing or stale evidence next, and passing gates last.
+3. Put `region/<work>/evidence/<gate>` artifacts below their gate summary, in reading order. Use existing report links, images, or pinned code tiles. Group the manifest, summary, and artifact tiles under `region/<work>`.
 4. Record missing evidence as unmeasured, never zero or pass. Do not silently weaken a threshold to match the result. A passing row applies only to the revision and environment actually measured.
 
 Source thresholds from the accepted task or release criteria. Source values from actual test reports, benchmark output, or deployment checks. Include the command or run URL that produced each result. Gate changes require an explicit criteria decision, not a content refresh.
@@ -15,7 +15,7 @@ Source thresholds from the accepted task or release criteria. Source values from
 
 Give each summary, artifact, group, and manifest `expiresIn: "1d"` at creation. Delete the region at task end unless explicitly retained. For a standing release gate region, use `expires: null` on every object and name its measurement producer and refresh cadence in the manifest.
 
-Refresh when a measured run finishes, the tested revision changes, or criteria change. Mark old-revision results stale until replaced. Do not rerun measurements merely to make the board look current. The initial owner is `agent:<EASL_TILE_ID>` for placement. After the first `layout.check`, set Layout owner to `user`. Subsequent content upserts omit `frame` and do not rerun layout helpers. At handoff, name the successor or delete your task tiles, manifest, and group.
+Refresh when a measured run finishes, the tested revision changes, or criteria change. Mark old-revision results stale until replaced. Do not rerun measurements just to make the board look current. The initial owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. For later content, find by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. At handoff, name the successor or delete your task tiles, manifest and group.
 
 ## Display an existing gate report headlessly
 
@@ -39,11 +39,11 @@ w = "demo-acceptance"
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
 def manifest(owner):
-	return (f"Purpose: Inspect measured acceptance gates\n\nLayout owner: {owner}\n\nMember keys: {g}/manifest, {w}/gates\n\n"
+	return (f"Purpose: Inspect measured acceptance gates\n\nLayout owner: {owner}\n\nMember keys: {g}/manifest, {g}/gates\n\n"
 		f"Sources of truth: {os.environ['GATE_REPORT']}; linked measured runs and approved thresholds\n\n"
 		"Refresh trigger: New measured run or revision or approved criteria\n\nLifetimes: All task evidence expiresIn 1d; delete at task end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
-a = c.object.create(type="note", props={"key": w+"/gates", "markdown": body}, size="fit", expires_in="1d")["object"]["id"]
+a = c.object.create(type="note", props={"key": g+"/gates", "markdown": body}, size="fit", frame={"w": 960}, expires_in="1d")["object"]["id"]
 c.object.create(type="group", props={"key": g, "title": "Acceptance gates", "members": [m, a]}, expires_in="1d")
 c.layout.stack(ids=[m, a], direction="column", gap=60)
 check = c.layout.check(ids=[m, a])

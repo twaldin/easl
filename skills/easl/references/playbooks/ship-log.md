@@ -5,8 +5,8 @@ Use this to answer what merged, deployed, or shipped within a named window. Do n
 ## Build the region from delivery records
 
 1. Choose `<work>` and check the board and `region/<work>/manifest` for an existing owner. Do not claim another owner's region or `tstack/*`.
-2. Put `region/<work>/manifest` above `<work>/log`, a 1000-point-wide note. Show newest items first with event type, UTC event date, revision, and source link. Keep separate merged and deployed sections. A merge is not a deployment.
-3. Put `<work>/sources` to the right, 480 points wide, with source queries, the observation time, window boundaries, and any unavailable deployment feed. Group these tiles under `region/<work>`.
+2. Put `region/<work>/manifest` above `region/<work>/log`, a 1000-point-wide note. Show newest items first with event type, UTC event date, revision, and source link. Keep separate merged and deployed sections. A merge is not a deployment.
+3. Put `region/<work>/sources` to the right, 480 points wide, with source queries, the observation time, window boundaries, and any unavailable deployment feed. Group these tiles under `region/<work>`.
 4. Keep only the chosen rolling window, normally seven days. Preserve the durable history in the source system, not by growing the board.
 
 Use merged PR records for merge dates and links. Use successful deployment records for deploy dates, environment, deployed revision, and deployment link. Release records prove release publication, not deployment. If deployment records are absent, say that deployment is unverified. Never infer deployment from a merged PR, a green build, or a reachable site.
@@ -15,7 +15,7 @@ Use merged PR records for merge dates and links. Use successful deployment recor
 
 For a standing log, give every tile, group, and manifest `expires: null`. Name the producer, source query, and refresh cadence in the manifest. Refresh after a recorded merge or deployment and at the window boundary so old entries disappear. Display the last successful observation time. A failed query leaves the previous observation visibly dated, not newly current.
 
-For a one-off delivery review, give all objects `expiresIn: "1d"` and delete them at task end unless retained. Initially record `agent:<EASL_TILE_ID>` as Layout owner. Run `layout.check` once after placement, then hand layout ownership to `user`. Later upserts omit frames and layout helpers. Hand off the standing producer explicitly, or delete your region when you stop maintaining it.
+For a one-off delivery review, give all objects `expiresIn: "1d"` and delete them at task end unless retained. Initially record `agent:<EASL_TILE_ID>` as Layout owner. Hand layout to `user` only after a clean `layout.check`. Later, find each object by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. Hand off the standing producer, or delete your region when you stop maintaining it.
 
 ## Create a source-backed merge log
 
@@ -39,15 +39,15 @@ c = Easl()
 w = "demo-ship-log"
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
-keys = [w+"/log", w+"/sources"]
+keys = [g+"/log", g+"/sources"]
 source = f"Repository: {repo}\n\nQuery: gh pr list --state merged --search {query}\n\nWindow: {start.isoformat()} to {now.isoformat()}\n\nObserved: {now.isoformat()}\n\nDeployment feed: not configured"
 def manifest(owner):
 	return (f"Purpose: Seven-day delivery log\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
 		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Manual republish after merges or the window boundary; no refresher installed\n\nLifetimes: All task evidence expiresIn 1d; this invocation owns cleanup")
-m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
-ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", expires_in="1d")["object"]["id"] for k, text in [(keys[0], body), (keys[1], source)]]
+m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", frame={"w": 1000}, expires_in="1d")["object"]["id"]
+ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", frame={"w": width}, expires_in="1d")["object"]["id"] for k, text, width in [(keys[0], body, 1000), (keys[1], source, 480)]]
 c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires_in="1d")
-c.layout.stack(ids=[m, *ids], direction="column", gap=60)
+c.layout.grid(cells=[{"id": m, "row": 0, "col": 0}, {"id": ids[0], "row": 1, "col": 0}, {"id": ids[1], "row": 1, "col": 1}], col_gap=60, row_gap=60)
 check = c.layout.check(ids=[m, *ids])
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")

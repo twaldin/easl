@@ -77,6 +77,8 @@ CLI `--expires 2h` means deletion after two hours on object calls. Repeated rela
 `easl ask --expires 2h` is different: it closes an unanswered question, not deletes its tile.
 Questions are task evidence, including their answers. Set deletion later than the answer timeout and the expected time to read and record the answer.
 Use `object.update --id <question-id> --expires 1d` immediately after asking. Extend retention before expiry if the decision remains needed.
+Prefer `object.create` with a lifetime for task questions and browsers, then `easl ask wait <id>` or attach the browser tool by id.
+Convenience creators such as `easl ask`, the browser tool and `easl browser open` can omit deletion lifetimes. Set your own new tile's deadline as soon as its id is available. Never start `ask --wait` before setting that deadline.
 Closed questions archive automatically unless kept. Cancel a question as soon as it becomes moot.
 
 At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons and creators.
@@ -97,7 +99,7 @@ Include these fields in the note, with real values:
 ```text
 	- Purpose: investigate the restore stall
 	- Layout owner: agent:<your tile id> during initial placement
-	- Member keys: region/restore/manifest, restore/finding, restore/code
+	- Member keys: region/restore/manifest, region/restore/finding, region/restore/code
 	- Sources of truth: trace file, src/store.ts:41-60
 	- Refresh trigger: new trace or source change
 	- Lifetimes: task evidence, deletion deadline 2026-11-08T12:00:00Z
@@ -105,7 +107,7 @@ Include these fields in the note, with real values:
 
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
 Place your region once with layout helpers. Run `layout.check`, fix your objects, then set `Layout owner: user` in the manifest.
-Tim's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
+The user's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
 Hand back by updating the owner to the user or a named successor, or by deleting your own task tiles, group and manifest.
 Keep sources and member keys current until hand-back. A standing region must name who refreshes it and when it retires.

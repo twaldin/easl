@@ -51,9 +51,9 @@ Initial shelf adoption can position borrowed objects. Later redraws retain manua
 
 Retire obsolete source reports or configuration deliberately, then let the renderer reconcile its objects. Delete only your own companion evidence. Never delete a borrowed terminal or foreign tile as dashboard cleanup.
 
-## Worked example: record a headless source read
+## Worked example: refresh the engine headlessly
 
-Prerequisites: an already configured scratch tstack seat and scratch easld board, `tstack` and `easl` on `PATH`, Python with `easl_sdk`, and `EASL_SOCKET` plus `EASL_BOARD_ID` pointing to that scratch server. Run from the seat directory with `TSTACK_INSTANCE` set. GitHub-backed sources need authenticated `gh`. Set `EASL_TILE_ID` when running inside a real agent tile; outside a tile, the example names its script owner. It does not start a seat or service.
+Prerequisites: a configured scratch tstack seat and scratch easld board, `tstack` and `easl` on `PATH`, and `EASL_SOCKET`, `EASL_BOARD_ID`, `EASL_TILE_ID` targeting the scratch server. Run from the seat with `TSTACK_INSTANCE` set. GitHub-backed sources require authenticated `gh`. These commands start no seat or service.
 
 First use the existing renderer:
 
@@ -62,38 +62,3 @@ tstack board --print
 tstack board
 ```
 
-Then create a one-day companion region outside its namespace. This records observed source facts, not a competing status renderer. Use an unused slug on a scratch board.
-
-```python
-import json, os, subprocess
-from easl_sdk import canvas
-
-work = "orchestration-source-read"
-base = f"region/{work}"
-keys = [base, f"{base}/manifest", f"{base}/sources"]
-assert not any(o.get("props", {}).get("key") in keys
-	for o in canvas.board.get()["objects"]), "Choose an unused slug"
-facts = json.loads(subprocess.check_output(["tstack", "board", "--print"], text=True))
-snapshot = {"sampledAt": facts["now"], "boardAvailable": facts["board_available"],
-	"seats": [{"seat": seat["name"], "freshness": seat["freshness"], "errors": seat["errors"]} for seat in facts["seats"]]}
-owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:source-read"
-manifest = f"""- Purpose: Inspect orchestration source availability.
-- Layout owner: {owner}
-- Member keys: {', '.join(keys)}
-- Sources of truth: tstack board --print from this seat.
-- Refresh trigger: A new source read; this tile is a snapshot.
-- Lifetimes: All companion objects expire in 1d; delete at task end.
-"""
-result = canvas.object.batch(ops=[
-	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
-	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[2], "title": "Source snapshot, not live status", "markdown": "```json\n" + json.dumps(snapshot, indent=2) + "\n```"}}},
-	{"method": "layout.stack", "params": {"ids": ["$0", "$1"], "direction": "row", "gap": 48}},
-	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Orchestration source read", "members": ["$0", "$1"]}}},
-])
-ids = [result["results"][i]["object"]["id"] for i in (0, 1, 3)]
-check = canvas.layout.check(ids=ids)
-assert not check["overlaps"], check
-canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
-```
-
-The source snapshot is intentionally scrollable. Headless creation and source inspection work without a viewer. HTML rendering and exact visual measurements require a capable viewer. Later content refreshes omit `frame`, `size`, and layout helpers. Delete the companion's three objects when the source-read task ends, unless the user retains them.

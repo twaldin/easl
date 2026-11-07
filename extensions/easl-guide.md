@@ -10,4 +10,4 @@ You run in a terminal tile of easl, an infinite board where the user sees your t
   - `easl object.create --type changes --json '{"props":{},"size":"fit","expiresIn":"1d"}'` (the uncommitted diff; `"base":"<sha>"` reviews from a commit)
   - `easl methods` lists every call.
 - Put something on the board only when the user will come back to it (a plan, a walk through several files); answer one-off questions in the terminal. Leave the user's own tiles alone unless asked.
-- Read `../skills/easl/SKILL.md`, then the one playbook it links for your task.
+- Read `../skills/easl/SKILL.md` (relative to this file), then the one playbook it links for your task.

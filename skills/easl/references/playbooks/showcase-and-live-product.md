@@ -5,7 +5,7 @@ Use this for a product walkthrough, a demo, or a review of screens and behavior.
 ## Place the region
 
 1. Choose `<work>` and inspect the board and `region/<work>/manifest` before claiming space. Never claim another owner's region or any `tstack/*` key.
-2. Put `region/<work>/manifest` above the content. Put `<work>/live` at the left, 960 by 700 points. Put `<work>/capture/<screen>` screenshots in a column to its right. Put `<work>/clip/<scenario>` clips below the browser, with capture time, build, and scenario in their captions or adjacent notes. Capture every screen in the agreed review scope, not only the landing page.
+2. Put `region/<work>/manifest` above the content. Put `region/<work>/live` at the left, 960 by 700 points. Put `region/<work>/capture/<screen>` screenshots in a column to its right. Put `region/<work>/clip/<scenario>` clips below the browser, with capture time, build, and scenario in their captions or adjacent notes. Capture every screen in the agreed review scope, not only the landing page.
 3. Group all members under `region/<work>`. The manifest records Purpose, Layout owner, Member keys, Sources of truth, Refresh trigger, and Lifetimes.
 
 Use browser tiles for the running product URL, `video` tiles for clip files on the board host, and image tiles for screenshots. See [browser controls](../browser.md) and [image and video props](../api.md#objects) rather than embedding another browser driver.
@@ -18,7 +18,7 @@ Use browser tiles for the running product URL, `video` tiles for clip files on t
 - For a standing product region, use `expires: null` for each retained member, group, and manifest. Name its producer and refresh trigger in the manifest. Captures remain dated even in a standing region.
 - Reload the browser after the running build changes. Add new capture keys for a new capture round. Remove superseded task captures after the review.
 
-The initial layout owner is `agent:<EASL_TILE_ID>`. After the first `layout.check`, change the manifest owner to `user`. Content refreshes omit `frame` and do not rerun layout helpers. Respect the user's moves. At handoff, name the successor or delete your members, manifest, and group.
+The initial layout owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. Content refreshes use update-by-id without `frame`, `size` or layout helpers. Respect the user's moves. At handoff, name the successor or delete your members, manifest and group.
 
 ## Create a headless review example
 
@@ -36,7 +36,7 @@ specs = [
 	("live", "browser", {"url": os.environ["PRODUCT_URL"], "title": "Running product, not captured proof"}, {"w": 960, "h": 700}),
 	("capture/screen-1", "image", {"path": os.environ["SCREENSHOT_PATH"], "caption": os.environ["CAPTURE_IDENTITY"]}, {"w": 640, "h": 480}),
 ]
-keys = [f"{w}/{s[0]}" for s in specs]
+keys = [f"{g}/{s[0]}" for s in specs]
 def manifest(owner):
 	return (f"Purpose: Review the running product and a dated capture\n\nLayout owner: {owner}\n\n"
 		f"Member keys: {', '.join([g+'/manifest', *keys])}\n\nSources of truth: {os.environ['PRODUCT_URL']}; "

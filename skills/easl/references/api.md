@@ -136,10 +136,10 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   `"$0"` anywhere in a later op's params is the id op 0 created (or, an upsert, created or updated). An upsert of a key an earlier op of the batch creates updates that object; if another request moves a key while the batch is being measured, the batch fails with `conflict`: send it again. Op params are the schema's own names (`colGap`, not `col_gap`):
   ```python
   canvas.object.batch(ops=[
-      {"method": "object.create", "params": {"type": "code", "props": {"path": "src/a.ts", "range": {"start": 10, "end": 30}}, "size": "fit", "frame": {"x": 0, "y": 0}}},
-      {"method": "object.create", "params": {"type": "note", "props": {"markdown": "Why this matters"}, "size": "fit", "frame": {"x": 0, "y": 0, "w": 320}}},
+      {"method": "object.create", "params": {"expiresIn": "1d", "type": "code", "props": {"path": "src/a.ts", "range": {"start": 10, "end": 30}}, "size": "fit", "frame": {"x": 0, "y": 0}}},
+      {"method": "object.create", "params": {"expiresIn": "1d", "type": "note", "props": {"markdown": "Why this matters"}, "size": "fit", "frame": {"x": 0, "y": 0, "w": 320}}},
       {"method": "layout.place", "params": {"id": "$1", "near": "$0", "side": "below", "gap": 14}},
-      {"method": "object.create", "params": {"type": "group", "props": {"members": ["$0", "$1"], "title": "Request path", "color": "blue"}}},
+      {"method": "object.create", "params": {"expiresIn": "1d", "type": "group", "props": {"members": ["$0", "$1"], "title": "Request path", "color": "blue"}}},
   ])
   ```
 - `canvas.layout.check(ids=[…])`, `canvas.layout.check(rect={"x": 0, "y": 0, "w": 4000, "h": 3000})`, or the whole board with neither → `overlaps` (pairs),
@@ -230,8 +230,6 @@ So does a target whose foreground program isn't its agent (`agent.list` `program
   ```
   "The socket exists but connecting to it failed … a sandbox may be blocking" means your sandbox blocks the unix socket, not that the app is down: run easl commands outside it (Codex: escalated) or ask the user to allow the socket.
 
-Results are objects, never bare values: `object.create`/`update`/`get` return `{object}` (the new id is `result["object"]["id"]`), and create/update add `warnings` for a prop key the type doesn't know (a typo like `colour`): fix it.
-`caller` (you) and `board` are filled from the client's tile and board, so objects you create are attributed to you and placed next to your terminal.
 
 ## Mention context details
 
@@ -249,18 +247,12 @@ When the user Hyper-clicks things on the board and then prompts you, the prompt 
 
 "this", "these", "here", "that box" in the prompt refer to these entries, in order.
 A mention of your own terminal says `(your terminal)`; other terminals are named, so "this terminal" means the one mentioned, not yours.
-Mentions arrive only in prompts submitted in the terminal the tray shows (`view.get` `promptTarget`); to see what is staged use `tray.list`, never `tray.drain`.
-Excerpts are short; read the real file or `easl get <id>` for more.
-A drawn shape means nothing by itself: read what it encloses and connects (`easl get <id> --as graph`) or look at it (`easl render <id>`).
-A shape `over` a tile marks a region in the tile's local units (`partly over`: more than half of it, clipped to the tile); look at that part with `easl render <tile>`.
 On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
-A Hyper-click on a page's `<canvas>`, `<video>` or `<img>` carries `pixel (x, y) of W×H` in the element's own pixels: use it directly instead of mapping a drawn shape's region.
-A Hyper-click on a group's title or empty interior mentions the whole group: `[n] group "Ingress" of 6 objects · group obj_…`, then each member (`- note obj_… "title"` with its first lines, `- code obj_… "path" · lines 40-52` with a few of them, a page's URL, a terminal's name), then `arrows among them:` (`from "title" → to "title" · "label" (relation)`): the arrows are the diagram's meaning, read them as its flow. Member text is cut short and a long group ends `(left out to keep this short: …)`: `easl get <id>` a member for all of it.
+A group's arrows are the diagram's meaning: read their direction, labels and relations as its flow. Member text can be truncated; get a member for its whole text.
 A terminal mention quotes its screen (one over 41 lines keeps 40: the first 3, the last 10 and failure lines).
 A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: easl agent.read --target <id> --block -N` while that block can still be read (after `clear` the mention's own lines are all there is): run exactly that to read the block (up to its last 2000 lines).
 Whether the user's last command passed: `lastCommand` (`{command, exit, durationMs}`) in `agent.list`/`object.get`, not the screen.
 An `(edited)` marker means what the mention holds changed after the user staged it (a note's text, a page's address, a Stage/Unstage/Discard of that code mention's own lines): re-read it.
-Every mention kind and field: `api.md` "Reading the board".
 
 ## Explain code on the board
 
@@ -299,27 +291,20 @@ Table cells wrap to the note's width, so keep evidence timelines as `| time | ev
 
 ## Code tile behavior
 
-A code tile shows the whole current file, scrolled so `range` sits a few rows below the top, with `range` tinted among the rows around it.
+A code tile shows the whole current file, scrolled so `range` sits a few rows below the top, with `range` tinted among the rows around it. Its range follows code as lines move. Do not retarget evidence tiles by hand; `rangeStatus: stale` means the quoted code is gone.
 Its gutter shows changes against `diffBase` (default `merge-base`: the whole branch; `head` for uncommitted work only; or a commit sha).
 A header "⚠ git failed: …" means git couldn't answer (cancelled, timed out, failed), not that the repo lacks commits; it clears on the next load. Don't work around a base warning with `diffBase: "head"` or a hand-picked sha unless the user asked for that base.
 
 - **`caption`** is one line under the header (plain text, `inline code`, never wraps), so a tile doesn't need a separate note for its one-line explanation.
 - **`size: "fit"`** sizes a tile to exactly its range (up to 1546 pt wide, 200 columns; longer lines soft-wrap). Pass the `range` even when `symbol` is set. Without `size` or a `frame`, a code tile is as wide as its file's longest line needs (from 640 up to the same 200 columns), read from the working tree; a tile shown from git (`pinnedCommit`, `ref`) or over a file larger than 1 MiB stays 640 wide.
-- **`pinnedCommit`** (a sha, tag, branch, or `HEAD~N`) shows the file as of that commit, read-only: for old-vs-new comparisons, or a PR head you fetched. `null` goes back to the working tree; for "what changed since X" use `diffBase: "<sha>"` instead.
-- **`ref`** (a branch) anchors the tile to the branch, not one checkout: while a worktree has it checked out the tile reads that worktree live (gutter, edits); otherwise the branch's commit, read-only; after the worktree and branch are deleted it keeps showing the merge commit ("merged in <sha>") or, for a squash merge, the branch's last commit ("branch gone, showing <sha>"). Use it for tiles about a PR lane whose worktree will go away; `path` stays repo-relative. `pinnedCommit` wins if both are set. Notes and HTML take `ref` too: their excerpts and links read at the branch (the body stays inline).
-- **Ranges stay on their code** as lines move (the app rewrites `range`), so don't retarget evidence tiles by hand; `easl get` → `rangeStatus` `stale` means the code is gone.
+- `pinnedCommit` accepts a SHA, tag, branch or `HEAD~N`; `null` returns to the working tree. For "what changed since X", use `diffBase` instead.
 
-Paths may point outside the board root (another repo, a worktree); a path or commit that doesn't exist is `not_found`. Every code-tile prop: `api.md` "Objects".
 Code navigation (Go to Definition, Find References, Outline) needs the language's server; if a panel says it wasn't found, answers are text search: tell the user where easl looked (`ui.md` "Zoom and keys") rather than suggesting PATH edits.
 
 ## Changes tile behavior
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `easl object.create --type changes --json '{"props":{},"size":"fit","expiresIn":"1d"}'`.
-Props: `base` (default `HEAD`: uncommitted work; `merge-base`: everything the branch changed, a PR's view; or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`), `paths` and `title`. Creating it again with the same props returns your existing tile (`reused: true`).
-A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: easl never fetches, so fetch first.
-`{"ref": "<branch>"}` instead of `root`: the worktree that has that branch checked out while one does (live, stageable), else its commits as with `head`; once the branch is deleted it keeps showing the last commit it read (`props.refSha`), marked `merged in <sha>` or `branch gone`.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
-Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` and `lines`; `props.reviewed[]`), no render needed. Every field: `api.md` "Objects".
 
 ## Live diagrams and authored graphs
 
@@ -332,8 +317,7 @@ For "show me who calls X" (or what X calls), create a live call graph from the l
 - Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows into free space when a node opens (never over other objects; what doesn't fit is drawn smaller: resize it or zoom); `size: "fit"` on create waits for the first graph (up to 60 s, as `object.reload`) and fits the tile to it; the result's `diagram` is `object.reload`'s summary.
 - Bind an arrow to a node with `{"object": "<diagram>", "node": "<node id>"}` (e.g. from a note explaining that caller).
 - `error` says why a graph is empty or old (no server for the language, the symbol isn't declared there, an unindexed project); the last good graph stays.
-- For a knowledge or reasoning graph you author (a lesson's propositions, a chain of argument), pass `kind: "graph"`: you supply `knowledge.nodes` `[{"id", "label", "detail"?, "level"?, "sources"?, "status"?}]` and `knowledge.edges` `[{"from", "to", "label"?}]`, each edge running from premise to conclusion. Omitting `level` is normal: it is computed as the longest path from a premise (premises 0), so conclusions sit deeper; give every node a `level` to draw a cycle. Up to 500 nodes; duplicate ids, empty labels, edge endpoints that aren't nodes, and a cycle with a level missing are `invalid_params` naming the rule. Store and update the graph only in `props.knowledge`; `props.graph` is an ignored old calls cache. Limits are 2,000 unique directed edges, 256 UTF-8 bytes per ID or edge label or source field, 512 per node label, 8,192 per detail, and eight sources per node.
-- A graph node shows its `label` and the first two rows of its `detail` (markdown, rendered as a note); clicking it expands the whole detail in the tile, and a source badge focuses the terminal its `session` or `tile` names on this board; `message` and `board` remain provenance records. `status` (`taught`, `practiced`, `retained`, `weak`) draws a coloured badge: report what practice showed with `object.update` sending the graph back with that node's new status. Nothing here is computed from code: `object.reload` is a no-op success, and `size: "fit"` sizes the tile to its levels.
+- An authored graph node shows its label and the first two rows of detail. A click expands the full Markdown detail. Store and update the graph in `props.knowledge`, never the ignored calls cache `props.graph`. See [Objects](#objects) for graph props, provenance and status. `size: "fit"` sizes it to its levels.
 
 ## Questions and answers
 
@@ -343,9 +327,12 @@ It carries discrete options and your recommendation, shows up in the user's ⌘J
 ```sh
 easl ask "Ship the migration before the freeze?" --option now="Ship now:needs the 9am deploy window" --option later="After the freeze" --recommend now --context src/migrate.ts:40-72 --expires 4h
 easl ask "Which cache is right?" --option a=L1 --option b=L2 --correct a --confidence   # graded: the closed tile shows ✓ or ✗
-easl ask "Which name?" --option a=Atlas --option b=Beacon --wait   # blocks; the answer {id, option, label, note, confidence, correct, at, by} prints as JSON, exit 0
+easl object.create --type question --expires 1d --json '{"props":{"question":"Which name?","options":[{"id":"a","label":"Atlas"},{"id":"b","label":"Beacon"}]}}'
+easl ask wait obj_returned_id                                  # blocks; answer JSON, exit 0
 easl ask cancel obj_…                                              # the question is moot
 ```
+
+For each convenience `easl ask` above, immediately set the returned tile's deletion deadline with `object.update --id <id> --expires 1d`. For a blocking wait, use the two-step create/wait form so the deadline is set before waiting. The answer includes `id`, `option`, `label`, `note`, `confidence`, `correct`, `at` and `by` when applicable.
 
 - `--option id=label[:why]` repeats; `--recommend <id>` names your pick; `--context` points at what it is about (an `obj_…`, a URL, or `path:10-20`). Without options the answer is a note.
 - `--correct <id>` makes the question graded: while it is open nothing marks the right option; once answered the tile shows ✓ or ✗, a wrong pick highlights the right option and its `why`, and the answer line tells you whether the pick was right. `--confidence` asks how sure the user is: the tile gets a slider (optional; skipping it leaves `confidence` out), and the answer line says e.g. `confidence: 80%`. `--json` takes both as `correct` and `askConfidence`.
@@ -367,16 +354,9 @@ easl agent.read --target reviewer --since prompt   # only what came after your l
 
 `easl tell <name[@board]> "text" [--when next-turn] [--from <label>]` is `agent.prompt` for a message: an agent whose integration takes messages (omp with easl's extension) gets it out of band as a message naming you, without touching its draft or an open question (a working one is steered; `--when next-turn` waits for its turn to end), and replies with `write agent://<your address>`. Others are typed into as before (the result's `delivery` says `message` or `typed`). From a script with no tile, `--from machine-watch` names the sender and the message counts as the user's. If that agent exits, is killed or starts another session before it takes your message, the message bounces: you get a message from `easl` saying `undelivered to <address>: <its first line>` (a script's lands in the board's history, kind `message`). `unavailable` means nothing there takes it now (its agent was killed, or ended while you sent): check `easl agent.list` before sending again. Hosts aren't part of an address yet.
 
-When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
-Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
-A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while easl was closed comes back `done` with it.
-Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
-Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a Codex tile is `blocked` at launch while Codex asks whether to trust the folder, and `idle` once the user trusts it).
-Agents without an integration (aider via easl's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
-Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pass without a first report, so poll `agent.read --since prompt`; `program` and `title` still hint at its state.
-A `conflict` saying the agent was working when easl last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
-Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
-Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
+`agent.read --final true` returns only the last answer. Its `cutOff` flag means the turn died on that error: report that, not a completed result.
+At Codex launch, `blocked` can mean it is waiting for the user to trust the folder. It reports `idle` after trust.
+After a restored lifecycle, omp and opencode report again within seconds; Claude Code, Codex and Gemini CLI do so on their next tool call. If it stays restored, read the screen first. Never force a question or approval.
 
 ### Running a board's agents (chief of staff)
 
@@ -469,17 +449,15 @@ Question archival hides a closed tile but keeps its answer queryable with `easl 
   Do not rebuild those exports by hand unless another format was requested.
 - The follow tile is automatic and on by default. It flashes edited lines and stops when the user closes it.
   Create a separate code tile only for code the user should keep looking at. Never resize, recreate or enable follow unasked.
-- Attention markers persist across restarts until the user looks. Put the point in the first 40 characters of a 240–480 pt bubble.
-  Raise one per thing your answer points at. The first marker after the next prompt clears earlier turns' markers.
-  Do not clear and re-raise that previous turn yourself.
+- Attention markers persist across restarts until the user looks. Put the point in the first 40 characters of a 240–480 pt bubble. Raise one marker per thing your answer points at.
 
 ## Keyed producers
 
-Any object can have a board-unique `props.key`. Upsert takes `key` at the top level and returns `created`.
-Its props merge. A `frame` passed to upsert applies on every run. Omit it after initial layout so the user's moves stick.
+An upsert's props merge. A `frame` passed to it applies on every run. Omit it after initial layout so the user's moves stick.
 Always pass a lifetime when upsert may create. For a content-only refresh that must not recreate expired evidence, find by key and use `object.update` with that id. A missing object requires a new claim and explicit lifetime.
-`"$0"` in a batch is operation zero's object id whether created or updated. One batch is one undo step.
 Find closed-ticket regions by `object.find --keyPrefix <prefix>`, then inspect ownership before deleting.
 Claim a region with the core's plain manifest note. This note does not enforce ownership in the API.
 The manifest's layout owner takes precedence over the fact that you created an object.
 When a producer retires, remove its own standing region or hand its manifest to the named successor.
+
+Mouse users do not need a trackpad to zoom. Do not tell them zoom requires a pinch: use ⌘-scroll. Every action is also in the menu bar, including Help › search.

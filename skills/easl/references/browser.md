@@ -7,6 +7,11 @@ omp's `browser` tool (its cmux backend is on automatically inside easl) opens a 
 
 - The tool doesn't return the tile id. Find it with `easl board.history --limit 5` (`agent:<your tile> created … browser <url>`)
   or `easl board.get` (browser tiles whose `createdBy` is your tile).
+
+For a task browser, first create `type: "browser"` with top-level `expiresIn: "1d"` in your claimed region, then attach by id as below.
+Convenience `browser.open` and `easl browser open` create tiles without a deletion deadline. If you already used one, find its new id and immediately run `easl object.update --id <id> --expires 1d`.
+Apply that only to your own newly created tiles, not to a user's browser you attach to. Extend retained evidence before its deadline.
+
 - To drive a tile you didn't open (the user's, or one made with `object.create`), open it by id: `browser.open({name: "game", url: "canvas:obj_…"})` drives that tile from its current page instead of opening a new one, and `browser.close` lets go of it (the tile stays). Use a tab name you haven't opened yet.
   To reload any browser tile after an edit: `easl object.reload --id <tile>` (waits for the load), then `easl get <tile> --since <cursor>`; never flip `props.url` to a dummy query (it fills the user's Back history).
 - The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.

@@ -7,7 +7,7 @@ Use this guide for a short authored update: what changed, decisions, and what ha
 1. Read the task, decision, PR, and run sources. Separate observations from the author's interpretation.
 2. Write a short update in its source Markdown file. Include links for claims, an observed timestamp, and unresolved decisions.
 3. Claim `region/<work>/manifest` after checking its owner. Put `region/<work>/now` first, with the manifest beside it. Label the note as authored, and show when its source changed.
-4. Group them under `region/<work>`. Run `layout.check` once after placement, then set layout owner to `user`.
+4. Group them under `region/<work>`. Fix the initial layout until `layout.check` is clean, then set layout owner to `user`.
 5. Refresh the same now key after a meaningful change or operator handoff. Do not create a stack of nearly identical updates.
 
 The default note fits one screen. Use headings such as `Changed`, `Decisions`, and `Next`. Keep an actual operator decision in a [question tile](grill-or-decision.md), linked from the note. Information alone is not an ask.
@@ -20,7 +20,7 @@ Create the now note, any supporting notes, group, and manifest with `expiresIn: 
 
 The source Markdown is an authored report, not a measurement. Preserve its update time and link its factual claims to authoritative artifacts. Showing a new publication time does not make old evidence current. If a source cannot be checked, say so instead of repeating its last state as present fact.
 
-Refresh only your content. Use `object.upsert` with the existing key and omit `frame`, `size`, and layout helpers, so the user's position and dimensions remain unchanged. Keep the update short enough for the existing frame. Do not select the tile or change typing focus to announce it. Raise `view.attention` if the operator needs to look.
+Refresh only your content. Find it by key, then `object.update` its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. Keep the update within the user's dimensions. Do not change selection or typing to announce it. Use `view.attention` when needed.
 
 At task end, delete the now note, your supporting notes, group, and manifest unless explicitly retained. For a retained feed, name its next producer and set the manifest owner to `user` or the named successor. Delete neither source documents nor someone else's tiles.
 

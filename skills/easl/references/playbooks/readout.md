@@ -7,8 +7,8 @@ Use this for one completed measurement round. Show the question, a one-line answ
 On a board actively maintained by a configured tstack seat, write this round in its reports directory using the [engine report schema](https://github.com/twaldin/tstack/blob/main/docs/reference.md#project-config): `question`, `answer`, `evidence`, optional `numbers` with `label`, `value`, `unit`, `chart`, `at`, and `lane`. Let the engine render its report shelf. Do not create a duplicate region. The standalone layout and example below apply when no configured renderer maintains this board, including isolated fixture copies.
 
 1. Choose `<work>` with the measurement date and a unique round suffix, such as `latency-2026-11-07-r1`. Inspect the board and `region/<work>/manifest` before claiming space. Never claim another owner's region or `tstack/*`.
-2. Put `region/<work>/manifest` above the content. Put `<work>/answer` at the upper left with the question, one-line answer, measured interval, revision, environment, and limitations.
-3. Put `<work>/numbers` to its right with two to four measured values and units. Put `<work>/chart/1` below the answer and `<work>/evidence` to the chart's right. Add `<work>/chart/2` only when the second chart answers a different part of the same question.
+2. Put `region/<work>/manifest` above the content. Put `region/<work>/answer` at the upper left with the question, one-line answer, measured interval, revision, environment, and limitations.
+3. Put `region/<work>/numbers` to its right with two to four measured values and units. Put `region/<work>/chart/1` below the answer and `region/<work>/evidence` to the chart's right. Add `region/<work>/chart/2` only when the second chart answers a different part of the same question.
 4. Group the members under `region/<work>`, titled with the measurement date. Use images of charts from that round, not live chart paths. Link the underlying report, input data, command or run, and method.
 
 Source every value and the answer from a completed measurement report. Preserve the interval, sample size, units, and comparison basis needed to interpret the result. Do not replace unavailable measurements with zero. Do not use a live browser as point-in-time evidence.
@@ -45,7 +45,7 @@ specs = [
 	("chart/1", "image", {"path": r["chartPath"], "caption": "Measured round "+w+" at "+r["measuredAt"]}, {"w": 760}),
 	("evidence", "note", {"markdown": evidence}, {"w": 480}),
 ]
-keys = [w+"/"+s[0] for s in specs]
+keys = [g+"/"+s[0] for s in specs]
 def manifest(owner):
 	return (f"Purpose: Immutable measurement round {w}\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
 		f"Sources of truth: {os.environ['READOUT_REPORT']}; {r['chartPath']}; {r['evidenceUrl']}\n\n"

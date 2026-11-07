@@ -7,7 +7,7 @@ Use this guide when a person must choose, approve a plan, or answer a design que
 1. Choose a work slug and round number. Check that `region/<work>-round-<n>/manifest` has no other owner before claiming the region.
 2. Put a short context note on the left and native question tiles on the right. Keep one decision per question. Include options, their consequences, and a recommendation.
 3. Link each question's `context` to the note, real evidence objects, source paths, or URLs. Keep unknowns explicit.
-4. Group the round. Run `layout.check` once after initial placement, then change the manifest's layout owner from `agent:<EASL_TILE_ID>` to `user`.
+4. Group the round. Fix the initial layout until `layout.check` is clean, then change the manifest owner from `agent:<EASL_TILE_ID>` to `user`.
 5. Read answers from the question objects or `easl ask get <id>`. Record the answer in the decision source before starting the next round.
 
 Use these exact key patterns:
@@ -18,6 +18,7 @@ Use these exact key patterns:
 - `region/<work>-round-<n>/question/<decision>` is one native question per decision.
 
 The manifest lists member keys, actual sources, refresh trigger, lifetimes, and layout owner. Questions, context, group and manifest are task evidence created with `expiresIn: "1d"`. Question `props.expiresAt` separately sets the answer timeout. Keep the deletion deadline later than that timeout so the answer can be read and recorded. `easl ask --expires 2h` sets only the timeout; immediately set the returned object's deletion deadline with `object.update --id <id> --expires 1d`. Extend retention before expiry if the answer remains needed.
+For blocking waits, create the question with `object.create` and a one-day lifetime, then call `easl ask wait <id>`. The convenience `ask --wait` does not print its id until the answer, so do not use it before the deletion lifetime is set.
 
 ## Refresh and close the round
 
