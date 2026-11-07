@@ -45,7 +45,7 @@ Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with
 | Want | Call |
 | --- | --- |
 | Objects or a region without moving the user's view | `view.render` |
-| The user's current window, including chrome | `view.snapshot` |
+| A redraw of the current window, including chrome; not actual screen pixels | `view.snapshot` |
 | The user's view without pixels | `view.get` |
 | Who changed what since the last look | `board.history` |
 
@@ -60,3 +60,4 @@ Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with
 Rendering is offscreen at a fixed scale. Never move the view or add probe tiles in the user's view to inspect content.
 Without `--out`, renders use a new temp file under `$TMPDIR/easl-renders/`. Do not write scratch renders inside the repository.
 Headless easld without a drawing viewer cannot prove pixels. Its approximate `layout.check` is geometry evidence, not visual proof.
+`view.snapshot` redraws the window offscreen and can hide blank or smeared tiles. Do not use it to verify what reached the screen; use an actual screen capture as described in [Seeing the window](../../../docs/testing.md#seeing-the-window).

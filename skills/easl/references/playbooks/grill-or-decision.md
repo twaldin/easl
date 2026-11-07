@@ -65,7 +65,7 @@ result = canvas.object.batch(ops=[
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
 check = canvas.layout.check(ids=ids)
-assert not check["overlaps"], check
+assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 print("Read the answer with: easl ask get", ids[2])
 ```

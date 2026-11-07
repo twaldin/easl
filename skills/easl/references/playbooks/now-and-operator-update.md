@@ -57,16 +57,31 @@ result = canvas.object.batch(ops=[
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 3)]
 check = canvas.layout.check(ids=ids)
-assert not check["overlaps"], check
+assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 
-For the next update in the same Python session, replace only the content by id. Omission preserves an existing deletion deadline. If the tile expired, `object.update` fails with `not_found` instead of creating an orphan. Start a new region with explicit lifetimes when needed.
+For the next update in the same Python session, read live focus first and defer while the user edits this note or focus is unavailable. Replace only content by id. Omission preserves an existing deletion deadline. If the tile expired, `object.update` fails with `not_found` instead of creating an orphan. Start a new region with explicit lifetimes when needed.
 
 ```python
+from easl_sdk import CanvasError
 updated = datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).isoformat()
 markdown = f"Authored operator update. Source updated {updated}.\n\nSource: `{source}`\n\n" + source.read_text()
-canvas.object.update(id=ids[1], props={"markdown": markdown})
+try:
+	focused = canvas.view.get().get("focused")
+except CanvasError as error:
+	if error.code != "unavailable":
+		raise
+	print("Refresh deferred; live focus unavailable:", error)
+else:
+	if focused == ids[1]:
+		print("Refresh deferred while the user edits the note.")
+	else:
+		canvas.object.update(id=ids[1], props={"markdown": markdown})
+		check = canvas.layout.check(ids=[ids[1]])
+		assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 ```
 
 This shows an absolute source time, not a ticking age. It does not install a feed or claim that the file's contents are derived facts. Headless text measurement can be approximate. See [object keys and updates](../api.md#objects) and [rendering](../rendering.md).
+
+After refresh, resolve overflow or truncation before presenting it. Shorten the authored update or hand the layout issue to its owner; do not resize a user-owned frame. Keep the next action and evidence links visible.

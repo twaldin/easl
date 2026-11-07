@@ -28,10 +28,12 @@ Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID
 ```sh
 python3 - <<'PY'
 import json, os
+from pathlib import Path
 from easl_sdk import Easl
 with open(os.environ["READOUT_REPORT"]) as f:
 	r = json.load(f)
 assert 2 <= len(r["numbers"]) <= 4
+assert Path(r["chartPath"]).is_file(), "Use an existing frozen host-local chart"
 c = Easl()
 w = r["round"]
 g = f"region/{w}"
@@ -42,7 +44,7 @@ evidence = f"[Measurement report]({r['evidenceUrl']})\n\nMethod: {r['method']}\n
 specs = [
 	("answer", "note", {"markdown": answer}, {"w": 760}),
 	("numbers", "note", {"markdown": numbers}, {"w": 480}),
-	("chart/1", "image", {"path": r["chartPath"], "caption": "Measured round "+w+" at "+r["measuredAt"]}, {"w": 760}),
+	("chart/1", "image", {"path": r["chartPath"], "caption": "Measured round "+w+" at "+r["measuredAt"]}, {"w": 760, "h": 440}),
 	("evidence", "note", {"markdown": evidence}, {"w": 480}),
 ]
 keys = [g+"/"+s[0] for s in specs]
@@ -51,7 +53,12 @@ def manifest(owner):
 		f"Sources of truth: {os.environ['READOUT_REPORT']}; {r['chartPath']}; {r['evidenceUrl']}\n\n"
 		"Refresh trigger: Never in place; publish a new dated round\n\nLifetimes: All task evidence expiresIn 1d; delete at task end unless retained")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
-ids = [c.object.create(type=t, props={**p, "key": k}, frame=f, size="fit", expires_in="1d")["object"]["id"] for k, (_, t, p, f) in zip(keys, specs)]
+ids = []
+for k, (_, t, p, f) in zip(keys, specs):
+	params = {"type": t, "props": {**p, "key": k}, "frame": f, "expires_in": "1d"}
+	if t == "note":
+		params["size"] = "fit"
+	ids.append(c.object.create(**params)["object"]["id"])
 c.object.create(type="group", props={"key": g, "title": "Readout "+r["measuredAt"], "members": [m, *ids]}, expires_in="1d")
 c.layout.grid(cells=[{"id": m, "row": 0, "col": 0}, *[{"id": v, "row": 1+i//2, "col": i%2} for i, v in enumerate(ids)]], col_gap=60, row_gap=60)
 check = c.layout.check(ids=[m, *ids])
@@ -61,3 +68,4 @@ PY
 ```
 
 Image tiles reload when their source file changes. Immutability therefore requires frozen files as well as unchanged tile props. See [image behavior](../api.md).
+The chart uses its explicit frame instead of `size="fit"`, so SVG creation does not need a viewer. Only the notes use text fitting.

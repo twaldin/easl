@@ -76,7 +76,7 @@ An upsert that creates (`created: true`) has no deadline unless you pass one. Us
 CLI `--expires 2h` means deletion after two hours on object calls. Repeated relative expiry writes renew the deadline, so renew only with useful content.
 `easl ask --expires 2h` is different: it closes an unanswered question, not deletes its tile.
 Questions are task evidence, including their answers. Set deletion later than the answer timeout and the expected time to read and record the answer.
-Use `object.update --id <question-id> --expires 1d` immediately after asking. Extend retention before expiry if the decision remains needed.
+Immediately set a convenience-created question's chosen deletion deadline with `object.update --id <id> --expires <RFC3339-deadline>`.
 Prefer `object.create` with a lifetime for task questions and browsers, then `easl ask wait <id>` or attach the browser tool by id.
 Convenience creators such as `easl ask`, the browser tool and `easl browser open` can omit deletion lifetimes. Set your own new tile's deadline as soon as its id is available. Never start `ask --wait` before setting that deadline.
 Closed questions archive automatically unless kept. Cancel a question as soon as it becomes moot.
@@ -86,7 +86,8 @@ At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons a
 `untouched` measures content age. Moving or resizing a tile does not make its content fresh.
 Delete your own task objects even when they are too young for this list. Use the manifest's member keys to find them.
 Do not delete foreign tiles, the user's live browser, or a terminal during cleanup. Deleting a terminal kills its session.
-If the user retains evidence, record the new owner and lifetime before handing it back.
+If the user retains evidence, update `expires` on every retained tile, group and manifest to the agreed deadline (`null` for declared standing state).
+Then record the new owner and lifetime before hand-back; a manifest note alone does not change deletion.
 Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetimes-and-cleanup).
 
 ## Claim a region, then respect its owner

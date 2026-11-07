@@ -36,6 +36,7 @@ Use these authoritative sources rather than the board as a database:
 - Report JSON supplies `question`, `answer`, and `evidence`, with optional `numbers`, `chart`, `at`, and `lane`.
 
 See [tstack's board reference](https://github.com/twaldin/tstack/blob/main/docs/reference.md#board) for schemas, approval policy, freshness, and source limits. GitHub collection has 10-second request timeouts and a 90-second repository deadline. Rendering never establishes permission to merge.
+On a configured tstack host, the installed checkout also has `docs/reference.md`, Board section, at `${TSTACK_HOME:-$HOME/tstack}/docs/reference.md`. The GitHub copy requires repository access.
 
 ## Route actions to the source owner
 

@@ -25,11 +25,12 @@ When measurement stops, remove your stat and chart tiles, group, manifest, and g
 
 ## Worked example: publish a producer's measurement
 
-Prerequisites: Python with `easl_sdk`, an already running scratch easld selected by `EASL_SOCKET`, and `EASL_BOARD_ID`. Set `EASL_BOARD_ROOT` to that scratch board's host-local root, `STAT_FILE` to a real stat JSON file in the schema above with at least three series points, and `STAT_PRODUCER` to its actual producing job or script name. Set `STAT_REFRESH` to its real publication cadence and stale threshold. This is a standalone region, not an addition to `tstack/*`. It publishes one source read; it does not install a watcher.
+Prerequisites: Python with `easl_sdk`, an already running scratch easld selected by `EASL_SOCKET`, and `EASL_BOARD_ID`. Set `STAT_FILE` to a real host-local stat JSON file in the schema above with at least three series points, and `STAT_PRODUCER` to its actual producing job or script name. Set `STAT_REFRESH` to its real publication cadence and stale threshold. This is a standalone region, not an addition to `tstack/*`. It publishes one source read; it does not install a watcher.
 
 ```python
 import json, os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from easl_sdk import canvas
 
 base = "region/live-metric"
@@ -40,14 +41,16 @@ source = Path(os.environ["STAT_FILE"]).resolve()
 data = json.loads(source.read_text())
 series = data["series"][-60:]
 assert len(series) >= 3, "Use a stat alone until there are three points"
-chart = Path(os.environ["EASL_BOARD_ROOT"]) / "out/live-metric.svg"
-chart.parent.mkdir(parents=True, exist_ok=True)
 low, high = min(series), max(series)
 points = " ".join(f"{24 + i * 592 / (len(series) - 1):.1f},{210 - (v - low) * 180 / (high - low or 1):.1f}" for i, v in enumerate(series))
-chart.write_text(f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240"><rect width="640" height="240" fill="#102033"/><polyline fill="none" stroke="#7dd3fc" stroke-width="3" points="{points}"/></svg>')
+with NamedTemporaryFile(mode="w", prefix="easl-live-metric-", suffix=".svg", delete=False) as output:
+	chart = Path(output.name)
+	output.write(f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240"><rect width="640" height="240" fill="#102033"/><polyline fill="none" stroke="#7dd3fc" stroke-width="3" points="{points}"/></svg>')
 markdown = f"# {data.get('label', 'Measured value')}\n\n{data['value']} {data.get('unit', '')}\n\nDelta: {series[-1] - series[-2]:+g}\n\nSampled: {data['at']}\n\nSource: `{source}`"
 if "target" in data:
-	markdown += f"\n\nTarget: {data['target']}, good direction: {data.get('good', 'up')}"
+	markdown += f"\n\nTarget: {data['target']}"
+if "good" in data:
+	markdown += f"\n\nGood direction: {data['good']}"
 owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:stats-publisher"
 manifest = f"""- Purpose: Show the producer's latest metric and observation-order trend.
 - Layout owner: {owner}
@@ -69,4 +72,4 @@ assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 
-This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The explicit image dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly, not as visual proof. For a later sample, rebuild the same SVG, find each tile by key and update its id without layout fields. A missing tile requires a new claim and lifetime. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest. That refresher must mark late or failed source reads.
+This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The image's explicit dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly, not as visual proof. The SVG is an exclusively created host-local temp file; keep its path with this region, reuse only that file for its refreshes, and remove it when the region retires. Find tiles by key and update their ids without layout fields. A missing tile requires a new claim and lifetime. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest. That refresher must mark late or failed source reads.

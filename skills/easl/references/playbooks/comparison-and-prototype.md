@@ -24,6 +24,7 @@ Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID
 ```sh
 python3 - <<'PY'
 import os
+from datetime import datetime, timedelta, timezone
 from easl_sdk import Easl
 c = Easl()
 w = "demo-prototype-choice"
@@ -39,7 +40,7 @@ criteria = c.object.create(type="note", props={"key": keys[0], "markdown": "PROT
 variants = []
 for i, html in enumerate(["<h1>PROTOTYPE A</h1><p>Cedar: 12</p><p>Birch: 7</p>", "<h1>PROTOTYPE B</h1><table><tr><th>Name</th><th>Count</th></tr><tr><td>Cedar</td><td>12</td></tr><tr><td>Birch</td><td>7</td></tr></table>"]):
 	variants.append(c.object.create(type="html", props={"key": keys[i+1], "title": "PROTOTYPE "+"AB"[i], "html": html}, frame={"w": 480, "h": 320}, expires_in="1d")["object"]["id"])
-q = c.object.create(type="question", props={"key": keys[3], "question": "Which PROTOTYPE layout makes the larger count easier to find?", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "neither", "label": "Neither"}], "context": [{"object": v} for v in variants]}, expires_in="1d")["object"]["id"]
+q = c.object.create(type="question", props={"key": keys[3], "question": "Which PROTOTYPE layout makes the larger count easier to find?", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "neither", "label": "Neither"}], "context": [{"object": v} for v in variants], "expiresAt": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()}, expires_in="1d")["object"]["id"]
 ids = [m, criteria, *variants, q]
 c.object.create(type="group", props={"key": g, "title": "PROTOTYPE comparison", "members": ids}, expires_in="1d")
 c.layout.grid(cells=[{"id": m, "row": 0, "col": 0}, {"id": criteria, "row": 1, "col": 0}, *[{"id": v, "row": 2, "col": i} for i, v in enumerate(variants)], {"id": q, "row": 3, "col": 0}], col_gap=60, row_gap=60, origin={"x": x, "y": y})

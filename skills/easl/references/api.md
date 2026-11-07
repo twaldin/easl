@@ -303,7 +303,8 @@ Code navigation (Go to Definition, Find References, Outline) needs the language'
 
 ## Changes tile behavior
 
-To show the user what you changed, create a changes tile instead of an HTML diff: `easl object.create --type changes --json '{"props":{},"size":"fit","expiresIn":"1d"}'`.
+To show the user what you changed, use a changes tile instead of an HTML diff. For a genuinely new task tile, choose an unused key: `easl object.create --type changes --json '{"props":{"key":"task-review"},"size":"fit","expiresIn":"1d"}'`.
+A keyed create never takes over another tile. Find an existing review by key and update its id without expiry or layout fields unless those changes are intended. An unkeyed changes create can reuse your existing tile and apply its expiry params, including to retained evidence.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 
 ## Live diagrams and authored graphs

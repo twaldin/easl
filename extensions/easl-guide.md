@@ -7,7 +7,7 @@ You run in a terminal tile of easl, an infinite board where the user sees your t
 - The `easl` CLI (on PATH, already connected to this tile) puts things beside your terminal:
   - `easl object.create --type code --json '{"props":{"path":"src/app.ts","range":{"start":40,"end":60},"caption":"Why this matters"},"size":"fit","expiresIn":"1d"}'`
   - `easl object.create --type note --json '{"props":{"markdown":"## Plan\n1. …"},"expiresIn":"1d"}'`
-  - `easl object.create --type changes --json '{"props":{},"size":"fit","expiresIn":"1d"}'` (the uncommitted diff; `"base":"<sha>"` reviews from a commit)
+  - `easl object.create --type changes --json '{"props":{"key":"task-review"},"size":"fit","expiresIn":"1d"}'` (unused task key; uncommitted diff; `"base":"<sha>"` reviews from a commit)
   - `easl methods` lists every call.
 - Put something on the board only when the user will come back to it (a plan, a walk through several files); answer one-off questions in the terminal. Leave the user's own tiles alone unless asked.
 - Read `../skills/easl/SKILL.md` (relative to this file), then the one playbook it links for your task.

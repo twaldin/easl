@@ -22,7 +22,7 @@ The initial layout owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`,
 
 ## Create a headless review example
 
-Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `PRODUCT_URL` to an existing running product. Set `SCREENSHOT_PATH` to an existing absolute screenshot path accessible to the server. Set `CAPTURE_IDENTITY` to its actual capture time, build, and screen name. This example covers one screen. Add a capture member per remaining screen before calling a full-screen review complete. No GUI or new file is required.
+Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `PRODUCT_URL` to an existing running product and `PRODUCT_IDENTITY` to the deployment source's actual environment, build identifier and source URL/path. Do not infer them from a screenshot. Set `SCREENSHOT_PATH` to an existing absolute screenshot path accessible to the server, and `CAPTURE_IDENTITY` to its actual capture time, build, and screen name. This example covers one screen. Add a capture member per remaining screen before calling a full-screen review complete. No GUI or new file is required.
 
 ```sh
 python3 - <<'PY'
@@ -33,13 +33,13 @@ w = "demo-product-review"
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
 specs = [
-	("live", "browser", {"url": os.environ["PRODUCT_URL"], "title": "Running product, not captured proof"}, {"w": 960, "h": 700}),
+	("live", "browser", {"url": os.environ["PRODUCT_URL"], "title": "Running product: "+os.environ["PRODUCT_IDENTITY"]}, {"w": 960, "h": 700}),
 	("capture/screen-1", "image", {"path": os.environ["SCREENSHOT_PATH"], "caption": os.environ["CAPTURE_IDENTITY"]}, {"w": 640, "h": 480}),
 ]
 keys = [f"{g}/{s[0]}" for s in specs]
 def manifest(owner):
 	return (f"Purpose: Review the running product and a dated capture\n\nLayout owner: {owner}\n\n"
-		f"Member keys: {', '.join([g+'/manifest', *keys])}\n\nSources of truth: {os.environ['PRODUCT_URL']}; "
+		f"Member keys: {', '.join([g+'/manifest', *keys])}\n\nSources of truth: {os.environ['PRODUCT_URL']}; {os.environ['PRODUCT_IDENTITY']}; "
 		f"{os.environ['SCREENSHOT_PATH']}; {os.environ['CAPTURE_IDENTITY']}\n\n"
 		"Refresh trigger: Running build changes; new capture round\n\nLifetimes: All task evidence expiresIn 1d; delete at review end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
