@@ -39,7 +39,7 @@ w = "demo-acceptance"
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
 def manifest(owner):
-	return (f"Purpose: Inspect measured acceptance gates\n\nLayout owner: {owner}\n\nMember keys: {w}/gates\n\n"
+	return (f"Purpose: Inspect measured acceptance gates\n\nLayout owner: {owner}\n\nMember keys: {g}/manifest, {w}/gates\n\n"
 		f"Sources of truth: {os.environ['GATE_REPORT']}; linked measured runs and approved thresholds\n\n"
 		"Refresh trigger: New measured run or revision or approved criteria\n\nLifetimes: All task evidence expiresIn 1d; delete at task end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]

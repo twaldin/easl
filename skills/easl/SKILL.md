@@ -72,9 +72,11 @@ Choose the lifetime at creation, including groups, manifests, shapes and arrows.
 
 `expiresIn` is a relative duration resolved once by the host. `expires` is an absolute RFC3339 deletion deadline, or `null` to clear it.
 Both are top-level create, update or upsert params. Never send both. Omission on update preserves the deadline.
+An upsert that creates (`created: true`) has no deadline unless you pass one. Use update-by-id for refreshes that must not recreate expired tiles.
 CLI `--expires 2h` means deletion after two hours on object calls. Repeated relative expiry writes renew the deadline, so renew only with useful content.
 `easl ask --expires 2h` is different: it closes an unanswered question, not deletes its tile.
-Set a question's deletion lifetime with `object.update --id <question-id> --expires 1d` immediately after asking.
+Questions are task evidence, including their answers. Set deletion later than the answer timeout and the expected time to read and record the answer.
+Use `object.update --id <question-id> --expires 1d` immediately after asking. Extend retention before expiry if the decision remains needed.
 Closed questions archive automatically unless kept. Cancel a question as soon as it becomes moot.
 
 At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons and creators.
@@ -88,21 +90,22 @@ Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetime
 ## Claim a region, then respect its owner
 
 A manifest is a plain note, not a new object type or a lock. Use group key `region/<work>` and note key `region/<work>/manifest`.
+For a branch region discovered by `board.get --branch`, use the shipped group key `branch:<name>` instead, with the same manifest pattern and ownership rules.
 Read an existing manifest before claiming its key. Never replace another owner's claim or move their region.
 Include these fields in the note, with real values:
 
 ```text
-	Purpose: investigate the restore stall
-	Layout owner: agent:<your tile id> during initial placement
-	Member keys: region/restore/manifest, restore/finding, restore/code
-	Sources of truth: trace file, src/store.ts:41-60
-	Refresh trigger: new trace or source change
-	Lifetimes: task evidence, deletion deadline 2026-11-08T12:00:00Z
+	- Purpose: investigate the restore stall
+	- Layout owner: agent:<your tile id> during initial placement
+	- Member keys: region/restore/manifest, restore/finding, restore/code
+	- Sources of truth: trace file, src/store.ts:41-60
+	- Refresh trigger: new trace or source change
+	- Lifetimes: task evidence, deletion deadline 2026-11-08T12:00:00Z
 ```
 
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
 Place your region once with layout helpers. Run `layout.check`, fix your objects, then set `Layout owner: user` in the manifest.
-Tim's moves now stick. Refresh your content by key without `frame` or another layout pass. Do not silently reclaim layout ownership.
+Tim's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
 Hand back by updating the owner to the user or a named successor, or by deleting your own task tiles, group and manifest.
 Keep sources and member keys current until hand-back. A standing region must name who refreshes it and when it retires.

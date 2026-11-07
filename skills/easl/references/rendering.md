@@ -1,6 +1,6 @@
 # Seeing the board: result details
 
-What `view.render`, `view.snapshot`, `view.get` and `board.history` return, beyond SKILL.md's summary.
+Result fields and usage for `view.render`, `view.snapshot`, `view.get` and `board.history`.
 
 Python: `canvas.view.render(target="obj_…", full=True)["path"]`
 (`target` is an id, a list of ids, or `{"x","y","w","h"}`; ids render the region under them, taking in the whole route of any arrow between two of them).

@@ -17,7 +17,7 @@ Use these exact key patterns:
 - `region/<work>-round-<n>/context` is the context note.
 - `region/<work>-round-<n>/question/<decision>` is one native question per decision.
 
-The manifest lists member keys, actual sources, refresh trigger, lifetimes, and layout owner. Context notes, the group, and the manifest are task evidence created with `expiresIn: "1d"`. Questions are answer objects created with `expiresIn: "2h"`. Question `props.expiresAt` separately sets the answer timeout. Do not confuse that timeout with deletion. `easl ask --expires 2h` sets only the timeout; if you use `ask`, immediately set the returned object's deletion deadline with `object.update --id <id> --expires 2h`.
+The manifest lists member keys, actual sources, refresh trigger, lifetimes, and layout owner. Questions, context, group and manifest are task evidence created with `expiresIn: "1d"`. Question `props.expiresAt` separately sets the answer timeout. Keep the deletion deadline later than that timeout so the answer can be read and recorded. `easl ask --expires 2h` sets only the timeout; immediately set the returned object's deletion deadline with `object.update --id <id> --expires 1d`. Extend retention before expiry if the answer remains needed.
 
 ## Refresh and close the round
 
@@ -47,23 +47,24 @@ plan = Path(os.environ["PLAN_FILE"]).resolve()
 caller = os.environ.get("EASL_TILE_ID")
 owner = f"agent:{caller}" if caller else "script:plan-review"
 asker = {"tile": caller} if caller else {"name": "plan-review"}
-manifest = f"""Purpose: Decide whether to proceed with the linked plan.
-Layout owner: {owner}
-Member keys: {', '.join(keys)}
-Sources of truth: {plan}; question answer; recorded decision in the plan.
-Refresh trigger: Plan changes or a question answer.
-Lifetimes: Question 2h; context, group, and manifest 1d; delete at task end.
+manifest = f"""- Purpose: Decide whether to proceed with the linked plan.
+- Layout owner: {owner}
+- Member keys: {', '.join(keys)}
+- Sources of truth: {plan}; question answer; recorded decision in the plan.
+- Refresh trigger: Plan changes or a question answer.
+- Lifetimes: All objects 1d; answer timeout 2h; record answers before deleting task evidence.
 """
 deadline = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[2], "title": "Plan context", "markdown": f"Source: `{plan}`\n\n" + plan.read_text()}}},
-	{"method": "object.create", "params": {"type": "question", "expiresIn": "2h", "props": {"key": keys[3], "question": "Proceed with this plan?", "options": [{"id": "proceed", "label": "Proceed", "why": "Accept the scope and risks in the plan."}, {"id": "revise", "label": "Revise first", "why": "Describe the required change in the answer note."}], "recommended": "revise", "context": [{"object": "$1"}], "asker": asker, "expiresAt": deadline}}},
+	{"method": "object.create", "params": {"type": "question", "expiresIn": "1d", "props": {"key": keys[3], "question": "Proceed with this plan?", "options": [{"id": "proceed", "label": "Proceed", "why": "Accept the scope and risks in the plan."}, {"id": "revise", "label": "Revise first", "why": "Describe the required change in the answer note."}], "recommended": "revise", "context": [{"object": "$1"}], "asker": asker, "expiresAt": deadline}}},
 	{"method": "layout.stack", "params": {"ids": ["$0", "$1", "$2"], "direction": "row", "gap": 48}},
 	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Plan review, round 1", "members": ["$0", "$1", "$2"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
-print(canvas.layout.check(ids=ids))
+check = canvas.layout.check(ids=ids)
+assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 print("Read the answer with: easl ask get", ids[2])
 ```

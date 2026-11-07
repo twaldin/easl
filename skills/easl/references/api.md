@@ -93,6 +93,8 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
   This is where a chart goes: save the figure to a file and create the tile, no base64 in HTML. Without a frame (or `frame` of just x, y, w) it fits its picture: one point per pixel, at most `w` (default 960) wide.
   It reloads when the file changes on disk, so re-save the chart to the same path to update it (no `object.update` needed). A Hyper-click on it mentions `image <path> · pixel (x, y) of W×H`.
   Its title defaults to its file name: set `title` only when the name doesn't say what it shows. Keep images that must last outside `$TMPDIR`.
+- Video tiles (`type: video`, `VideoProps`): `{"path":"clips/demo.mp4","poster":"clips/poster.png","muted":true,"autoplay":false,"loop":false,"startTime":2}`.
+  `path` and optional `poster` resolve on the board host. Omit the poster when unnecessary. Local and remote clips stream and seek without copying the clip onto the viewer's disk.
 - Images elsewhere: a note shows `![alt](out/fig.png)` (relative to its root, below, or an absolute path inside it or the temp directory), scaled to its width;
   an HTML tile loads `<img src="out/fig.png">` the same way (relative to its root, or `/tmp/…`); `file://` URLs and paths anywhere else never load in a page.
 - Link roots: a note's paths (`path:line` and markdown links, excerpt fences, images) and an HTML tile's (`<canvas-link>`, `<canvas-code>`, `<img>`) resolve against its `root` prop (absolute or board-relative: the board's checkout or another worktree of its repository; anything else is `invalid_params`), else the board root.
@@ -230,7 +232,6 @@ So does a target whose foreground program isn't its agent (`agent.list` `program
 
 Results are objects, never bare values: `object.create`/`update`/`get` return `{object}` (the new id is `result["object"]["id"]`), and create/update add `warnings` for a prop key the type doesn't know (a typo like `colour`): fix it.
 `caller` (you) and `board` are filled from the client's tile and board, so objects you create are attributed to you and placed next to your terminal.
-Every result shape, the TypeScript client, error codes and reconnects: `api.md` in this skill's directory.
 
 ## Mention context details
 
@@ -267,16 +268,16 @@ Every mention kind and field: `api.md` "Reading the board".
 Tiles and arrows are things the user can move, mention and step through; a page is one tile they can only scroll.
 
 1. **The code that matters, as code tiles at exact ranges**, each with a `caption` saying what to notice: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "caption": "restore replays the log"}` and `"size": "fit"`.
-   Three to six stops, not every file you read (your follow tile already shows those); several at once with `canvas.compositions.locations.open([…])`.
+   Three to six stops, not every file you read. Your follow tile already shows those. Create several in one `object.batch`, with a lifetime on each create.
 2. **The structure as shapes and arrows** between those tiles: a `group` per part (`title`, `members`), `arrow`s with a `relation` (`"calls"`) and a two-word `label` only where the ends don't say it.
-   For who calls what, a `diagram` tile (`symbol`, `direction`) instead of drawing the call graph by hand (it needs the language's server: Diagram tiles).
+   For who calls what, use a `diagram` tile (`symbol`, `direction`) instead of drawing the call graph by hand. See [Live diagrams and authored graphs](#live-diagrams-and-authored-graphs) for language-server requirements.
 3. **A browser tile when a page makes the point**: the running app, or the docs or README the code follows (`browser` `{"url": "…"}`).
 4. **A note for what should last**: the summary in a few lines, with `path:line` links and anchored fences (```` ```ts file=src/store.ts#L41-60 ````), not pasted code.
 5. **A short terminal answer**: the answer in a sentence or two and where to look, with a `view.attention` marker on the first stop; don't retell the tiles in prose.
-6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>`; `references/html-explainers.md`), or when the user asks for one page.
+6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>` in [HTML explainers](html-explainers.md)), or when the user asks for one page.
 
 When it has an order (a request's path, a change step by step), join the stops with `"relation": "next_step"` arrows labelled "1 · parse", "2 · …" and group them titled "Start here": ⌥⌘→ on the group, or with nothing selected, starts at the first stop (`shapes.md`).
-Build it in one `object.batch` (`"$0"` references), place it with `layout.place`/`layout.stack`/`layout.grid` (Readable diagrams, below), then run `layout.check` and fix what it reports, and look at it (`easl render <group>`) before you point the user at it.
+Build it in one `object.batch` with `"$0"` references. Place it with layout helpers and the [readable-diagram rules](shapes.md#lay-out-a-readable-diagram), then run `layout.check`, fix its findings, and inspect `easl render <group>` before pointing the user at it.
 
 Say only what the code, the README or the docs show, and show where: every claim gets its tile, fence or `path:line`; read before you describe a feature, never describe one from its name.
 For easl itself, ground it in this skill and `ui.md` (the same text as Help › easl Basics), or in the README and `docs/` when the board is easl's own checkout.
@@ -403,8 +404,9 @@ Reusable helpers come built into the SDKs, plus your own in `~/.easl/composition
 ```python
 canvas.compositions.available()                              # name -> summary
 canvas.compositions.grid.arrange([id1, id2, id3])            # grid beside your terminal, clear of other tiles
-canvas.compositions.locations.open(["src/a.ts:12-40", "src/b.ts#L7"])
 ```
+
+The built-in `locations.open` creates code tiles but exposes no lifetime argument. For task-owned excerpts, use `object.batch` with an explicit `expiresIn` on every `object.create` instead. Use `grid.arrange` only while you own the initial layout.
 
 A composition is a plain module; functions whose first parameter is named `canvas` receive the client.
 When you catch yourself repeating a multi-call board pattern, write it as a composition in `~/.easl/compositions/<name>.py`
@@ -416,7 +418,7 @@ One board per git repository, whichever worktree or branch opens it (rooted at t
 `easl board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
 A worktree opens its repository's board: the result's `worktree` names it (path, branch, and `region`, the group that holds that branch's objects when there is one), and New Terminal starts there.
 Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board; a terminal records the `worktree` and `branch` it works in (where it started, and after a `cd` into another worktree, where its program runs) in its props.
-Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `easl board.get --branch <name>` returns just that part of the board, with `regions` listing that branch's region ids (`[]` before you make one).
+Give each branch's work a group titled with the branch and keyed `branch:<name>`. `easl board.get --branch <name>` discovers that group and its members. This is the branch form of a playbook region, not a second group: include its plain `region/<work>/manifest` note, owner and lifetimes just as for `region/<work>`. Read an existing branch manifest before claiming the group.
 `easl board.list` shows every stored local board, including a repository board's `worktrees` (path, branch, `live`: still checked out there). The Mac app also lists its open remote tabs with `remote:true`, `host`, `sshTarget`, the host's `board` id and `root`, `title`, `window`, and `open:true`. Remote roots are not local paths. Check `remote` before using local-only `archived`, `objects`, `updatedAt`, `repo`, or `worktrees` fields. Closing a remote tab removes its row; closed local boards stay with `open:false`. easld lists only its own boards.
 Use a remote row's host `board` id for `view.get` through this app's socket to inspect its tab, or for `board.get` to read its host's manifest. Open and stored local IDs take precedence when IDs collide, including migrated IDs. A closed local target stays `not_found`; several matching remote tabs return `ambiguous`. Connect to the intended host directly when IDs collide. `view.render` on a remote tab requires `--inline true` and no `--out`; `view.snapshot` is unsupported to avoid writing host content locally. Tray calls use this viewer's private tray. `view.open_url` is unsupported for remote tabs because forwarding would pan the host user's window; use the tab's native link action.
 `easl board.export` writes a readable snapshot to `<root>/.easl/board.json` for committing when the user asks to save the board with the repo.
@@ -475,6 +477,7 @@ Question archival hides a closed tile but keeps its answer queryable with `easl 
 
 Any object can have a board-unique `props.key`. Upsert takes `key` at the top level and returns `created`.
 Its props merge. A `frame` passed to upsert applies on every run. Omit it after initial layout so the user's moves stick.
+Always pass a lifetime when upsert may create. For a content-only refresh that must not recreate expired evidence, find by key and use `object.update` with that id. A missing object requires a new claim and explicit lifetime.
 `"$0"` in a batch is operation zero's object id whether created or updated. One batch is one undo step.
 Find closed-ticket regions by `object.find --keyPrefix <prefix>`, then inspect ownership before deleting.
 Claim a region with the core's plain manifest note. This note does not enforce ownership in the API.

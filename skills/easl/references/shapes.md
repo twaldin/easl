@@ -1,6 +1,6 @@
 # Shapes, arrows and groups
 
-The full rules behind SKILL.md's summary.
+Object props, bindings, routing and layout for shapes, arrows and groups.
 
 - `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`.
   A rect drawn around tiles *encloses* them.

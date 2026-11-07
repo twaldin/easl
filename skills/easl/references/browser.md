@@ -1,6 +1,6 @@
 # Browser tiles
 
-How omp's browser tool, `easl browser`, and browser tiles behave, beyond SKILL.md's summary.
+Use omp's browser tool or `easl browser` to drive the user's WebKit tiles.
 
 omp's `browser` tool (its cmux backend is on automatically inside easl) opens a browser tile beside your terminal for each `browser.open({name})`;
 `close` deletes it.

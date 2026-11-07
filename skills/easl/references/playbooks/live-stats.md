@@ -49,23 +49,24 @@ markdown = f"# {data.get('label', 'Measured value')}\n\n{data['value']} {data.ge
 if "target" in data:
 	markdown += f"\n\nTarget: {data['target']}, good direction: {data.get('good', 'up')}"
 owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:stats-publisher"
-manifest = f"""Purpose: Show the producer's latest metric and observation-order trend.
-Layout owner: {owner}
-Member keys: {', '.join(keys)}
-Sources of truth: {source}; producer {os.environ['STAT_PRODUCER']}.
-Refresh trigger: {os.environ['STAT_REFRESH']}; stats-publisher reads and updates after publication.
-Lifetimes: All objects standing, expires:null; stats-publisher owns content refresh and retirement.
+manifest = f"""- Purpose: Show the producer's latest metric and observation-order trend.
+- Layout owner: {owner}
+- Member keys: {', '.join(keys)}
+- Sources of truth: {source}; producer {os.environ['STAT_PRODUCER']}.
+- Refresh trigger: Manual republish after a sample from {os.environ['STAT_PRODUCER']}; source cadence {os.environ['STAT_REFRESH']}. No refresher is installed.
+- Lifetimes: All objects 1d; this invocation owns cleanup at task end.
 """
 result = canvas.object.batch(ops=[
-	{"method": "object.create", "params": {"type": "note", "expires": None, "props": {"key": keys[1], "markdown": manifest}}},
-	{"method": "object.create", "params": {"type": "note", "expires": None, "props": {"key": keys[2], "title": "Latest source sample", "markdown": markdown}}},
-	{"method": "object.create", "params": {"type": "image", "expires": None, "frame": {"w": 640, "h": 296}, "props": {"key": keys[3], "path": str(chart), "caption": f"Observation order, {low:g} to {high:g}; sampled {data['at']}"}}},
+	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
+	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[2], "title": "Latest source sample", "markdown": markdown}}},
+	{"method": "object.create", "params": {"type": "image", "expiresIn": "1d", "frame": {"w": 640, "h": 296}, "props": {"key": keys[3], "path": str(chart), "caption": f"Observation order, {low:g} to {high:g}; sampled {data['at']}"}}},
 	{"method": "layout.stack", "params": {"ids": ["$0", "$1", "$2"], "direction": "row", "gap": 48}},
-	{"method": "object.create", "params": {"type": "group", "expires": None, "props": {"key": base, "title": "Live metric", "members": ["$0", "$1", "$2"]}}},
+	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Live metric", "members": ["$0", "$1", "$2"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
-print(canvas.layout.check(ids=ids))
+check = canvas.layout.check(ids=ids)
+assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 
-This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The explicit image dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly; a viewer displays the SVG and provides exact visual measurements. For each later publication, rebuild the same SVG and `object.upsert` the stat's `markdown` and image's `caption` under the same keys, without layout fields. The named refresher must also mark late or failed source reads; this one-shot example does not claim automatic freshness monitoring.
+This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The explicit image dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly, not as visual proof. For a later sample, rebuild the same SVG, find each tile by key and update its id without layout fields. A missing tile requires a new claim and lifetime. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest. That refresher must mark late or failed source reads.

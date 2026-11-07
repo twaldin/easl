@@ -77,12 +77,12 @@ facts = json.loads(subprocess.check_output(["tstack", "board", "--print"], text=
 snapshot = {"sampledAt": facts["now"], "boardAvailable": facts["board_available"],
 	"seats": [{"seat": seat["name"], "freshness": seat["freshness"], "errors": seat["errors"]} for seat in facts["seats"]]}
 owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:source-read"
-manifest = f"""Purpose: Inspect orchestration source availability.
-Layout owner: {owner}
-Member keys: {', '.join(keys)}
-Sources of truth: tstack board --print from this seat.
-Refresh trigger: A new source read; this tile is a snapshot.
-Lifetimes: All companion objects expire in 1d; delete at task end.
+manifest = f"""- Purpose: Inspect orchestration source availability.
+- Layout owner: {owner}
+- Member keys: {', '.join(keys)}
+- Sources of truth: tstack board --print from this seat.
+- Refresh trigger: A new source read; this tile is a snapshot.
+- Lifetimes: All companion objects expire in 1d; delete at task end.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
@@ -91,7 +91,8 @@ result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Orchestration source read", "members": ["$0", "$1"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 3)]
-print(canvas.layout.check(ids=ids))
+check = canvas.layout.check(ids=ids)
+assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 

@@ -8,7 +8,7 @@ Use this for a product walkthrough, a demo, or a review of screens and behavior.
 2. Put `region/<work>/manifest` above the content. Put `<work>/live` at the left, 960 by 700 points. Put `<work>/capture/<screen>` screenshots in a column to its right. Put `<work>/clip/<scenario>` clips below the browser, with capture time, build, and scenario in their captions or adjacent notes. Capture every screen in the agreed review scope, not only the landing page.
 3. Group all members under `region/<work>`. The manifest records Purpose, Layout owner, Member keys, Sources of truth, Refresh trigger, and Lifetimes.
 
-Use browser tiles for the product URL and hosted clips. Use image tiles for existing screenshots. Link [browser controls](../browser.md) and [image API details](../api.md) rather than embedding a second browser driver.
+Use browser tiles for the running product URL, `video` tiles for clip files on the board host, and image tiles for screenshots. See [browser controls](../browser.md) and [image and video props](../api.md#objects) rather than embedding another browser driver.
 
 ## Keep evidence distinct from live state
 
@@ -39,7 +39,7 @@ specs = [
 keys = [f"{w}/{s[0]}" for s in specs]
 def manifest(owner):
 	return (f"Purpose: Review the running product and a dated capture\n\nLayout owner: {owner}\n\n"
-		f"Member keys: {', '.join(keys)}\n\nSources of truth: {os.environ['PRODUCT_URL']}; "
+		f"Member keys: {', '.join([g+'/manifest', *keys])}\n\nSources of truth: {os.environ['PRODUCT_URL']}; "
 		f"{os.environ['SCREENSHOT_PATH']}; {os.environ['CAPTURE_IDENTITY']}\n\n"
 		"Refresh trigger: Running build changes; new capture round\n\nLifetimes: All task evidence expiresIn 1d; delete at review end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]

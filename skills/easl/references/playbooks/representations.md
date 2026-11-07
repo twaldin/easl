@@ -21,9 +21,9 @@ A representation answers one reading task. A kanban answers "where is work in it
 
 ## Lifetimes and ownership
 
-Answer objects use top-level `expiresIn: "2h"`. Task evidence uses `expiresIn: "1d"` and is deleted at task end unless retained. Standing state uses `expires: null`, with a named producer, refresh trigger, and retirement owner. The group and plain manifest note use the same task deadline, or `expires: null` for a standing region. These are API fields, not custom props.
+Short-lived answer notes use top-level `expiresIn: "2h"`. Questions and other task evidence use `expiresIn: "1d"` and are deleted at task end unless retained. A question's deletion deadline must leave time after its answer timeout to read and record the answer. Standing state uses `expires: null`, with a real producer, refresh trigger and retirement owner. Groups and manifests use the same task deadline or standing lifetime. These are API fields, not custom props.
 
-Every agent-created region has `region/<work>` and `region/<work>/manifest`. The manifest records Purpose, Layout owner, Member keys, Sources of truth, Refresh trigger, and Lifetimes. Initial placement belongs to the creating agent, then to `user` after the first `layout.check`. Content refreshes omit layout fields and helpers. `renderer:tstack` owns its existing `tstack/*` objects, which are standing objects without a deletion deadline. Other agents do not retrofit or claim them.
+Every agent-created region has a group and a plain note keyed `region/<work>/manifest`. The default group key is `region/<work>`; a branch region uses the shipped `branch:<name>` key instead so `board.get --branch` discovers it. Both use the same manifest and ownership rules. The manifest records Purpose, Layout owner, Member keys, Sources of truth, Refresh trigger and Lifetimes. Initial placement belongs to the agent, then `user` after a clean `layout.check`. Content refreshes omit layout fields and helpers. Existing `tstack/*` objects remain renderer-owned standing state; other agents do not retrofit or claim them.
 
 An object selection is not a request to take typing. Scripts do not focus a terminal, click a page, or select objects to announce new content. User-activated object links navigate without programmatically transferring typing. Use attention markers for an important result.
 
@@ -40,12 +40,12 @@ keys = [base, f"{base}/manifest", f"{base}/card/kanban", f"{base}/card/trend"]
 assert not any(o.get("props", {}).get("key") in keys
 	for o in canvas.board.get()["objects"]), "Choose an unused slug"
 owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:representation-example"
-manifest = f"""Purpose: Compare representation meanings, example only.
-Layout owner: {owner}
-Member keys: {', '.join(keys)}
-Sources of truth: The representation table in this guide, not live project data.
-Refresh trigger: This example is static; replace it when the question changes.
-Lifetimes: All objects 1d; delete after the comparison.
+manifest = f"""- Purpose: Compare representation meanings, example only.
+- Layout owner: {owner}
+- Member keys: {', '.join(keys)}
+- Sources of truth: The representation table in this guide, not live project data.
+- Refresh trigger: This example is static; replace it when the question changes.
+- Lifetimes: All objects 1d; delete after the comparison.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
@@ -55,7 +55,8 @@ result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Representation example", "members": ["$0", "$1", "$2"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
-print(canvas.layout.check(ids=ids))
+check = canvas.layout.check(ids=ids)
+assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 

@@ -19,7 +19,7 @@ For a one-off delivery review, give all objects `expiresIn: "1d"` and delete the
 
 ## Create a source-backed merge log
 
-Prerequisites: Python 3, installed `easl_sdk`, authenticated `gh`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `GH_REPO` to the repository in `owner/name` form. This executable example queries merges only and explicitly does not claim deployments. The named producer is this invocation's agent. Before retaining it as standing state, arrange its declared daily refresh. No new file is required.
+Prerequisites: Python 3, installed `easl_sdk`, authenticated `gh`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `GH_REPO` to the repository in `owner/name` form. This one-off example queries merges only and does not claim deployments or install a refresher. No new file is required.
 
 ```sh
 python3 - <<'PY'
@@ -42,11 +42,11 @@ assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slu
 keys = [w+"/log", w+"/sources"]
 source = f"Repository: {repo}\n\nQuery: gh pr list --state merged --search {query}\n\nWindow: {start.isoformat()} to {now.isoformat()}\n\nObserved: {now.isoformat()}\n\nDeployment feed: not configured"
 def manifest(owner):
-	return (f"Purpose: Seven-day delivery log\n\nLayout owner: {owner}\n\nMember keys: {', '.join(keys)}\n\n"
-		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Daily and after merges, by agent:{os.environ['EASL_TILE_ID']}\n\nLifetimes: All standing state expires null")
-m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires=None)["object"]["id"]
-ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", expires=None)["object"]["id"] for k, text in [(keys[0], body), (keys[1], source)]]
-c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires=None)
+	return (f"Purpose: Seven-day delivery log\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
+		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Manual republish after merges or the window boundary; no refresher installed\n\nLifetimes: All task evidence expiresIn 1d; this invocation owns cleanup")
+m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
+ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", expires_in="1d")["object"]["id"] for k, text in [(keys[0], body), (keys[1], source)]]
+c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires_in="1d")
 c.layout.stack(ids=[m, *ids], direction="column", gap=60)
 check = c.layout.check(ids=[m, *ids])
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
@@ -54,4 +54,4 @@ c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
 PY
 ```
 
-Use [object upserts](../api.md) with the same keys for later observations. Replace the rolling contents, not the region's placement.
+For later observations, find each [object by key](../api.md) and update its id without layout fields. If it expired, claim a new region with explicit lifetimes. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest.

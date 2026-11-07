@@ -42,12 +42,12 @@ source = Path(os.environ["UPDATE_FILE"]).resolve()
 updated = datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).isoformat()
 markdown = f"Authored operator update. Source updated {updated}.\n\nSource: `{source}`\n\n" + source.read_text()
 owner = "agent:" + os.environ["EASL_TILE_ID"] if os.environ.get("EASL_TILE_ID") else "script:operator-update"
-manifest = f"""Purpose: Give the operator the latest authored update.
-Layout owner: {owner}
-Member keys: {', '.join(keys)}
-Sources of truth: {source}; evidence links in that document.
-Refresh trigger: A meaningful source update or operator handoff; operator-update publishes it.
-Lifetimes: All objects 1d; delete at task end unless retained.
+manifest = f"""- Purpose: Give the operator the latest authored update.
+- Layout owner: {owner}
+- Member keys: {', '.join(keys)}
+- Sources of truth: {source}; evidence links in that document.
+- Refresh trigger: A meaningful source update or operator handoff; operator-update publishes it.
+- Lifetimes: All objects 1d; delete at task end unless retained.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
@@ -56,16 +56,17 @@ result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Operator update", "members": ["$0", "$1"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 3)]
-print(canvas.layout.check(ids=ids))
+check = canvas.layout.check(ids=ids)
+assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 
-For the next update in the same Python session, replace only the content. Omission preserves the original deletion deadline; explicitly choose a new deadline only when the task's retention changes.
+For the next update in the same Python session, replace only the content by id. Omission preserves an existing deletion deadline. If the tile expired, `object.update` fails with `not_found` instead of creating an orphan. Start a new region with explicit lifetimes when needed.
 
 ```python
 updated = datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).isoformat()
 markdown = f"Authored operator update. Source updated {updated}.\n\nSource: `{source}`\n\n" + source.read_text()
-canvas.object.upsert(key=keys[2], type="note", props={"markdown": markdown})
+canvas.object.update(id=ids[1], props={"markdown": markdown})
 ```
 
 This shows an absolute source time, not a ticking age. It does not install a feed or claim that the file's contents are derived facts. Headless text measurement can be approximate. See [object keys and updates](../api.md#objects) and [rendering](../rendering.md).

@@ -4,6 +4,8 @@ Use this for one completed measurement round. Show the question, a one-line answ
 
 ## Freeze one round
 
+On a board actively maintained by a configured tstack seat, write this round in its reports directory using the [engine report schema](https://github.com/twaldin/tstack/blob/main/docs/reference.md#project-config): `question`, `answer`, `evidence`, optional `numbers` with `label`, `value`, `unit`, `chart`, `at`, and `lane`. Let the engine render its report shelf. Do not create a duplicate region. The standalone layout and example below apply when no configured renderer maintains this board, including isolated fixture copies.
+
 1. Choose `<work>` with the measurement date and a unique round suffix, such as `latency-2026-11-07-r1`. Inspect the board and `region/<work>/manifest` before claiming space. Never claim another owner's region or `tstack/*`.
 2. Put `region/<work>/manifest` above the content. Put `<work>/answer` at the upper left with the question, one-line answer, measured interval, revision, environment, and limitations.
 3. Put `<work>/numbers` to its right with two to four measured values and units. Put `<work>/chart/1` below the answer and `<work>/evidence` to the chart's right. Add `<work>/chart/2` only when the second chart answers a different part of the same question.
@@ -17,7 +19,7 @@ Create every member, group, and manifest with `expiresIn: "1d"`. Delete the task
 
 The refresh trigger is a new measurement round, which creates a new dated region and keys. Never update the old round's values or overwrite its chart or report files. If a correction is necessary, publish a new round that identifies the superseded one. Keep the old result identifiable as superseded rather than silently rewriting history.
 
-The initial layout owner is `agent:<EASL_TILE_ID>` for placement only. After the first `layout.check`, set Layout owner to `user`. This ownership handoff is metadata, not a measurement refresh. Do not rerun layout helpers or pass frames on later metadata updates. Hand retained artifacts to a named archive owner, or delete your members, manifest, and group.
+The initial layout owner is `agent:<EASL_TILE_ID>` for placement only. After a clean `layout.check`, set Layout owner to `user`. This ownership handoff is metadata, not a measurement refresh. Do not rerun layout helpers or pass frames on later metadata updates. Hand retained artifacts to a named archive owner, or delete your members, manifest, and group.
 
 ## Publish an existing round headlessly
 
@@ -45,7 +47,7 @@ specs = [
 ]
 keys = [w+"/"+s[0] for s in specs]
 def manifest(owner):
-	return (f"Purpose: Immutable measurement round {w}\n\nLayout owner: {owner}\n\nMember keys: {', '.join(keys)}\n\n"
+	return (f"Purpose: Immutable measurement round {w}\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
 		f"Sources of truth: {os.environ['READOUT_REPORT']}; {r['chartPath']}; {r['evidenceUrl']}\n\n"
 		"Refresh trigger: Never in place; publish a new dated round\n\nLifetimes: All task evidence expiresIn 1d; delete at task end unless retained")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
