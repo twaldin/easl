@@ -109,6 +109,8 @@ Include these fields in the note, with real values:
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
 Place your region once with layout helpers. Run `layout.check`, fix your objects, then set `Layout owner: user` in the manifest.
 The user's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
+To add a member after hand-back, place only the new tile near an existing member with `layout.place`, then update `members` and check the region.
+If the result is not clean, move or delete only the new tile and hand the issue back. Never move existing members.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
 Hand back by updating the owner to the user or a named successor, or by deleting your own task tiles, group and manifest.
 Keep sources and member keys current until hand-back. A standing region must name who refreshes it and when it retires.
@@ -122,7 +124,7 @@ Answer a plain one-off question in the terminal. Do not mirror every tool call o
 For "explain this system", build a small map around your terminal, not a wall of text or one tall HTML page.
 Use exact code ranges with captions, arrows for structure, a short note for the finding, and one or two terminal sentences pointing to it.
 Ground each claim in a source tile, anchored fence or `path:line`. Read the source before describing a feature.
-For easl itself, use this skill, [ui.md](references/ui.md), the README or the project's docs, not a guess from a feature name.
+For easl itself, use this skill and [ui.md](references/ui.md); when the board is easl's own checkout, also use its README and docs. Never guess from a feature name.
 Detailed walkthrough instructions remain in [Explain code on the board](references/api.md#explain-code-on-the-board).
 
 Omit `frame` to place a new tile in free space near your terminal. Read its returned frame before placing related tiles.
@@ -136,7 +138,7 @@ Update props with `object.update`; they shallow-merge. Pass the last `rev` when 
 While you own layout, refit changed note markdown or HTML with `size: "fit"` in the same call. After hand-back, preserve dimensions.
 Do not rewrite a note the user is typing in. If content no longer fits, shorten it or hand the layout issue back.
 Never pan or zoom the user's view unless asked. Point with `view.attention --id <id> --message "The finding"`.
-Lead with the point in the first 40 characters. The next prompt's first marker clears earlier turns' markers. Do not re-raise them.
+Lead with the point in the first 40 characters. The next prompt's first marker clears your earlier turns' markers. Do not clear old ones yourself or re-raise them.
 The follow tile already shows what you read and edit. Never recreate it if closed, turn it back on, resize it or lay out around it.
 Objects record `createdBy` and `updatedBy`. Touch the user's objects only when asked or mentioned for collaboration.
 Undo is a safety net, not permission. Ownership of content does not override the manifest's layout owner.

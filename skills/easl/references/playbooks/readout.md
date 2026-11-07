@@ -4,7 +4,7 @@ Use this for one completed measurement round. Show the question, a one-line answ
 
 ## Freeze one round
 
-On a board actively maintained by a configured tstack seat, write this round in its reports directory using the [engine report schema](https://github.com/twaldin/tstack/blob/main/docs/reference.md#project-config): `question`, `answer`, `evidence`, optional `numbers` with `label`, `value`, `unit`, `chart`, `at`, and `lane`. Let the engine render its report shelf. Do not create a duplicate region. The standalone layout and example below apply when no configured renderer maintains this board, including isolated fixture copies.
+On a board actively maintained by a configured tstack seat, write the round in its reports directory using the engine schema: `question` and `answer` strings, `evidence` as an array of strings, optional `numbers: [{"label":"latency","value":12,"unit":"ms"}]`, `chart: [{"label":"sample","value":12}]` with finite numeric bar values, `at`, and `lane`. The engine chart is numeric bars, not an image path. Let the engine render its report shelf; do not create a duplicate region. The standalone frozen-image input below is a different shape and does not feed the engine.
 
 1. Choose `<work>` with the measurement date and a unique round suffix, such as `latency-2026-11-07-r1`. Inspect the board and `region/<work>/manifest` before claiming space. Never claim another owner's region or `tstack/*`.
 2. Put `region/<work>/manifest` above the content. Put `region/<work>/answer` at the upper left with the question, one-line answer, measured interval, revision, environment, and limitations.
@@ -23,7 +23,7 @@ The initial layout owner is `agent:<EASL_TILE_ID>` for placement only. After a c
 
 ## Publish an existing round headlessly
 
-Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `READOUT_REPORT` to an existing frozen JSON measurement report. Its shape is `{"round":"latency-2026-11-07-r1","measuredAt":"…","question":"…","answer":"…","revision":"…","environment":"…","method":"…","limitations":"…","numbers":[{"name":"…","value":12,"unit":"ms"},{"name":"samples","value":100,"unit":"requests"}],"chartPath":"/absolute/frozen-chart.png","evidenceUrl":"https://…"}`. Use an existing chart path accessible to the server and never overwrite it. This is a report input shape, not an easl API extension. No measurement is run and no new file is required.
+Prerequisites: Python 3, installed `easl_sdk`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `READOUT_REPORT` to an existing frozen standalone JSON report: `{"round":"latency-2026-11-07-r1","measuredAt":"…","question":"…","answer":"…","revision":"…","environment":"…","method":"…","limitations":"…","numbers":[{"label":"latency","value":12,"unit":"ms"},{"label":"samples","value":100,"unit":"requests"}],"chartPath":"/absolute/frozen-chart.png","evidenceUrl":"https://…"}`. Use a host-local chart path, absolute or relative to the board root, and never overwrite it. This is not the engine report schema or an easl API extension. No measurement is run.
 
 ```sh
 python3 - <<'PY'
@@ -33,13 +33,17 @@ from easl_sdk import Easl
 with open(os.environ["READOUT_REPORT"]) as f:
 	r = json.load(f)
 assert 2 <= len(r["numbers"]) <= 4
-assert Path(r["chartPath"]).is_file(), "Use an existing frozen host-local chart"
 c = Easl()
+chart = Path(r["chartPath"])
+if not chart.is_absolute():
+	chart = Path(c.board.get()["root"]) / chart
+assert chart.is_file(), "Use an existing frozen host-local chart"
+r["chartPath"] = str(chart.resolve())
 w = r["round"]
 g = f"region/{w}"
 assert not c.object.find(key_prefix=g)["objects"], "A readout round is immutable; choose a new round"
 answer = f"# {r['question']}\n\n{r['answer']}\n\nMeasured: {r['measuredAt']}\n\nRevision: {r['revision']}\n\nEnvironment: {r['environment']}\n\nLimitations: {r['limitations']}"
-numbers = "\n\n".join(f"{n['name']}: {n['value']} {n['unit']}" for n in r["numbers"])
+numbers = "\n\n".join(f"{n['label']}: {n['value']} {n['unit']}" for n in r["numbers"])
 evidence = f"[Measurement report]({r['evidenceUrl']})\n\nMethod: {r['method']}\n\nFrozen input: {os.environ['READOUT_REPORT']}"
 specs = [
 	("answer", "note", {"markdown": answer}, {"w": 760}),

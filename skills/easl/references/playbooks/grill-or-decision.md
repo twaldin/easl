@@ -17,7 +17,7 @@ Use these exact key patterns:
 - `region/<work>-round-<n>/context` is the context note.
 - `region/<work>-round-<n>/question/<decision>` is one native question per decision.
 
-The manifest lists member keys, actual sources, refresh trigger, lifetimes, and layout owner. Questions, context, group and manifest are task evidence created with `expiresIn: "1d"`. Question `props.expiresAt` separately sets the answer timeout. Keep the deletion deadline later than that timeout so the answer can be read and recorded. `easl ask --expires 2h` sets only the timeout; immediately set the returned object's deletion deadline with `object.update --id <id> --expires 1d`. Extend retention before expiry if the answer remains needed.
+The manifest lists member keys, actual sources, refresh trigger, lifetimes, and layout owner. Questions, context, group and manifest are task evidence created with `expiresIn: "1d"`. Question `props.expiresAt` separately sets the answer timeout; deletion must leave time to read and record the answer. If using convenience `easl ask`, supply the question's region key with `--json '{"key":"region/<work>-round-<n>/question/<decision>"}'` and an actual answer timeout, then immediately set the chosen deletion deadline. Unkeyed questions are moved onto tstack's shelves.
 For blocking waits, create the question with `object.create` and a one-day lifetime, then call `easl ask wait <id>`. The convenience `ask --wait` does not print its id until the answer, so do not use it before the deletion lifetime is set.
 
 ## Refresh and close the round
@@ -33,6 +33,7 @@ On answer, cancel, or timeout, update the source decision record. Let closed que
 ## Worked example: ask about a file-backed plan
 
 Prerequisites: Python with `easl_sdk`, an already running scratch easld server selected by `EASL_SOCKET`, and `EASL_BOARD_ID` for a scratch board. Set `PLAN_FILE` to a real Markdown plan readable on that board's host. Use an unused round slug. This example creates the question headlessly; a human answers in a viewer. Without a terminal caller, the script names itself and reads answers explicitly.
+Set `PLAN_SUMMARY` to a short, sourced summary of the real plan. The question also links the plan file; do not paste the whole document into a tall note.
 
 ```python
 import os
@@ -58,14 +59,17 @@ manifest = f"""- Purpose: Decide whether to proceed with the linked plan.
 deadline = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
-	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[2], "title": "Plan context", "markdown": f"Source: `{plan}`\n\n" + plan.read_text()}}},
-	{"method": "object.create", "params": {"type": "question", "expiresIn": "1d", "props": {"key": keys[3], "question": "Proceed with this plan?", "options": [{"id": "proceed", "label": "Proceed", "why": "Accept the scope and risks in the plan."}, {"id": "revise", "label": "Revise first", "why": "Describe the required change in the answer note."}], "recommended": "revise", "context": [{"object": "$1"}], "asker": asker, "expiresAt": deadline}}},
+	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[2], "title": "Plan context", "markdown": f"Authored plan summary.\n\nSource: `{plan}`\n\n" + os.environ["PLAN_SUMMARY"]}}},
+	{"method": "object.create", "params": {"type": "question", "expiresIn": "1d", "props": {"key": keys[3], "question": "Proceed with this plan?", "options": [{"id": "proceed", "label": "Proceed", "why": "Accept the scope and risks in the plan."}, {"id": "revise", "label": "Revise first", "why": "Describe the required change in the answer note."}], "recommended": "revise", "context": [{"object": "$1"}, {"path": str(plan), "lines": {"start": 1, "end": 1}}], "asker": asker, "expiresAt": deadline}}},
 	{"method": "layout.stack", "params": {"ids": ["$0", "$1", "$2"], "direction": "row", "gap": 48}},
 	{"method": "object.create", "params": {"type": "group", "expiresIn": "1d", "props": {"key": base, "title": "Plan review, round 1", "members": ["$0", "$1", "$2"]}}},
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 4)]
 check = canvas.layout.check(ids=ids)
-assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
+if any(v for k, v in check.items() if k not in ("approximate", "hints")):
+	for identity in ids:
+		canvas.object.delete(id=identity)
+	raise RuntimeError(f"Round removed after layout failure; correct the inputs before retrying: {check}")
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 print("Read the answer with: easl ask get", ids[2])
 ```

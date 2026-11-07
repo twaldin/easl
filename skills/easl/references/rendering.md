@@ -60,4 +60,4 @@ Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with
 Rendering is offscreen at a fixed scale. Never move the view or add probe tiles in the user's view to inspect content.
 Without `--out`, renders use a new temp file under `$TMPDIR/easl-renders/`. Do not write scratch renders inside the repository.
 Headless easld without a drawing viewer cannot prove pixels. Its approximate `layout.check` is geometry evidence, not visual proof.
-`view.snapshot` redraws the window offscreen and can hide blank or smeared tiles. Do not use it to verify what reached the screen; use an actual screen capture as described in [Seeing the window](../../../docs/testing.md#seeing-the-window).
+`view.snapshot` redraws the window offscreen and can hide blank or smeared tiles. It is not proof of on-screen pixels; use an actual screen capture from an authorized GUI tool.

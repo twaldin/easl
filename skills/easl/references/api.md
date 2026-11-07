@@ -70,10 +70,10 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
 - Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing; the `rev` a create or update returns is current.
   A note's line-range fences (`file=src/a.ts#L10-40`) come back with an `anchor="<first line>"` added, as the tile would write it.
   A code tile's `range` stays on its code: when lines move above or inside it the tile re-finds it and writes the new `range` (and `anchor`, its first line) back without a new `rev`; an update that changes `range` without `anchor` drops the old one.
-- `props.zoom` on any tile but an image (0.25–8, default 1) is how big its content draws inside its frame, in place: the frame never changes with it and the title bar stays at 1×;
+- `props.zoom` on any tile but an image or video (0.25–8, default 1) is how big its content draws inside its frame, in place: the frame never changes with it and the title bar stays at 1×;
   the body lays out at body ÷ zoom (a 1200×826 tile at zoom 2 shows what a 600×400 body does, twice as big: a terminal fewer, bigger columns, a page a narrower viewport). An update that sets it never moves or resizes the tile.
   Measure and fit lay out at `width` ÷ zoom (the frame is the 26 pt title bar plus the body × zoom); `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in board points.
-  Image tiles don't zoom (the picture is already fitted to the frame): make the tile bigger. A text shape's font is `props.textSize` (0.25–8, default 1, a multiplier of 20 pt), and its box grows with it.
+  Image and video tiles don't zoom (the picture is already fitted to the frame): make the tile bigger. A text shape's font is `props.textSize` (0.25–8, default 1, a multiplier of 20 pt), and its box grows with it.
   `props.scale` is gone: create, update, upsert, batch, and measure reject it with `invalid_params`.
 - Terminal tiles: `{"cwd": "/path", "command": ["omp"]}` starts an agent in a new tile (its session survives app restarts). Only start agents the user asked for.
   Deleting a terminal tile (`object.delete`, or in a batch that succeeds) ends its session and whatever runs in it, as closing it does for the user.
@@ -167,6 +167,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
 
 `view.attention` raises a marker keyed by the object (raising again replaces the message). It clears when the user selects or looks at the object in the active window or clicks the marker, when you `clear` it, or when the user clears every marker (View › Clear Attention Markers, or right-click the board); markers aren't undo history.
 Your first marker after the user's next prompt clears your markers from earlier turns and lists them in `cleared`.
+Do not clear old markers yourself or re-raise cleared ones. To withdraw a current marker you raised, use `easl view.attention --id obj_… --clear`.
 A terminal's OSC 9/777 notification or bell at its shell prompt raises a marker there unless the user is looking at it (from a program in the foreground it is that program's lifecycle, see Agents); terminals whose agent reports a lifecycle (omp, Claude Code, Codex, Gemini CLI, opencode) show done and blocked themselves, so their notifications raise nothing.
 
 ## Events
@@ -304,7 +305,7 @@ Code navigation (Go to Definition, Find References, Outline) needs the language'
 ## Changes tile behavior
 
 To show the user what you changed, use a changes tile instead of an HTML diff. For a genuinely new task tile, choose an unused key: `easl object.create --type changes --json '{"props":{"key":"task-review"},"size":"fit","expiresIn":"1d"}'`.
-A keyed create never takes over another tile. Find an existing review by key and update its id without expiry or layout fields unless those changes are intended. An unkeyed changes create can reuse your existing tile and apply its expiry params, including to retained evidence.
+A keyed create never takes over another tile. Find an existing review by key and update its id without expiry or layout fields unless those changes are intended. An unkeyed changes create can reuse your existing tile and apply its expiry, `frame` and `size` params, including to retained or user-owned evidence.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 
 ## Live diagrams and authored graphs
@@ -327,17 +328,29 @@ It carries discrete options and your recommendation, shows up in the user's ⌘J
 
 ```sh
 easl ask "Ship the migration before the freeze?" --option now="Ship now:needs the 9am deploy window" --option later="After the freeze" --recommend now --context src/migrate.ts:40-72 --expires 4h
-easl ask "Which cache is right?" --option a=L1 --option b=L2 --correct a --confidence   # graded: the closed tile shows ✓ or ✗
-easl object.create --type question --expires 1d --json '{"props":{"question":"Which name?","options":[{"id":"a","label":"Atlas"},{"id":"b","label":"Beacon"}]}}'
-easl ask wait obj_returned_id                                  # blocks; answer JSON, exit 0
+easl ask "Which cache is right?" --option a=L1 --option b=L2 --correct a --confidence --expires 4h   # graded: the closed tile shows ✓ or ✗
+easl ask wait obj_returned_id                                  # blocks; answer JSON, exit 0; cancel/expiry/deletion exits 2
 easl ask cancel obj_…                                              # the question is moot
 ```
 
-For each convenience `easl ask` above, immediately set the returned tile's deletion deadline with `object.update --id <id> --expires 1d`. For a blocking wait, use the two-step create/wait form so the deadline is set before waiting. The answer includes `id`, `option`, `label`, `note`, `confidence`, `correct`, `at` and `by` when applicable.
+For creation-time retention, use a native question with separate answer and deletion deadlines:
+
+```python
+from datetime import datetime, timedelta, timezone
+from easl_sdk import canvas
+question = canvas.object.create(type="question", props={
+	"key": "name-choice-round-1", "question": "Which name?",
+	"options": [{"id": "a", "label": "Atlas"}, {"id": "b", "label": "Beacon"}],
+	"expiresAt": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+}, expires_in="1d")["object"]["id"]
+print(question)
+```
+
+For each convenience `easl ask` above, immediately set the returned tile's deletion deadline with `object.update --id <id> --expires <RFC3339-deadline>`, later than its actual answer timeout plus the reading window. For a blocking wait, use the two-step create/wait form so the deadline is set before waiting. The answer includes `id`, `option`, `label`, `note`, `confidence`, `correct`, `at` and `by` when applicable.
 
 - `--option id=label[:why]` repeats; `--recommend <id>` names your pick; `--context` points at what it is about (an `obj_…`, a URL, or `path:10-20`). Without options the answer is a note.
 - `--correct <id>` makes the question graded: while it is open nothing marks the right option; once answered the tile shows ✓ or ✗, a wrong pick highlights the right option and its `why`, and the answer line tells you whether the pick was right. `--confidence` asks how sure the user is: the tile gets a slider (optional; skipping it leaves `confidence` out), and the answer line says e.g. `confidence: 80%`. `--json` takes both as `correct` and `askConfidence`.
-- Without `--wait` the command returns at once: carry on, and the answer reaches you as an object mention. Use `--wait` only when nothing else can proceed; a question cancelled, expired (`--expires 30m`, `2h`, `1d`) or deleted ends it with the reason on stderr and exit 2.
+- Asking returns at once: carry on, and the answer reaches you as an object mention. Only when nothing else can proceed, use `easl ask wait <id>` after setting deletion retention. Cancellation, answer expiry or deletion ends the wait with its reason on stderr and exit 2.
 - Ask only what you can't decide yourself, one question per decision. Cancel one the moment it is moot (you found the answer, the plan changed): an open question keeps counting as something the user must do.
 - Keep `<canvas-decisions>` for an explanatory page with many choices recorded in its state, and chat for anything conversational.
 - `easl ask list --open` lists the board's open questions; `easl ask wait <id>` resumes waiting on one after an interruption.
@@ -433,6 +446,7 @@ Immediately after an ask, use `object.update` with the returned id and a top-lev
 Question archival hides a closed tile but keeps its answer queryable with `easl ask get`.
 
 ## Operational guardrails
+Mouse users do not need a trackpad to zoom. Do not tell them zoom requires a pinch: use ⌘-scroll. Every action is also in the menu bar, including Help › search.
 
 - Write locations as `path:line`, `:line:column`, `:start-end` or `#Lstart-end`. Terminal links also recognize Python traceback and pdb frames.
   Bare names open only when unique or nearest the cwd. Production `file:///srv/app/server/x.ts:39:5` paths can resolve to `server/x.ts:39`.
@@ -461,4 +475,3 @@ Claim a region with the core's plain manifest note. This note does not enforce o
 The manifest's layout owner takes precedence over the fact that you created an object.
 When a producer retires, remove its own standing region or hand its manifest to the named successor.
 
-Mouse users do not need a trackpad to zoom. Do not tell them zoom requires a pinch: use ⌘-scroll. Every action is also in the menu bar, including Help › search.

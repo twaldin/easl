@@ -11,7 +11,7 @@ Use a stat card for one measured value, its delta, and its target. Add a trend c
 
 The tstack engine reads configured JSON files only. `stats` entries use `name`, a seat-relative `file` with no `..`, and optional `stale_after`. The project producer, not the renderer, writes each file. There are no stat plugins, command runners, or network adapters in the engine. An external producer can obtain data elsewhere and publish the JSON file. Its credentials and scheduling remain outside the board.
 
-A stat file requires finite numeric `value` and UTC ISO-8601 `at`. Optional fields are `unit`, `label`, `target`, numeric `series`, and `good: "up"` or `"down"`. The engine derives delta from the latest two points and uses the latest 60 points for its sparkline. Missing, unreadable, and stale cards stay visibly marked. See [tstack's stat schema](https://github.com/twaldin/tstack/blob/main/docs/reference.md#project-config).
+A stat file requires finite numeric `value` and UTC ISO-8601 `at` with an explicit `Z` or `+00:00` offset. Optional fields are `unit`, `label`, `target`, numeric `series`, and `good: "up"` or `"down"`. The engine derives delta from the last two `series` points and uses the latest 60 points for its sparkline. Missing, unreadable, and stale cards stay visibly marked. See [tstack's stat schema](https://github.com/twaldin/tstack/blob/main/docs/reference.md#project-config).
 
 ## Keep the region current
 
@@ -26,6 +26,7 @@ When measurement stops, remove your stat and chart tiles, group, manifest, and g
 ## Worked example: publish a producer's measurement
 
 Prerequisites: Python with `easl_sdk`, an already running scratch easld selected by `EASL_SOCKET`, and `EASL_BOARD_ID`. Set `STAT_FILE` to a real host-local stat JSON file in the schema above with at least three series points, and `STAT_PRODUCER` to its actual producing job or script name. Set `STAT_REFRESH` to its real publication cadence and stale threshold. This is a standalone region, not an addition to `tstack/*`. It publishes one source read; it does not install a watcher.
+Set `EASL_BOARD_ROOT` to the writable board root on the easld host. The owned chart asset must stay under it for remote viewers; remove it when the region retires. This is a retained image source, not a `view.render` scratch output.
 
 ```python
 import json, os
@@ -43,7 +44,7 @@ series = data["series"][-60:]
 assert len(series) >= 3, "Use a stat alone until there are three points"
 low, high = min(series), max(series)
 points = " ".join(f"{24 + i * 592 / (len(series) - 1):.1f},{210 - (v - low) * 180 / (high - low or 1):.1f}" for i, v in enumerate(series))
-with NamedTemporaryFile(mode="w", prefix="easl-live-metric-", suffix=".svg", delete=False) as output:
+with NamedTemporaryFile(mode="w", prefix="easl-live-metric-", suffix=".svg", dir=os.environ["EASL_BOARD_ROOT"], delete=False) as output:
 	chart = Path(output.name)
 	output.write(f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240"><rect width="640" height="240" fill="#102033"/><polyline fill="none" stroke="#7dd3fc" stroke-width="3" points="{points}"/></svg>')
 markdown = f"# {data.get('label', 'Measured value')}\n\n{data['value']} {data.get('unit', '')}\n\nDelta: {series[-1] - series[-2]:+g}\n\nSampled: {data['at']}\n\nSource: `{source}`"
