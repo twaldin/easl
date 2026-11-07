@@ -1,12 +1,17 @@
 # Browser tiles
 
-How omp's browser tool, `easl browser`, and browser tiles behave, beyond SKILL.md's summary.
+Use omp's browser tool or `easl browser` to drive the user's WebKit tiles.
 
 omp's `browser` tool (its cmux backend is on automatically inside easl) opens a browser tile beside your terminal for each `browser.open({name})`;
 `close` deletes it.
 
 - The tool doesn't return the tile id. Find it with `easl board.history --limit 5` (`agent:<your tile> created … browser <url>`)
   or `easl board.get` (browser tiles whose `createdBy` is your tile).
+
+For a task browser, first create `type: "browser"` with top-level `expiresIn: "1d"` in your claimed region, then attach by id as below.
+Convenience `browser.open` and `easl browser open` create tiles without a deletion deadline. If you already used one, find its new id and immediately run `easl object.update --id <id> --expires 1d`.
+Apply that only to your own newly created tiles, not to a user's browser you attach to. Extend retained evidence before its deadline.
+
 - To drive a tile you didn't open (the user's, or one made with `object.create`), open it by id: `browser.open({name: "game", url: "canvas:obj_…"})` drives that tile from its current page instead of opening a new one, and `browser.close` lets go of it (the tile stays). Use a tab name you haven't opened yet.
   To reload any browser tile after an edit: `easl object.reload --id <tile>` (waits for the load), then `easl get <tile> --since <cursor>`; never flip `props.url` to a dummy query (it fills the user's Back history).
 - The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
@@ -67,3 +72,8 @@ Codex's sandbox blocks the socket: run `easl browser` escalated, like every easl
 - The user sees a small red "N errors" badge in the tile's address bar while the page has errors; a Hyper-click on one in its list mentions it to you (`console` mention: the message, source, stack frames and page).
   A click on a row shows its stack, and a `file:line` served from a file under the board root opens that code; a grey "Reloaded" says the page was released and loaded again.
 - Safari's Web Inspector is the user's (page or tile context menu, Inspect Element; ⌥⌘I). Don't open it yourself: its window can land on the user's screen.
+
+Playwright, browser-use and Chrome DevTools MCP cannot attach to these WebKit tiles. They have no CDP endpoint.
+Leave tiles and servers the user is looking at until they say they are done. "Looks good" is not a request to close them.
+After changing what a page shows, reload or render it and check the result before claiming it refreshed.
+Respect the manifest's layout owner when resizing a browser for viewport checks. Do not move a user-owned region to make a test fit.

@@ -1,6 +1,6 @@
 # Shapes, arrows and groups
 
-The full rules behind SKILL.md's summary.
+Object props, bindings, routing and layout for shapes, arrows and groups.
 
 - `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`.
   A rect drawn around tiles *encloses* them.
@@ -29,3 +29,15 @@ The full rules behind SKILL.md's summary.
 - `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24, "flow": "down"}` is a titled, tinted region whose frame always wraps its members
   (plus padding and a title band) as they move; use one per lane or cluster instead of a rect plus a text label.
   `flow` (`right`, `down`, `left`, `up`) says which way the diagram inside reads, for `avoid` arrows among its members; without it the board's arrows between groups decide.
+
+## Lay out a readable diagram
+
+1. Use one group per stage in reading order. Set the outer group's `flow` to `right` or `down` when geometry does not make the order clear.
+2. Leave about 120 pt between columns and 60 pt between stacked tiles for arrows. Leave more where arrows converge.
+3. Use `route: "avoid"` for arrows crossing the diagram. Order each column's tiles to match their arrows and avoid crossing fans.
+4. Label only what the ends do not explain, in two or three words. Put detail in the tile.
+5. With more than about six arrows, color by lane or flow so labels match their lines.
+6. Run `layout.check`. Fix `arrowOverlaps`, `labelOverlaps` and avoidable `arrowIntersections`. Its `hints` flag crowded one-color labels.
+
+`easl get <id> --as graph` exposes enclosures, overlaps and connections to other agents.
+Apply layout once while your manifest names you as layout owner. After hand-back, preserve the user's positions.
