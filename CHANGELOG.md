@@ -4,6 +4,10 @@ Each version's section is its GitHub release's notes.
 
 ## 0.3.8 (unreleased)
 
+### Changes
+
+- **The board zooms in to 400%.** Pinch, ⌘-scroll and ⌘= went no further than 100%, so seeing a tile bigger meant changing its content zoom. They now go to 400% (⌘= steps 110, 125, 150, 175, 200, 300, 400%). Zoom to Fit, Go to, walkthrough steps and mention reveals still zoom in only as far as 100%.
+
 ### Fixed
 
 - Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; initial modifiers and Move choose owner eligibility. Direct board ownership retains per-event pan/zoom modifiers; page handoff retains pan with initial Shift. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
