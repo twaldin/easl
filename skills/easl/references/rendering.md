@@ -39,3 +39,24 @@ Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with
   `kinds: ["created","deleted"]` narrows it.
 - Objects that existed for only seconds are in it too.
   The log is in memory: the newest 2000 entries per board (`truncated: true` when entries you hadn't seen were dropped).
+
+## Choose a view
+
+| Want | Call |
+| --- | --- |
+| Objects or a region without moving the user's view | `view.render` |
+| The user's current window, including chrome | `view.snapshot` |
+| The user's view without pixels | `view.get` |
+| Who changed what since the last look | `board.history` |
+
+```sh
+	easl render obj_example
+	easl render obj_a,obj_b --scale 2
+	easl render 0,1200,2400,1600 --exclude '["terminal"]'
+	easl render obj_example --full
+```
+
+`--full` includes a note or HTML tile's whole content, or a code tile's whole range, below its frame.
+Rendering is offscreen at a fixed scale. Never move the view or add probe tiles in the user's view to inspect content.
+Without `--out`, renders use a new temp file under `$TMPDIR/easl-renders/`. Do not write scratch renders inside the repository.
+Headless easld without a drawing viewer cannot prove pixels. Its approximate `layout.check` is geometry evidence, not visual proof.

@@ -1,16 +1,16 @@
 # HTML explainers
 
 An HTML tile is the richest single tile you can put next to your terminal: a plan, a comparison the user can decide on, a decision record.
-To explain code or a system, start on the board instead (SKILL.md, "When the user asks you to explain something"): code tiles, arrows and a note the user can move and step through. Build a page when a comparison or decision needs these components, or the user asks for one tile.
+To explain code or a system, start with [code tiles, arrows and a note](api.md#explain-code-on-the-board) the user can move and step through. Build a page when a comparison or decision needs these components, or the user asks for one tile.
 
 ## The tile
 
 ```python
-canvas.object.create(type="html", props={"title": "Restore path", "html": html})
+canvas.object.create(type="html", props={"title": "Restore path", "html": html}, expires_in="1d")
 ```
 
 - `html` is a body fragment or a full document. Update it with `object.update` (the tile re-renders in place); keep the same tile rather than creating a new one per revision.
-  The tile keeps its height: pass `size="fit"` in the same update (`canvas.object.update(id=tile, props={"html": page}, size="fit")`) to refit it to the new page.
+  While you own layout, pass `size="fit"` in the same update to refit the changed page. After hand-back, omit layout fields and keep content within the user's dimensions.
 - Board files: `fetch('data/series.json')`, CSV, `<script src="chart.js">`, stylesheets, fonts, images and `<video src="clips/demo.mp4" controls>` load relative to the tile's root (the board root unless `root` overrides it). Authorized board assets work locally and from a remote host; loaded-file edits reload the live page without reopening its tile. Temporary-directory fallback is image-only. A standalone chart belongs in an image tile; a standalone clip belongs in a `video` tile. No base64 needed. Match the user's `view.get` `appearance` (dark: transparent background, light text).
 - Sandboxed: no network (list hosts in `allowNetwork: ["localhost:3000", "*.example.com"]` when you truly need them), no native access, no approvals or credentials inside the tile, ever.
 - On a remote board, allowed HTTP(S), including `localhost`, runs on the board host through SSH, never the viewer's localhost. Relative resources keep the page's granted origin. GET/HEAD only, no cookie/session, POST or private WebSocket proxy; unhandled network APIs can fail closed.
@@ -113,7 +113,7 @@ For work the user should approve before you start.
 
 ### Code walkthrough
 
-For "how does X work", when the user wants it as one page (to share, say); otherwise build it on the board (SKILL.md, "When the user asks you to explain something").
+For "how does X work", when the user wants one page to share. Otherwise [build the explanation on the board](api.md#explain-code-on-the-board).
 
 1. One sentence: the path in plain words.
 2. A Mermaid `sequenceDiagram` or `flowchart` of the path, 5–9 nodes, node labels are function names.
@@ -136,7 +136,7 @@ After the user decides, update the tile to state the decision at the top and kee
 
 ### Architecture map
 
-For "how do these parts fit". Draw it on the board with groups, shapes and arrows by default, so the user can move boxes and mention them (SKILL.md, "When the user asks you to explain something").
+For "how do these parts fit". Draw it on the board with groups, shapes and arrows by default, so the user can move boxes and mention them. See [Explain code on the board](api.md#explain-code-on-the-board).
 As a page: a Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call; under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point.
 
 ### Review / findings
@@ -148,5 +148,5 @@ Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
 
 After creating or updating an explainer, look at it: `easl view.snapshot`
 (or `easl render <id> --full`, which renders the whole page offscreen and reports `overflow`) and read the image at the `path` it returns.
-Without `--out` the image goes to a new file under `$TMPDIR/easl-renders/`, never in the repo (see SKILL.md, Known surprises).
+Without `--out` the image goes to a new file under `$TMPDIR/easl-renders/`, never in the repo.
 Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

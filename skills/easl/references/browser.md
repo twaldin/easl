@@ -67,3 +67,8 @@ Codex's sandbox blocks the socket: run `easl browser` escalated, like every easl
 - The user sees a small red "N errors" badge in the tile's address bar while the page has errors; a Hyper-click on one in its list mentions it to you (`console` mention: the message, source, stack frames and page).
   A click on a row shows its stack, and a `file:line` served from a file under the board root opens that code; a grey "Reloaded" says the page was released and loaded again.
 - Safari's Web Inspector is the user's (page or tile context menu, Inspect Element; ⌥⌘I). Don't open it yourself: its window can land on the user's screen.
+
+Playwright, browser-use and Chrome DevTools MCP cannot attach to these WebKit tiles. They have no CDP endpoint.
+Leave tiles and servers the user is looking at until they say they are done. "Looks good" is not a request to close them.
+After changing what a page shows, reload or render it and check the result before claiming it refreshed.
+Respect the manifest's layout owner when resizing a browser for viewport checks. Do not move a user-owned region to make a test fit.

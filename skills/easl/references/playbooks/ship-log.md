@@ -1,0 +1,57 @@
+# Keep a rolling ship log
+
+Use this to answer what merged, deployed, or shipped within a named window. Do not use it for current work, a release plan, or an unbounded archive.
+
+## Build the region from delivery records
+
+1. Choose `<work>` and check the board and `region/<work>/manifest` for an existing owner. Do not claim another owner's region or `tstack/*`.
+2. Put `region/<work>/manifest` above `<work>/log`, a 1000-point-wide note. Show newest items first with event type, UTC event date, revision, and source link. Keep separate merged and deployed sections. A merge is not a deployment.
+3. Put `<work>/sources` to the right, 480 points wide, with source queries, the observation time, window boundaries, and any unavailable deployment feed. Group these tiles under `region/<work>`.
+4. Keep only the chosen rolling window, normally seven days. Preserve the durable history in the source system, not by growing the board.
+
+Use merged PR records for merge dates and links. Use successful deployment records for deploy dates, environment, deployed revision, and deployment link. Release records prove release publication, not deployment. If deployment records are absent, say that deployment is unverified. Never infer deployment from a merged PR, a green build, or a reachable site.
+
+## Refresh without moving the log
+
+For a standing log, give every tile, group, and manifest `expires: null`. Name the producer, source query, and refresh cadence in the manifest. Refresh after a recorded merge or deployment and at the window boundary so old entries disappear. Display the last successful observation time. A failed query leaves the previous observation visibly dated, not newly current.
+
+For a one-off delivery review, give all objects `expiresIn: "1d"` and delete them at task end unless retained. Initially record `agent:<EASL_TILE_ID>` as Layout owner. Run `layout.check` once after placement, then hand layout ownership to `user`. Later upserts omit frames and layout helpers. Hand off the standing producer explicitly, or delete your region when you stop maintaining it.
+
+## Create a source-backed merge log
+
+Prerequisites: Python 3, installed `easl_sdk`, authenticated `gh`, and `EASL_SOCKET`, `EASL_BOARD_ID`, and `EASL_TILE_ID` targeting a scratch server. Set `GH_REPO` to the repository in `owner/name` form. This executable example queries merges only and explicitly does not claim deployments. The named producer is this invocation's agent. Before retaining it as standing state, arrange its declared daily refresh. No new file is required.
+
+```sh
+python3 - <<'PY'
+import json, os, subprocess
+from datetime import datetime, timedelta, timezone
+from easl_sdk import Easl
+now = datetime.now(timezone.utc)
+start = now - timedelta(days=7)
+repo = os.environ["GH_REPO"]
+query = f"merged:>={start.date()}"
+rows = json.loads(subprocess.check_output(["gh", "pr", "list", "--repo", repo, "--state", "merged", "--search", query, "--limit", "1000", "--json", "title,url,mergedAt,mergeCommit"], text=True))
+assert len(rows) < 1000, "Paginate the source before claiming complete coverage"
+rows = sorted((r for r in rows if start <= datetime.fromisoformat(r["mergedAt"].replace("Z", "+00:00")) <= now), key=lambda r: r["mergedAt"], reverse=True)
+body = "# Merged in the last seven days\n\n" + "\n".join(f"- {r['mergedAt']} [{r['title']}]({r['url']}) `{(r['mergeCommit'] or {}).get('oid', 'revision unavailable')}`" for r in rows)
+body += "\n\n" + ("" if rows else "No merges in this window.\n\n") + "Deployment status unverified. No deployment source queried."
+c = Easl()
+w = "demo-ship-log"
+g = f"region/{w}"
+assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slug"
+keys = [w+"/log", w+"/sources"]
+source = f"Repository: {repo}\n\nQuery: gh pr list --state merged --search {query}\n\nWindow: {start.isoformat()} to {now.isoformat()}\n\nObserved: {now.isoformat()}\n\nDeployment feed: not configured"
+def manifest(owner):
+	return (f"Purpose: Seven-day delivery log\n\nLayout owner: {owner}\n\nMember keys: {', '.join(keys)}\n\n"
+		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Daily and after merges, by agent:{os.environ['EASL_TILE_ID']}\n\nLifetimes: All standing state expires null")
+m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires=None)["object"]["id"]
+ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", expires=None)["object"]["id"] for k, text in [(keys[0], body), (keys[1], source)]]
+c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires=None)
+c.layout.stack(ids=[m, *ids], direction="column", gap=60)
+check = c.layout.check(ids=[m, *ids])
+assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
+c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
+PY
+```
+
+Use [object upserts](../api.md) with the same keys for later observations. Replace the rolling contents, not the region's placement.
