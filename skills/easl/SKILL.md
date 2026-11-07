@@ -86,8 +86,8 @@ At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons a
 `untouched` measures content age. Moving or resizing a tile does not make its content fresh.
 Delete your own task objects even when they are too young for this list. Use the manifest's member keys to find them.
 Do not delete foreign tiles, the user's live browser, or a terminal during cleanup. Deleting a terminal kills its session.
-Create terminals with `expires: null`. A deletion deadline ends their sessions even without an explicit cleanup call.
-If the user retains evidence, update `expires` on every retained object in Member keys, including arrows and shapes, the group and the manifest, to the agreed deadline (`null` for declared standing state).
+Create terminals with `expires: null` and keep that expiry unless the user explicitly asks to end that session at a set time. A deletion deadline ends the session even without an explicit cleanup call.
+If the user retains evidence, update `expires` on every retained non-terminal object in Member keys, including arrows and shapes, the group and the manifest, to the agreed deadline (`null` for declared standing state).
 Then record the refresher and lifetime before hand-back; keep `Layout owner: user`. A manifest note alone does not change deletion.
 Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetimes-and-cleanup).
 
@@ -104,7 +104,7 @@ Include these fields in the note, with real values:
 	- Member keys: region/restore/manifest, region/restore/finding, region/restore/code
 	- Sources of truth: trace file, src/store.ts:41-60
 	- Refresh trigger: new trace or source change
-	- Lifetimes: task evidence, deletion deadline 2026-11-08T12:00:00Z
+	- Lifetimes: non-terminal task evidence, deletion deadline 2026-11-08T12:00:00Z
 ```
 
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.

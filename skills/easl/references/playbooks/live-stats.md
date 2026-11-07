@@ -17,7 +17,7 @@ A stat file requires finite numeric `value` and UTC ISO-8601 `at` with an explic
 
 Use `region/<work>`, `region/<work>/manifest`, `region/<work>/stat/<metric>`, and `region/<work>/trend/<metric>`. Use the same chart path and object keys on every refresh. An image tile reloads when its file changes.
 
-For a continuing measurement, create each tile, the manifest, and the group with `expires: null`. The manifest must name the producer, source file, sample cadence, stale threshold, refresh owner, and trigger. Standing does not mean unattended forever. If no producer or refresher owns the region, use task evidence with `expiresIn: "1d"` instead.
+For a continuing measurement, create each non-terminal tile, the manifest, and the group with `expires: null`. The manifest must name the producer, source file, sample cadence, stale threshold, refresh owner, and trigger. Standing does not mean unattended forever. If no producer or refresher owns the region, use non-terminal task evidence with `expiresIn: "1d"` instead.
 
 Refresh after the producer publishes, not when a number is convenient. Keep failed reads visible as unavailable or stale, without replacing the last sample timestamp with now. Write source JSON and chart files atomically where practical. Do not derive a current value from a screenshot or an old readout.
 
@@ -58,7 +58,7 @@ manifest = f"""- Purpose: Show the producer's latest metric and observation-orde
 - Member keys: {', '.join(keys)}
 - Sources of truth: {source}; producer {os.environ['STAT_PRODUCER']}.
 - Refresh trigger: Manual republish after a sample from {os.environ['STAT_PRODUCER']}; source cadence {os.environ['STAT_REFRESH']}. No refresher is installed.
-- Lifetimes: All objects 1d; this invocation owns cleanup at task end.
+- Lifetimes: All non-terminal objects 1d; this invocation owns cleanup at task end.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},
@@ -73,4 +73,4 @@ assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
 
-This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The image's explicit dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly, not as visual proof. The SVG is an exclusively created host-local temp file; keep its path with this region, reuse only that file for its refreshes, and remove it when the region retires. Find tiles by key and update their ids without layout fields. A missing tile requires a new claim and lifetime. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest. That refresher must mark late or failed source reads.
+This chart spaces samples by observation order, not elapsed time. The scalar `series` schema has no per-point timestamps. The image's explicit dimensions avoid SVG size measurement, which requires a viewer. Creation works headlessly, not as visual proof. The SVG is an exclusively created host-local temp file; keep its path with this region, reuse only that file for its refreshes, and remove it when the region retires. Find tiles by key and update their ids without layout fields. A missing tile requires a new claim and lifetime. Switch all non-terminal objects to `expires: null` only after a real refresher is scheduled and named in the manifest. That refresher must mark late or failed source reads.

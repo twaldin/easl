@@ -13,7 +13,7 @@ Source thresholds from the accepted task or release criteria. Source values from
 
 ## Refresh after a new result
 
-Give each summary, artifact, group, and manifest `expiresIn: "1d"` at creation. Delete the region at task end unless explicitly retained. For a standing release gate region, use `expires: null` on every object and name its measurement producer and refresh cadence in the manifest.
+Give each summary, artifact, group, and manifest except terminals `expiresIn: "1d"` at creation. Delete the region at task end unless explicitly retained. For a standing release gate region, use `expires: null` on every non-terminal object and name its measurement producer and refresh cadence in the manifest.
 
 Refresh when a measured run finishes, the tested revision changes, or criteria change. Mark old-revision results stale until replaced. Do not rerun measurements just to make the board look current. The initial owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. For later content, find by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. At handoff, name the successor as refresher, keeping `Layout owner: user`, or delete your task tiles, manifest and group.
 
@@ -41,7 +41,7 @@ assert not c.object.find(key_prefix=g)["objects"], "Choose an unclaimed work slu
 def manifest(owner):
 	return (f"Purpose: Inspect measured acceptance gates\n\nLayout owner: {owner}\n\nMember keys: {g}/manifest, {g}/gates\n\n"
 		f"Sources of truth: {os.environ['GATE_REPORT']}; linked measured runs and approved thresholds\n\n"
-		"Refresh trigger: New measured run or revision or approved criteria\n\nLifetimes: All task evidence expiresIn 1d; delete at task end")
+		"Refresh trigger: New measured run or revision or approved criteria\n\nLifetimes: All non-terminal task evidence expiresIn 1d; delete at task end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
 a = c.object.create(type="note", props={"key": g+"/gates", "markdown": body}, size="fit", frame={"w": 960}, expires_in="1d")["object"]["id"]
 c.object.create(type="group", props={"key": g, "title": "Acceptance gates", "members": [m, a]}, expires_in="1d")

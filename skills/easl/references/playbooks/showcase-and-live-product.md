@@ -15,7 +15,7 @@ Use browser tiles for the running product URL, `video` tiles for clip files on t
 - Source the browser URL from the running service or deployment record. Record the environment and build identity. A reachable URL alone does not establish which revision was deployed.
 - Source screenshots and clips from actual captures. Keep their capture time and build identity. Do not overwrite a capture file while calling it historical evidence.
 - Give the browser, screenshots, clips, group, and manifest `expiresIn: "1d"` at creation. Delete task evidence at review end unless explicitly retained.
-- For a standing product region, use `expires: null` for each retained member, group, and manifest. Name its producer and refresh trigger in the manifest. Captures remain dated even in a standing region.
+- For a standing product region, use `expires: null` for each retained non-terminal member, group, and manifest. Name its producer and refresh trigger in the manifest. Captures remain dated even in a standing region.
 - Reload the browser after the running build changes. Add new capture keys for a new capture round. Remove superseded task captures after the review.
 
 The initial layout owner is `agent:<EASL_TILE_ID>` until a clean `layout.check`, then `user`. Content refreshes use update-by-id without `frame`, `size` or layout helpers. Respect the user's moves. At handoff, name the successor as refresher, keeping `Layout owner: user`, or delete your members, manifest and group.
@@ -41,7 +41,7 @@ def manifest(owner):
 	return (f"Purpose: Review the running product and a dated capture\n\nLayout owner: {owner}\n\n"
 		f"Member keys: {', '.join([g+'/manifest', *keys])}\n\nSources of truth: {os.environ['PRODUCT_URL']}; {os.environ['PRODUCT_IDENTITY']}; "
 		f"{os.environ['SCREENSHOT_PATH']}; {os.environ['CAPTURE_IDENTITY']}\n\n"
-		"Refresh trigger: Running build changes; new capture round\n\nLifetimes: All task evidence expiresIn 1d; delete at review end")
+		"Refresh trigger: Running build changes; new capture round\n\nLifetimes: All non-terminal task evidence expiresIn 1d; delete at review end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
 ids = [c.object.create(type=t, props={**p, "key": k}, frame=f, expires_in="1d")["object"]["id"] for k, (_, t, p, f) in zip(keys, specs)]
 c.object.create(type="group", props={"key": g, "title": "Product review", "members": [m, *ids]}, expires_in="1d")

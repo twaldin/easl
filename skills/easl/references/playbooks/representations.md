@@ -21,7 +21,7 @@ A representation answers one reading task. A kanban answers "where is work in it
 
 ## Lifetimes and ownership
 
-Short-lived answer notes use top-level `expiresIn: "2h"`. Questions and other task evidence use `expiresIn: "1d"` and are deleted at task end unless retained. A question's deletion deadline must leave time after its answer timeout to read and record the answer. Standing state uses `expires: null`, with a real producer, refresh trigger and retirement owner. Groups and manifests use the same task deadline or standing lifetime. These are API fields, not custom props.
+Short-lived answer notes use top-level `expiresIn: "2h"`. Questions and other non-terminal task evidence use `expiresIn: "1d"` and are deleted at task end unless retained. A question's deletion deadline must leave time after its answer timeout to read and record the answer. Non-terminal standing state uses `expires: null`, with a real producer, refresh trigger and retirement owner. Groups and manifests use the same task deadline or standing lifetime. These are API fields, not custom props.
 
 Every agent-created region has a group and a plain note keyed `region/<work>/manifest`. The default group key is `region/<work>`; a branch region uses the shipped `branch:<name>` key instead so `board.get --branch` discovers it. Both use the same manifest and ownership rules. The manifest records Purpose, Layout owner, Member keys, Sources of truth, Refresh trigger and Lifetimes. Initial placement belongs to the agent, then `user` after a clean `layout.check`. Content refreshes omit layout fields and helpers. Existing `tstack/*` objects remain renderer-owned standing state; other agents do not retrofit or claim them.
 
@@ -45,7 +45,7 @@ manifest = f"""- Purpose: Compare representation meanings, example only.
 - Member keys: {', '.join(keys)}
 - Sources of truth: The representation table in this guide, not live project data.
 - Refresh trigger: This example is static; replace it when the question changes.
-- Lifetimes: All objects 1d; delete after the comparison.
+- Lifetimes: All non-terminal objects 1d; delete after the comparison.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},

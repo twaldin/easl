@@ -47,7 +47,7 @@ manifest = f"""- Purpose: Give the operator the latest authored update.
 - Member keys: {', '.join(keys)}
 - Sources of truth: {source}; evidence links in that document.
 - Refresh trigger: A meaningful source update or operator handoff; operator-update publishes it.
-- Lifetimes: All objects 1d; delete at task end unless retained.
+- Lifetimes: All non-terminal objects 1d; delete at task end unless retained.
 """
 result = canvas.object.batch(ops=[
 	{"method": "object.create", "params": {"type": "note", "expiresIn": "1d", "props": {"key": keys[1], "markdown": manifest}}},

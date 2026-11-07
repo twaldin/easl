@@ -54,7 +54,7 @@ manifest = f"""- Purpose: Decide whether to proceed with the linked plan.
 - Member keys: {', '.join(keys)}
 - Sources of truth: {plan}; question answer; recorded decision in the plan.
 - Refresh trigger: Plan changes or a question answer.
-- Lifetimes: All objects 1d; answer timeout 2h; record answers before deleting task evidence.
+- Lifetimes: All non-terminal objects 1d; answer timeout 2h; record answers before deleting task evidence.
 """
 deadline = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 result = canvas.object.batch(ops=[

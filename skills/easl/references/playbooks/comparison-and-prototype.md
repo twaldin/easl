@@ -34,7 +34,7 @@ x, y = float(os.environ["PROTOTYPE_X"]), float(os.environ["PROTOTYPE_Y"])
 keys = [g+"/criteria", g+"/variant/a", g+"/variant/b", g+"/pick"]
 def manifest(owner):
 	return (f"Purpose: Choose a prototype summary layout\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
-		"Sources of truth: Inline invented fixtures, not live product state\n\nRefresh trigger: Comparison inputs change; new round after a closed question\n\nLifetimes: All task evidence expiresIn 1d; record the answer before deletion")
+		"Sources of truth: Inline invented fixtures, not live product state\n\nRefresh trigger: Comparison inputs change; new round after a closed question\n\nLifetimes: All non-terminal task evidence expiresIn 1d; record the answer before deletion")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
 criteria = c.object.create(type="note", props={"key": keys[0], "markdown": "PROTOTYPE. Invented data: Cedar 12, Birch 7. Choose the layout that makes the larger count easier to find. No production claims."}, size="fit", expires_in="1d")["object"]["id"]
 variants = []

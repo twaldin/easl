@@ -15,7 +15,7 @@ Source every value and the answer from a completed measurement report. Preserve 
 
 ## Never refresh the measurement in place
 
-Create every member, group, and manifest with `expiresIn: "1d"`. Delete the task region at task end unless explicitly retained. For an explicitly retained readout, set every object's `expires: null` and name the archive owner. Retention does not turn the readout into standing live state.
+Create every non-terminal member, group, and manifest with `expiresIn: "1d"`. Delete the task region at task end unless explicitly retained. For an explicitly retained readout, set every non-terminal object's `expires: null` and name the archive owner. Retention does not turn the readout into standing live state.
 
 The refresh trigger is a new measurement round, which creates a new dated region and keys. Never update the old round's values or overwrite its chart or report files. If a correction is necessary, publish a new round that identifies the superseded one. Keep the old result identifiable as superseded rather than silently rewriting history.
 
@@ -57,7 +57,7 @@ keys = [g+"/"+s[0] for s in specs]
 def manifest(owner):
 	return (f"Purpose: Immutable measurement round {w}\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
 		f"Sources of truth: {os.environ['READOUT_REPORT']}; {r['chartPath']}; {r['evidenceUrl']}\n\n"
-		"Refresh trigger: Never in place; publish a new dated round\n\nLifetimes: All task evidence expiresIn 1d; delete at task end unless retained")
+		"Refresh trigger: Never in place; publish a new dated round\n\nLifetimes: All non-terminal task evidence expiresIn 1d; delete at task end unless retained")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
 ids = []
 for k, (_, t, p, f) in zip(keys, specs):

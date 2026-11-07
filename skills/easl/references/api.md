@@ -400,7 +400,7 @@ canvas.compositions.available()                              # name -> summary
 canvas.compositions.grid.arrange([id1, id2, id3])            # grid beside your terminal, clear of other tiles
 ```
 
-The built-in `locations.open` creates code tiles but exposes no lifetime argument. For task-owned excerpts, use `object.batch` with an explicit `expiresIn` on every `object.create` instead. Use `grid.arrange` only while you own the initial layout.
+The built-in `locations.open` creates code tiles but exposes no lifetime argument. For task-owned excerpts, use `object.batch` with an explicit `expiresIn` on every `object.create` for a non-terminal instead. Use `grid.arrange` only while you own the initial layout.
 
 A composition is a plain module; functions whose first parameter is named `canvas` receive the client.
 When you catch yourself repeating a multi-call board pattern, write it as a composition in `~/.easl/compositions/<name>.py`

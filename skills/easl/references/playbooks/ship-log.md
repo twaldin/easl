@@ -13,9 +13,9 @@ Use merged PR records for merge dates and links. Use successful deployment recor
 
 ## Refresh without moving the log
 
-For a standing log, give every tile, group, and manifest `expires: null`. Name the producer, source query, and refresh cadence in the manifest. Refresh after a recorded merge or deployment and at the window boundary so old entries disappear. Display the last successful observation time. A failed query leaves the previous observation visibly dated, not newly current.
+For a standing log, give every non-terminal tile, group, and manifest `expires: null`. Name the producer, source query, and refresh cadence in the manifest. Refresh after a recorded merge or deployment and at the window boundary so old entries disappear. Display the last successful observation time. A failed query leaves the previous observation visibly dated, not newly current.
 
-For a one-off delivery review, give all objects `expiresIn: "1d"` and delete them at task end unless retained. Initially record `agent:<EASL_TILE_ID>` as Layout owner. Hand layout to `user` only after a clean `layout.check`. Later, find each object by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. Hand off the standing producer, or delete your region when you stop maintaining it.
+For a one-off delivery review, give all non-terminal objects `expiresIn: "1d"` and delete them at task end unless retained. Initially record `agent:<EASL_TILE_ID>` as Layout owner. Hand layout to `user` only after a clean `layout.check`. Later, find each object by key and update its id without `frame`, `size` or layout helpers. If it expired, claim a new region with explicit lifetimes. Hand off the standing producer, or delete your region when you stop maintaining it.
 
 ## Create a source-backed merge log
 
@@ -43,7 +43,7 @@ keys = [g+"/log", g+"/sources"]
 source = f"Repository: {repo}\n\nQuery: gh pr list --state merged --search {query}\n\nWindow: {start.isoformat()} to {now.isoformat()}\n\nObserved: {now.isoformat()}\n\nDeployment feed: not configured"
 def manifest(owner):
 	return (f"Purpose: Seven-day delivery log\n\nLayout owner: {owner}\n\nMember keys: {', '.join([g+'/manifest', *keys])}\n\n"
-		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Manual republish after merges or the window boundary; no refresher installed\n\nLifetimes: All task evidence expiresIn 1d; this invocation owns cleanup")
+		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Manual republish after merges or the window boundary; no refresher installed\n\nLifetimes: All non-terminal task evidence expiresIn 1d; this invocation owns cleanup")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", frame={"w": 1000}, expires_in="1d")["object"]["id"]
 ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", frame={"w": width}, expires_in="1d")["object"]["id"] for k, text, width in [(keys[0], body, 1000), (keys[1], source, 480)]]
 c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires_in="1d")
@@ -54,4 +54,4 @@ c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
 PY
 ```
 
-For later observations, find each [object by key](../api.md) and update its id without layout fields. If it expired, claim a new region with explicit lifetimes. Switch all objects to `expires: null` only after a real refresher is scheduled and named in the manifest.
+For later observations, find each [object by key](../api.md) and update its id without layout fields. If it expired, claim a new region with explicit lifetimes. Switch all non-terminal objects to `expires: null` only after a real refresher is scheduled and named in the manifest.

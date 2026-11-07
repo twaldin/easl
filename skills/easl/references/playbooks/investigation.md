@@ -18,7 +18,7 @@ Use `region/<work>` for the group and these member keys:
 - `region/<work>/code/<id>` or `region/<work>/evidence/<id>` shows the underlying artifact.
 - `region/<work>/link/<id>` binds the finding to that artifact.
 
-Create every object, including arrows, group, and manifest, with `expiresIn: "1d"`. These are task evidence, not permanent state. If a person must decide, use a question with a separate answer timeout and a one-day deletion lifetime in a [decision round](grill-or-decision.md).
+Create every non-terminal object, including arrows, group, and manifest, with `expiresIn: "1d"`. These are task evidence, not permanent state. If a person must decide, use a question with a separate answer timeout and a one-day deletion lifetime in a [decision round](grill-or-decision.md).
 
 ## Keep claims tied to the source
 
@@ -56,7 +56,7 @@ manifest = f"""- Purpose: Find the required question properties at a specific re
 - Member keys: {', '.join(keys)}
 - Sources of truth: {path} at {sha}.
 - Refresh trigger: New investigation evidence; pinned source does not follow edits.
-- Lifetimes: All objects 1d; delete at task end.
+- Lifetimes: All non-terminal objects 1d; delete at task end.
 """
 finding = f"# Required question fields\n\nObserved at `{sha}`: {', '.join(required)}.\n\nEvidence: `{path}:{start}-{end}`. This is a schema claim, not a runtime test."
 result = canvas.object.batch(ops=[
