@@ -95,7 +95,7 @@ def main():
             before, after = (args.compare / name).read_bytes(), (output / name).read_bytes()
             if len(before) != len(after) or not before:
                 parser.error(f'Invalid comparison artifact: {name}')
-            error = max(abs(a - b) for a, b in zip(before, after))
+            error = 0 if before == after else max(abs(a - b) for a, b in zip(before, after))
             comparisons.append({'phase': frame['phase'], 'maxChannelError': error})
         (output / 'comparison.json').write_text(json.dumps(comparisons, indent=2) + '\n')
         if any(c['maxChannelError'] > args.max_channel_error for c in comparisons):

@@ -114,11 +114,7 @@ private enum BrowserCapture {
             try need(ContinuousClock.now < deadline, "socket did not become online")
             try await Task.sleep(for: .milliseconds(20))
         }
-        var received: [JSONValue] = []
-        let reader = Task { @MainActor in
-            for await event in events where event.name == "surface.frame" { received.append(event.data) }
-        }
-        defer { reader.cancel() }
+        var iterator = events.makeAsyncIterator()
         let opened = try await client.request("surface.stream", .object([
             "id": .string(object.id), "scale": .number(2), "format": .string(format.rawValue)]))
         guard let stream = opened["stream"]?.string else { throw Failure(message: "no stream id") }
@@ -138,13 +134,18 @@ private enum BrowserCapture {
                 ])])
             ]))
             let frameDeadline = ContinuousClock.now + .seconds(30)
+            let frameTimeout = Task {
+                try? await Task.sleep(until: frameDeadline, clock: .continuous)
+                if !Task.isCancelled { client.close() }
+            }
+            defer { frameTimeout.cancel() }
             var matched = false
             while !matched {
-                while received.isEmpty {
-                    try need(ContinuousClock.now < frameDeadline, "no fresh frame for phase \(phase)")
-                    try await Task.sleep(for: .milliseconds(5))
+                guard let event = await iterator.next() else {
+                    throw Failure(message: "no fresh frame for phase \(phase)")
                 }
-                let frame = received.removeFirst()
+                guard event.name == "surface.frame" else { continue }
+                let frame = event.data
                 guard let seq = frame["seq"]?.int, let w = frame["width"]?.int, let h = frame["height"]?.int,
                       let encoded = frame["data"]?.string else {
                     throw Failure(message: "malformed frame")
@@ -157,7 +158,8 @@ private enum BrowserCapture {
                 receivedCount += 1
                 try need(frame["format"]?.string == format.rawValue && w > 0 && h > 0 && w * h <= 4_000_000,
                          "invalid format or pixel budget")
-                try need(abs(Double(w) - width * scale) <= 1 && abs(Double(h) - height * scale) <= 1, "decoded frame size not fitted viewport")
+                try need(frame["size"]?["w"]?.number == width && frame["size"]?["h"]?.number == height
+                         && frame["scale"]?.number == scale, "frame changed viewport or scale")
                 let pixels = try await Task.detached {
                     let image = try SurfaceImageDecoder.decode(data, format: format, width: w, height: h,
                         canvas: CGSize(width: w, height: h), video: SurfaceVideoDecoder(), refinement: false)
@@ -195,7 +197,7 @@ private enum BrowserCapture {
                 if !matched || phase + 1 < count {
                     _ = try await client.request("surface.ack", .object(["stream": .string(stream), "frame": .number(Double(seq))]))
                 }
-                try need(ContinuousClock.now < frameDeadline, "stale pixels for phase \(phase)")
+                try need(ContinuousClock.now < frameDeadline, "phase \(phase) exceeded its frame deadline")
             }
         }
         _ = try await client.request("surface.stop", .object(["stream": .string(stream)]))
