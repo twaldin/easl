@@ -459,10 +459,11 @@ python3 Tests/TileScrolling/run.py --bin-path "$(swift build --build-system nati
 
 This runner checks native panel scrolling, tile crossings, edges, momentum, focus loss,
 Space-drag and click replay, and the terminal disposition table. Fitting browser and HTML
-pages exercise both horizontal directions with board-owned momentum. The browser history
-case checks that missing forward history pans even when back history exists, while a
-native back-history swipe does not pan. Synthetic input does not prove a completed
-history navigation. Its CG-built wheel events enter the real `CanvasWindow` through
+pages exercise both horizontal directions with board-owned momentum. `browser-history-fitting`
+checks that a sideways swipe over a fitting page with back history pans the board,
+through zero begin and momentum, and leaves the URL unchanged.
+`browser-history-controls` checks that the Back/Forward buttons and page-owned
+⌘[ / ⌘] still navigate. The runner's CG-built wheel events enter the real `CanvasWindow` through
 `NSApp.sendEvent`. Label them **synthetic, AppKit
 dispatch**, not HID or physical-trackpad evidence. The image control exercises scroll
 began/changed/ended followed by nonzero momentum began/changed/ended. Wheel timestamps
