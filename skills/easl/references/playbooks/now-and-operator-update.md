@@ -86,6 +86,8 @@ else:
 		canvas.object.update(id=ids[1], props={"markdown": markdown})
 		check = canvas.layout.check(ids=[ids[1]])
 		assert not (check["overflow"] or check["truncated"]), check
+		if check["overlaps"]:
+			print("User-owned layout overlaps:", check["overlaps"])
 ```
 
 This shows an absolute source time, not a ticking age. It does not install a feed or claim that the file's contents are derived facts. Headless text measurement can be approximate. See [object keys and updates](../api.md#objects) and [rendering](../rendering.md).
