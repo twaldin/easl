@@ -4,7 +4,7 @@ import ImageIO
 import CanvasCore
 @testable import CanvasApp
 
-@main @MainActor
+@MainActor
 private enum BrowserCapture {
     struct Failure: Error { let message: String }
     static func need(_ value: Bool, _ message: String) throws {
@@ -190,12 +190,14 @@ private enum BrowserCapture {
                         "width": .number(Double(w)), "height": .number(Double(h)), "input": frame["input"] ?? .null]))
                     if phase + 1 < count { _ = try await web.evaluateJavaScript("window.paint(\(phase + 1))") }
                 }
-                _ = try await client.request("surface.ack", .object(["stream": .string(stream), "frame": .number(Double(seq))]))
+                if !matched || phase + 1 < count {
+                    _ = try await client.request("surface.ack", .object(["stream": .string(stream), "frame": .number(Double(seq))]))
+                }
                 try need(ContinuousClock.now < frameDeadline, "stale pixels for phase \(phase)")
             }
         }
         _ = try await client.request("surface.stop", .object(["stream": .string(stream)]))
-        try await Task.sleep(for: .milliseconds(20))
+        await MainTurns.next()
         busy.stop()
         let result: JSONValue = .object(["frames": .array(records), "receivedFrames": .number(Double(lastSeq)),
             "metrics": Metrics.shared.snapshot(), "maxMainMs": .number(busy.maximum),
@@ -206,4 +208,11 @@ private enum BrowserCapture {
         print(String(decoding: json, as: UTF8.self))
         if limit > 0 { try need(busy.maximum <= limit, "main busy stretch exceeded supplied threshold") }
     }
+}
+
+@MainActor
+@_cdecl("EaslBrowserCaptureRegressionMain")
+func easlBrowserCaptureRegressionMain(_ argc: Int32, _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Int32 {
+    BrowserCapture.main()
+    return 0
 }

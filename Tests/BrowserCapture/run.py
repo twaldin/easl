@@ -37,7 +37,7 @@ def main():
     link = build / 'Easl.product' / 'Objects.LinkFileList'
     if not link.is_file() or not (build / 'description.json').is_file():
         parser.error('Supply a native optimized testing-enabled Easl build; this runner never rebuilds it.')
-    objects = [pathlib.Path(p) for p in shlex.split(link.read_text()) if pathlib.Path(p).name not in {'main.swift.o', 'main.o'}]
+    objects = [pathlib.Path(p) for p in shlex.split(link.read_text())]
     for module in ('CanvasApp.build', 'CanvasCore.build'):
         if not any(module in p.parts for p in objects):
             parser.error(f'Link file has no {module} objects.')
@@ -62,7 +62,8 @@ def main():
     command.append(str(root / 'Tests/BrowserCapture/BrowserCapture.swift'))
     command.extend(str(p) for p in objects)
     command.extend(['-F', str(build), '-L', str(build), '-lghostty', '-framework', 'AppKit',
-                    '-framework', 'WebKit', '-framework', 'QuartzCore', '-framework', 'Carbon', '-lc++', '-o', str(executable)])
+                    '-framework', 'WebKit', '-framework', 'QuartzCore', '-framework', 'Carbon', '-lc++',
+                    '-Xlinker', '-e', '-Xlinker', '_EaslBrowserCaptureRegressionMain', '-o', str(executable)])
     subprocess.run(command, cwd=root, check=True)
     if args.compile_only:
         print(f'Compiled {executable}; no AppKit/WebKit execution, no runtime claim.')
