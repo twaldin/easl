@@ -324,10 +324,8 @@ private enum SelectionTyping {
         }
     }
 
-    @discardableResult
     private static func wheel(_ point: NSPoint, dy: Int32, dx: Int32 = 0, phase: Int64 = 0,
-                              momentum: Int64 = 0, flags: CGEventFlags = [], settle: Bool = true,
-                              tracking: (@MainActor () -> Bool)? = nil, in f: Fixture) async throws -> TimeInterval {
+                              momentum: Int64 = 0, flags: CGEventFlags = [], settle: Bool = true, in f: Fixture) async throws {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                wheel1: dy, wheel2: dx, wheel3: 0),
               let phaseField = CGEventField(rawValue: 99),
@@ -372,14 +370,10 @@ private enum SelectionTyping {
         let selection = f.canvas.selection, focus = f.canvas.focusedTile
         let responder = f.window.firstResponder
         NSApp.sendEvent(event)
-        if !observed, let tracking {
-            try await wait("native swipe tracking must explain an event consumed before the AppKit monitor") { tracking() }
-        }
-        try require(observed || tracking?() == true, "AppKit must dispatch the scroll or native swipe tracking must have begun")
+        try require(observed, "AppKit must dispatch the scroll through the target window")
         if settle { try await Task.sleep(for: .milliseconds(16)) }
         try require(f.canvas.selection == selection && f.canvas.focusedTile == focus && f.window.firstResponder === responder,
                     "scroll must preserve selection, typing and exact keyboard responder")
-        return event.timestamp
     }
 
     private static func boardPoint(_ f: Fixture) throws -> NSPoint {
@@ -439,12 +433,11 @@ private enum SelectionTyping {
         return (object, tile)
     }
     @MainActor
-    private final class DelayedWheelDelegate: NSObject, WKUIDelegate, WKNavigationDelegate {
+    private final class DelayedWheelDelegate: NSObject, WKUIDelegate {
         nonisolated(unsafe) let original: NSObject
         var pending: [(WKWebView, NSEvent)] = []
         var received: [(WKWebView, NSEvent)] = []
         var holding = true
-        var swipeBegins = 0
         static let callback = NSSelectorFromString("_webView:didNotHandleWheelEvent:")
 
         init(original: NSObject) { self.original = original }
@@ -458,12 +451,6 @@ private enum SelectionTyping {
         nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
             MainActor.preconditionIsolated()
             return original.responds(to: selector) ? original : super.forwardingTarget(for: selector)
-        }
-
-        @objc(_webViewDidBeginNavigationGesture:)
-        func didBeginNavigationGesture(_ web: WKWebView) {
-            swipeBegins += 1
-            print("NATIVE SWIPE BEGAN count=\(swipeBegins)")
         }
 
         @objc(_webView:didNotHandleWheelEvent:)
@@ -818,53 +805,66 @@ private enum SelectionTyping {
         }
     }
 
-    private static func browserHistoryOwnership(_ f: Fixture, zeroBegin: Bool = false) async throws {
+    private static func browserHistoryPanning(_ f: Fixture) async throws {
         let web = try await fittingPage(.browser, f)
+        _ = await js(web, "history.pushState({},'', '#next');true")
+        try await wait("browser fixture must have back history") { web.canGoBack && web.url?.fragment == "next" }
+        let address = web.url
+        let pageOffset = await js(web, "[scrollX,scrollY]") as? [Double]
         guard let original = web.uiDelegate as? NSObject else { throw Failure("missing browser delegate") }
-        let originalNavigation = web.navigationDelegate
         let proxy = DelayedWheelDelegate(original: original)
         proxy.holding = false
         web.uiDelegate = proxy
-        web.navigationDelegate = proxy
-        defer {
-            web.uiDelegate = original as? any WKUIDelegate
-            web.navigationDelegate = originalNavigation
+        defer { web.uiDelegate = original as? any WKUIDelegate }
+        for zeroBegin in [false, true] {
+            let viewport = f.canvas.viewport
+            let point = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "browser back-history page")
+            if zeroBegin { try await wheel(point, dy: 0, phase: 1, settle: false, in: f) }
+            try await wheel(point, dy: 0, dx: 5, phase: zeroBegin ? 2 : 1, settle: false, in: f)
+            try await wheel(point, dy: 0, dx: 20, phase: 2, settle: false, in: f)
+            try await wheel(point, dy: 0, dx: 20, phase: 2, settle: false, in: f)
+            try await wheel(point, dy: 0, phase: 4, settle: false, in: f)
+            try await wheel(point, dy: 0, dx: 13, momentum: 1, settle: false, in: f)
+            try await wheel(point, dy: 0, dx: 7, momentum: 2, settle: false, in: f)
+            try await wheel(point, dy: 0, dx: 5, momentum: 3, settle: false, in: f)
+            try await pageBarrier(web, proxy, f)
+            try require(f.canvas.viewport.rect.x == viewport.rect.x - 70 && f.canvas.viewport.rect.y == viewport.rect.y,
+                        "unused sideways gesture must pan the board through momentum even with back history")
+            let after = await js(web, "[scrollX,scrollY]") as? [Double]
+            try require(web.url == address && after == pageOffset, "sideways board pan must not navigate or scroll the fitting page")
         }
-        func point() throws -> NSPoint {
-            try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "browser history page")
-        }
+    }
+
+    private static func browserHistoryControls(_ f: Fixture) async throws {
+        let web = try await fittingPage(.browser, f)
+        let original = web.url
+        _ = await js(web, "history.pushState({},'', '#next');true")
+        try await wait("browser fixture must have back history") { web.canGoBack && web.url?.fragment == "next" }
+        let next = web.url
         let viewport = f.canvas.viewport
-        try await wheel(try point(), dy: 0, dx: 20, phase: 1, settle: false, in: f)
-        try await wheel(try point(), dy: 0, phase: 4, settle: false, in: f)
-        try await pageBarrier(web, proxy, f)
-        try require(f.canvas.viewport.rect.x == viewport.rect.x - 20 && f.canvas.viewport.rect.y == viewport.rect.y,
-                    "no-history gesture must pan before a new navigation records its snapshot")
-        _ = await js(web, "history.pushState({},'', '#next');addEventListener('wheel',()=>{}, {passive:true});true")
-        try await wait("browser fixture must have only back history") { web.canGoBack && !web.canGoForward }
-        try await wheel(try point(), dy: 0, dx: -20, phase: 1, settle: false, in: f)
-        try await wheel(try point(), dy: 0, phase: 4, settle: false, in: f)
-        try await pageBarrier(web, proxy, f)
-        try require(f.canvas.viewport == viewport, "wrong-direction history gesture must pan its complete unused delta")
-        try require(NSEvent.isSwipeTrackingFromScrollEventsEnabled, "native history fixture requires scroll-swipe tracking")
-        let tracking: @MainActor () -> Bool = { proxy.swipeBegins > 0 }
-        if zeroBegin { try await wheel(try point(), dy: 0, phase: 1, settle: false, in: f) }
-        let first = try await wheel(try point(), dy: 0, dx: 5, phase: zeroBegin ? 2 : 1,
-                                    settle: false, tracking: tracking, in: f)
-        try await wait("the first passive-listener wheel decision must return before continuing the native swipe") {
-            proxy.received.contains { $0.1.timestamp == first } || proxy.swipeBegins > 0
+        guard let tile = f.canvas.tiles.first(where: { ($0.value.content as? BrowserTile)?.webView === web }),
+              let back = descendants(tile.value).compactMap({ $0 as? NSButton }).first(where: { $0.toolTip == "Back" }),
+              let forward = descendants(tile.value).compactMap({ $0 as? NSButton }).first(where: { $0.toolTip == "Forward" }) else {
+            throw Failure("browser history controls unavailable")
         }
-        try require(f.canvas.viewport == viewport, "the eligible gesture's first unhandled callback must not pan")
-        try await wheel(try point(), dy: 0, dx: 80, phase: 2, settle: false, tracking: tracking, in: f)
-        try await wheel(try point(), dy: 0, dx: 80, phase: 2, settle: false, tracking: tracking, in: f)
-        try await wheel(try point(), dy: 0, phase: 4, settle: false, tracking: tracking, in: f)
-        try await wheel(try point(), dy: 0, dx: 13, momentum: 1, settle: false, tracking: tracking, in: f)
-        try await wheel(try point(), dy: 0, dx: 7, momentum: 2, settle: false, tracking: tracking, in: f)
-        try await wheel(try point(), dy: 0, dx: 5, momentum: 3, settle: false, tracking: tracking, in: f)
-        try await wait("eligible history gesture must navigate or begin native swipe tracking") {
-            proxy.swipeBegins > 0 || web.url?.fragment != "next"
+        for (button, address) in [(back, original), (forward, next)] {
+            try await wait("browser history button must be enabled") { button.isEnabled }
+            let point = try f.checked(button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil),
+                                      target: button, label: "browser history button")
+            try await click(point, in: f.window)
+            try await wait("browser history button must navigate") { web.url == address && !web.isLoading }
         }
-        try await pageBarrier(web, proxy, f)
-        try require(f.canvas.viewport == viewport, "native history must retain ownership through ordered callbacks and momentum")
+        let point = try f.checked(web.convert(NSPoint(x: 80, y: 90), to: nil), target: web, label: "browser keyboard page")
+        try await click(point, in: f.window)
+        try await wait("browser page must hold the keyboard") {
+            f.canvas.focusedTile == tile.key && (f.window.firstResponder as? NSView)?.isDescendant(of: web) == true
+        }
+        for (code, text, address): (UInt16, String, URL?) in [(33, "[", original), (30, "]", next)] {
+            try await post([key(code, text, flags: .command, in: f.window),
+                            key(code, text, type: .keyUp, flags: .command, in: f.window)])
+            try await wait("browser keyboard history shortcut must navigate") { web.url == address && !web.isLoading }
+        }
+        try require(f.canvas.viewport == viewport, "browser history controls must not navigate the board")
     }
 
     private static func basicsPanelOutsideCanvas(_ f: Fixture) async throws {
@@ -914,8 +914,8 @@ private enum SelectionTyping {
         Scenario(name: "page-zero-begin-coalescing", baseline: "expected regression failure at5afbc197: coalesced changed reply loses first directional identity and swallows fitting-page gesture"),
         Scenario(name: "browser-horizontal-fitting", baseline: "expected regression failure at9a1affa1: phased sideways browser gesture is swallowed"),
         Scenario(name: "html-horizontal-fitting", baseline: "sideways fitting HTML control with board-owned momentum"),
-        Scenario(name: "browser-history-ownership", baseline: "passive history first-event rejection must not preempt native navigation; wrong-direction fallback must restore snapshots"),
-        Scenario(name: "browser-history-zero-begin", baseline: "a zero begin must not prevent first-directional native history ownership"),
+        Scenario(name: "browser-history-fitting", baseline: "back history must not consume a sideways board pan, including zero begin and momentum"),
+        Scenario(name: "browser-history-controls", baseline: "Back/Forward buttons and page-owned keyboard shortcuts retain history navigation"),
         Scenario(name: "html-native-panel", baseline: "expected regression failure: HTML tile steals native non-WebKit panel wheel"),
         Scenario(name: "focus-loss-content-owner", baseline: "expected regression failure: crossed content owner not retained; focus preservation is an unchanged control"),
         Scenario(name: "focus-loss-cancels-space-only", baseline: "new Space cancellation regression; baseline has no Space pan, not a fail-before claim"),
@@ -950,8 +950,12 @@ private enum SelectionTyping {
             try await pageZeroBeginCoalescing(f, type: name == "browser-horizontal-fitting" ? .browser : .html, horizontal: true)
             return
         }
-        if name == "browser-history-ownership" || name == "browser-history-zero-begin" {
-            try await browserHistoryOwnership(f, zeroBegin: name == "browser-history-zero-begin")
+        if name == "browser-history-fitting" {
+            try await browserHistoryPanning(f)
+            return
+        }
+        if name == "browser-history-controls" {
+            try await browserHistoryControls(f)
             return
         }
         if name == "space-click-shape" || name == "space-click-move-terminal" || name == "space-click-native-button" {

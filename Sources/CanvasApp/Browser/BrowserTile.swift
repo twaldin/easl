@@ -362,7 +362,7 @@ final class BrowserTile: NSView, TileContent {
         view.navigationDelegate = self
         view.uiDelegate = self
         view.wheelHandoffEnabled = PageWheelHandoff.configure(view)
-        view.allowsBackForwardNavigationGestures = true
+        view.allowsBackForwardNavigationGestures = false
         view.isInspectable = true
         webView = view
         observations = [
@@ -1480,29 +1480,6 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
     var wheelHandoffEnabled = false
-    private var historySwipesEnabled = false
-
-    override var allowsBackForwardNavigationGestures: Bool {
-        get { super.allowsBackForwardNavigationGestures }
-        set {
-            historySwipesEnabled = newValue
-            super.allowsBackForwardNavigationGestures = newValue
-        }
-    }
-
-    func prepareWheel(_ event: NSEvent, direction: CGVector) -> Bool {
-        guard !event.phase.isEmpty, direction.dx != 0 else { return false }
-        // AppKit's deltas already include isDirectionInvertedFromDevice.
-        let back = (direction.dx > 0) == (userInterfaceLayoutDirection == .leftToRight)
-        let eligible = historySwipesEnabled && NSEvent.isSwipeTrackingFromScrollEventsEnabled
-            && (back ? canGoBack : canGoForward)
-        super.allowsBackForwardNavigationGestures = eligible
-        return eligible
-    }
-
-    func restoreWheel() {
-        super.allowsBackForwardNavigationGestures = historySwipesEnabled
-    }
 
     private lazy var pageUndoManager = UndoManager()
     override var undoManager: UndoManager? { pageUndoManager }

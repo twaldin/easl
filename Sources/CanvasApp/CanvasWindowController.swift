@@ -1581,7 +1581,6 @@ final class CanvasWindow: NSWindow {
     private var wheelBoundary = ScrollGesture()
     private var wheelGeneration = 0
     private var wheelState: WheelState = .idle
-    private weak var wheelBrowser: BrowserWebView?
     private var replayingPanClick = false
     private(set) var deliveringContentWheel = false
     private var spaceHeld = false
@@ -1719,8 +1718,6 @@ final class CanvasWindow: NSWindow {
         super.resignKey()
         cancelMiddlePan()
         cancelCanvasGestures()
-        wheelBrowser?.restoreWheel()
-        wheelBrowser = nil
         boardSelectionSerial = nil
     }
 
@@ -1732,18 +1729,10 @@ final class CanvasWindow: NSWindow {
     }
 
     func handleScroll(_ event: NSEvent, at point: NSPoint) -> Bool {
-        defer {
-            if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-                wheelBrowser?.restoreWheel()
-                wheelBrowser = nil
-            }
-        }
         guard let canvas = (windowController as? CanvasWindowController)?.canvas,
               attachedSheet == nil, NSApp.modalWindow == nil else { return false }
         let step = ScrollGesture.Step(event)
         if wheelBoundary.starts(step: step, timestamp: event.timestamp) {
-            wheelBrowser?.restoreWheel()
-            wheelBrowser = nil
             wheelGeneration &+= 1
             wheelState = .idle
             if let (_, hit) = self.canvas(at: point) {
@@ -1802,15 +1791,9 @@ final class CanvasWindow: NSWindow {
             let content = target.tile?.content
             let page: WKWebView? = (content as? BrowserTile)?.webView ?? (content as? HtmlTile)?.webView
             if let page, hit === page || hit.isDescendant(of: page) {
-                let history = (page as? BrowserWebView)?.prepareWheel(event, direction: direction) ?? false
-                if !event.phase.isEmpty, direction.dx != 0 { wheelBrowser = page as? BrowserWebView }
                 target.responder = page
-                target.pageFallback = history ? nil : PageFallback(event)
+                target.pageFallback = PageFallback(event)
                 wheelState = .content(target)
-                if history {
-                    deliverWheel(event, on: canvas, beginHistory: true)
-                    return true
-                }
             } else if let remote = content as? RemoteBrowserTile, remote.hasOpenStream,
                       target.point.y >= remote.headerHeight {
                 target.responder = remote
@@ -1895,7 +1878,7 @@ final class CanvasWindow: NSWindow {
         return CGSize(width: event.scrollingDeltaX * scale, height: event.scrollingDeltaY * scale)
     }
 
-    private func deliverWheel(_ event: NSEvent, on canvas: CanvasView, beginHistory: Bool = false) {
+    private func deliverWheel(_ event: NSEvent, on canvas: CanvasView) {
         switch wheelState {
         case .board:
             canvas.scrollWheel(with: event)
@@ -1912,9 +1895,6 @@ final class CanvasWindow: NSWindow {
             defer { deliveringContentWheel = false }
             if let webView = responder as? WKWebView {
                 guard let cg = event.cgEvent?.copy() else { return }
-                if beginHistory, let phase = CGEventField(rawValue: 99) {
-                    cg.setIntegerValueField(phase, value: 1)
-                }
                 let point = PageWheelHandoff.point(root.convert(target.point, to: nil),
                     first: target.pageFallback?.first == PageWheelID(event), in: webView)
                 cg.location = CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.height ?? 0) - point.y)
