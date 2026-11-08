@@ -129,6 +129,7 @@ private enum BrowserCapture {
         let busy = Busy()
         var records: [JSONValue] = []
         var lastSeq = 0
+        var receivedCount = 0
         _ = try await client.request("surface.ack", .object(["stream": .string(stream), "frame": .number(0)]))
         for phase in 0..<count {
             _ = try await client.request("surface.input", .object([
@@ -153,6 +154,7 @@ private enum BrowserCapture {
                 }
                 try need(seq > lastSeq && frame["stream"]?.string == stream, "stale or foreign frame")
                 lastSeq = seq
+                receivedCount += 1
                 try need(frame["format"]?.string == format.rawValue && w > 0 && h > 0 && w * h <= 4_000_000,
                          "invalid format or pixel budget")
                 try need(abs(Double(w) - width * scale) <= 1 && abs(Double(h) - height * scale) <= 1, "decoded frame size not fitted viewport")
@@ -199,10 +201,11 @@ private enum BrowserCapture {
         _ = try await client.request("surface.stop", .object(["stream": .string(stream)]))
         await MainTurns.next()
         busy.stop()
-        let result: JSONValue = .object(["frames": .array(records), "receivedFrames": .number(Double(lastSeq)),
+        let colorSpace = window.screen?.colorSpace?.localizedName
+        let result: JSONValue = .object(["frames": .array(records), "receivedFrames": .number(Double(receivedCount)),
+            "backingScale": .number(window.backingScaleFactor), "colorSpace": colorSpace.map(JSONValue.string) ?? .null,
             "metrics": Metrics.shared.snapshot(), "maxMainMs": .number(busy.maximum),
-            "maxMainLimitMs": limit > 0 ? .number(limit) : .null, "assertsTiming": .bool(limit > 0),
-            "inputFenceChecked": .bool(true)])
+            "maxMainLimitMs": limit > 0 ? .number(limit) : .null, "assertsTiming": .bool(limit > 0)])
         let json = try JSONEncoder().encode(result)
         try json.write(to: output.appendingPathComponent("results.json"))
         print(String(decoding: json, as: UTF8.self))

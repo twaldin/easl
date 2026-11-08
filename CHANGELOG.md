@@ -12,7 +12,7 @@ Each version's section is its GitHub release's notes.
 
 ### Fixed
 
-- Browser streaming converts WebKit snapshots to pixels off the drawing Mac's main thread. Frame sizes, scales, formats, and input fences are unchanged.
+- Browser streaming no longer blocks board input while converting WebKit snapshots to pixels. Frame sizes, scales, formats, and input fences are unchanged.
 
 ### Compatibility
 

@@ -14,7 +14,7 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-path', required=True, type=pathlib.Path)
-    parser.add_argument('--output', required=True, type=pathlib.Path)
+    parser.add_argument('--output', type=pathlib.Path)
     parser.add_argument('--compile-only', action='store_true')
     parser.add_argument('--width', type=int, default=4800)
     parser.add_argument('--height', type=int, default=3142)
@@ -26,6 +26,8 @@ def main():
     args = parser.parse_args()
     if platform.system() != 'Darwin':
         parser.error('Compilation and execution require macOS; --compile-only never runs AppKit.')
+    if not args.compile_only and args.output is None:
+        parser.error('--output is required for execution.')
     if not (64 <= args.width <= 16384 and 64 <= args.height <= 16384 and args.frames >= 2):
         parser.error('Viewport axes must be 64..16384 and --frames at least 2.')
     if args.max_main_ms is not None and (not math.isfinite(args.max_main_ms) or args.max_main_ms <= 0):
@@ -82,6 +84,9 @@ def main():
     if args.compare:
         baseline = json.loads((args.compare / 'results.json').read_text())
         current = json.loads((output / 'results.json').read_text())
+        for key in ('backingScale', 'colorSpace'):
+            if baseline.get(key) is None or baseline.get(key) != current.get(key):
+                parser.error(f'Comparison requires identical known {key} values.')
         if [(f['phase'], f['width'], f['height']) for f in baseline['frames']] != [(f['phase'], f['width'], f['height']) for f in current['frames']]:
             parser.error('Comparison requires identical phase count and decoded dimensions.')
         comparisons = []

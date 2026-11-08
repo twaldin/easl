@@ -141,13 +141,16 @@ Use a queued macOS GUI guest for execution. Build the base (`9a1affa1fc79dbf1886
 	# Queued GUI guest: CANDIDATE is the checkout containing this runner.
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix --compare /absolute/scratch/capture-base
-	# After calibrating LIMIT from repeated base measurements, use a new output directory:
-	python3 Tests/BrowserCapture/run.py --bin-path "$BIN" --output /absolute/scratch/capture-gated --max-main-ms "$LIMIT"
+	# After calibrating LIMIT, base must fail the timing gate and candidate must pass.
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base-gated --max-main-ms "$LIMIT"
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix-gated --max-main-ms "$LIMIT"
 ```
 
 `BrowserCapture` streams a deterministic local image-rich page through the real socket, `BrowserSurfaceHost`, and `SurfaceStream`. It acknowledges frames, checks the fitted 4MP dimensions and requested PNG or JPEG format, decodes pixels, and requires alternating red and blue markers with image content. Each retained phase must cover a sequenced focus input in its input fence. This does not prove native click presentation.
 
 The default page viewport is 4800 × 3142 points. Use identical `--width`, `--height`, `--frames`, and `--format` on both builds. PNG is the default. `results.json` includes `surface.capture`, `main.stretch50`, and `main.stretch250` under the metrics counters (absent counters mean zero), frame records, and `maxMainMs`. The latter observes real busy run-loop turns with the same activity boundaries as Metrics, including turns below 50 ms. It is not snapshot wall time. The interval includes the streaming fixture's own socket and page-update work. Decoding, pixel scans, and image artifact writes run off main.
+
+Results also record the window's backing scale and display color-space name. Pixel comparison refuses missing or different display conditions. CI runs the frame and fence checks without a timing threshold; the measured base-failure/candidate-success gate remains guest-only.
 
 Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format, and phase count. No timing threshold is invented: without `--max-main-ms`, the runner reports measurements and makes no timing pass claim. Calibration must demonstrate base failure and candidate success before claiming the regression is fixed. These commands document pending qualification, not a passing result.
 
