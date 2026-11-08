@@ -150,9 +150,6 @@ private enum BrowserCapture {
                       let encoded = frame["data"]?.string else {
                     throw Failure(message: "malformed frame")
                 }
-                guard let data = await Task.detached(operation: { Data(base64Encoded: encoded) }).value else {
-                    throw Failure(message: "invalid base64 image")
-                }
                 try need(seq > lastSeq && frame["stream"]?.string == stream, "stale or foreign frame")
                 lastSeq = seq
                 receivedCount += 1
@@ -160,7 +157,8 @@ private enum BrowserCapture {
                          "invalid format or pixel budget")
                 try need(frame["size"]?["w"]?.number == width && frame["size"]?["h"]?.number == height
                          && frame["scale"]?.number == scale, "frame changed viewport or scale")
-                let pixels = try await Task.detached {
+                matched = try await Task.detached {
+                    guard let data = Data(base64Encoded: encoded) else { throw Failure(message: "invalid base64 image") }
                     let image = try SurfaceImageDecoder.decode(data, format: format, width: w, height: h,
                         canvas: CGSize(width: w, height: h), video: SurfaceVideoDecoder(), refinement: false)
                     var rgba = Data(count: w * h * 4)
@@ -171,10 +169,7 @@ private enum BrowserCapture {
                         context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h)); return true
                     }
                     guard ok else { throw Failure(message: "cannot decode RGBA") }
-                    return rgba
-                }.value
-                matched = await Task.detached {
-                    pixels.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+                    let pixelsMatch = rgba.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
                         var matching = 0, varied = 0
                         for i in stride(from: 0, to: bytes.count, by: 4) {
                             let r = Int(bytes[i]), g = Int(bytes[i+1]), b = Int(bytes[i+2])
@@ -183,13 +178,14 @@ private enum BrowserCapture {
                         }
                         return matching > w * h / 10 && varied > w * h / 10
                     }
-                }.value
-                matched = matched && (frame["input"]?.int ?? 0) >= phase + 1
-                if matched {
-                    try await Task.detached {
+                    let matches = pixelsMatch && (frame["input"]?.int ?? 0) >= phase + 1
+                    if matches {
                         try data.write(to: output.appendingPathComponent("phase-\(phase).\(format.rawValue)"))
-                        try pixels.write(to: output.appendingPathComponent("phase-\(phase).rgba"))
-                    }.value
+                        try rgba.write(to: output.appendingPathComponent("phase-\(phase).rgba"))
+                    }
+                    return matches
+                }.value
+                if matched {
                     records.append(.object(["phase": .number(Double(phase)), "seq": .number(Double(seq)),
                         "width": .number(Double(w)), "height": .number(Double(h)), "input": frame["input"] ?? .null]))
                     if phase + 1 < count { _ = try await web.evaluateJavaScript("window.paint(\(phase + 1))") }
