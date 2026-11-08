@@ -355,13 +355,13 @@ private enum SelectionTyping {
         try require(event.hasPreciseScrollingDeltas && event.timestamp > 0
                     && abs(event.timestamp - ProcessInfo.processInfo.systemUptime) < 1,
                     "pixel scroll must carry precise deltas and a live monotonic timestamp")
-        if momentum != 0 { try require(event.scrollingDeltaY != 0, "momentum must carry a nonzero scrolling delta") }
+        if momentum != 0 { try require(event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0, "momentum must carry a nonzero scrolling delta") }
         var observed = false
         guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { delivered in
             MainActor.assumeIsolated {
                 if delivered.window === f.window {
                     observed = true
-                    print("SYNTHETIC APPKIT window=\(delivered.windowNumber) x=\(delivered.locationInWindow.x) y=\(delivered.locationInWindow.y) dy=\(delivered.scrollingDeltaY) precise=\(delivered.hasPreciseScrollingDeltas) phase=\(delivered.phase.rawValue) momentum=\(delivered.momentumPhase.rawValue) timestamp=\(delivered.timestamp)")
+                    print("SYNTHETIC APPKIT window=\(delivered.windowNumber) x=\(delivered.locationInWindow.x) y=\(delivered.locationInWindow.y) dx=\(delivered.scrollingDeltaX) dy=\(delivered.scrollingDeltaY) precise=\(delivered.hasPreciseScrollingDeltas) phase=\(delivered.phase.rawValue) momentum=\(delivered.momentumPhase.rawValue) timestamp=\(delivered.timestamp)")
                 }
             }
             return delivered
@@ -744,36 +744,65 @@ private enum SelectionTyping {
         print("OFFSETS panel=\(origin) -> \(scroll.contentView.bounds.origin) board=\(viewport) -> \(f.canvas.viewport)")
     }
 
-    private static func pageZeroBeginCoalescing(_ f: Fixture) async throws {
-        let object = try await f.create(.html, width: 540, height: 420)
-        guard let tile = f.canvas.tiles[object.id]?.content as? HtmlTile else { throw Failure("missing HTML fixture") }
-        try await wait("coalescing fixture must load its fitting document") {
-            guard let web = tile.webView, !web.isLoading else { return false }
-            return await js(web, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture' && document.documentElement.scrollHeight <= innerHeight") as? Bool == true
+    private static func fittingPage(_ type: ObjectType, _ f: Fixture) async throws -> WKWebView {
+        let object = try await f.create(type, width: 540, height: 420)
+        let content = f.canvas.tiles[object.id]?.content
+        try await wait("fitting page must finish loading") {
+            guard let web = (content as? BrowserTile)?.webView ?? (content as? HtmlTile)?.webView, !web.isLoading else { return false }
+            return await js(web, "document.readyState === 'complete' && document.getElementById('plain')?.textContent === 'Selection typing fixture' && document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth") as? Bool == true
         }
-        guard let web = tile.webView, let original = web.uiDelegate as? NSObject else {
-            throw Failure("coalescing fixture needs the real WebKit delegate")
+        guard let web = (content as? BrowserTile)?.webView ?? (content as? HtmlTile)?.webView else {
+            throw Failure("missing fitting WebKit page")
         }
-        let proxy = DelayedWheelDelegate(original: original)
-        proxy.holding = false
-        web.uiDelegate = proxy
-        defer { web.uiDelegate = original as? any WKUIDelegate }
         try await boardKeys(f)
-        let point = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "fitting WK page")
+        return web
+    }
+
+    private static func pageZeroBeginCoalescing(_ f: Fixture, type: ObjectType = .html, horizontal: Bool = false) async throws {
+        let web = try await fittingPage(type, f)
+        let pageOffset = await js(web, "[scrollX,scrollY]") as? [Double]
+        try require(pageOffset == [0, 0], "fitting page must start at its origin")
         let viewport = f.canvas.viewport
-        let pageOffset = await js(web, "scrollY") as? Double
-        try require(pageOffset != nil, "fitting page offset must be observable")
-        try await wheel(point, dy: 0, phase: 1, settle: false, in: f)
-        try await wheel(point, dy: -20, phase: 2, settle: false, in: f)
-        try await wheel(point, dy: -20, phase: 2, settle: false, in: f)
-        try await wait("fitting page must genuinely reject a changed event") {
-            proxy.received.contains { $0.1.phase.contains(.changed) }
+        for sign in [Int32(-1), 1] {
+            let origin = f.canvas.viewport
+            let point = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "fitting WK page")
+            try await wheel(point, dy: 0, phase: 1, settle: false, in: f)
+            try await wheel(point, dy: horizontal ? 0 : sign * 20, dx: horizontal ? sign * 20 : 0, phase: 2, settle: false, in: f)
+            try await wheel(point, dy: horizontal ? 0 : sign * 20, dx: horizontal ? sign * 20 : 0, phase: 2, settle: false, in: f)
+            let expectedX = origin.rect.x - (horizontal ? Double(sign * 40) : 0)
+            let expectedY = origin.rect.y - (horizontal ? 0 : Double(sign * 40))
+            try await wait("zero begin and back-to-back changes must pan the board by the complete unused page delta") {
+                f.canvas.viewport.rect.x == expectedX && f.canvas.viewport.rect.y == expectedY
+            }
+            let outside = try boardPoint(f)
+            try await wheel(outside, dy: 0, phase: 4, in: f)
+            try await wheel(outside, dy: horizontal ? 0 : sign * 10, dx: horizontal ? sign * 10 : 0, momentum: 1, in: f)
+            try await wheel(outside, dy: horizontal ? 0 : sign * 5, dx: horizontal ? sign * 5 : 0, momentum: 3, in: f)
+            try require(f.canvas.viewport.rect.x == origin.rect.x - (horizontal ? Double(sign * 55) : 0)
+                && f.canvas.viewport.rect.y == origin.rect.y - (horizontal ? 0 : Double(sign * 55)),
+                "board must retain page fallback through pointer crossing and momentum")
         }
-        try await wait("zero begin and back-to-back changes must hand the fitting-page gesture to board") {
-            f.canvas.viewport != viewport
+        let after = await js(web, "[scrollX,scrollY]") as? [Double]
+        try require(after == pageOffset && f.canvas.viewport == viewport, "opposite board pans must cancel without moving the fitting page")
+    }
+
+    private static func browserHistoryOwnership(_ f: Fixture) async throws {
+        let web = try await fittingPage(.browser, f)
+        _ = await js(web, "history.pushState({},'', '#next')")
+        try await wait("browser fixture must have only back history") { web.canGoBack && !web.canGoForward }
+        let point = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "browser history page")
+        let viewport = f.canvas.viewport
+        try await wheel(point, dy: 0, dx: -20, phase: 1, in: f)
+        try await wait("forward swipe without forward history must pan, even with back history") {
+            f.canvas.viewport.rect.x == viewport.rect.x + 20
         }
-        let after = await js(web, "scrollY") as? Double
-        try require(after == pageOffset, "fitting page must not move during board handoff")
+        try await wheel(point, dy: 0, phase: 4, in: f)
+        let afterForward = f.canvas.viewport
+        let movedPoint = try f.checked(web.convert(NSPoint(x: 250, y: 150), to: nil), target: web, label: "moved browser history page")
+        try await wheel(movedPoint, dy: 0, dx: 40, phase: 1, in: f)
+        try await wheel(movedPoint, dy: 0, dx: 80, phase: 2, in: f)
+        try await wheel(movedPoint, dy: 0, phase: 4, in: f)
+        try require(f.canvas.viewport == afterForward, "native back-history swipe must retain page ownership, not pan the board")
     }
 
     private static func basicsPanelOutsideCanvas(_ f: Fixture) async throws {
@@ -821,6 +850,9 @@ private enum SelectionTyping {
         Scenario(name: "browser-native-panel", baseline: "expected regression failure: browser tile steals native non-WebKit panel wheel"),
         Scenario(name: "host-phaseless-handled-first", baseline: "expected regression failure at5afbc197: untimed host phaseless wheels cannot distinguish the handled first event from a later edge rejection"),
         Scenario(name: "page-zero-begin-coalescing", baseline: "expected regression failure at5afbc197: coalesced changed reply loses first directional identity and swallows fitting-page gesture"),
+        Scenario(name: "browser-horizontal-fitting", baseline: "expected regression failure at9a1affa1: phased sideways browser gesture is swallowed"),
+        Scenario(name: "html-horizontal-fitting", baseline: "sideways fitting HTML control with board-owned momentum"),
+        Scenario(name: "browser-history-ownership", baseline: "expected regression failure at9a1affa1: missing forward history swallows sideways input even with back history"),
         Scenario(name: "html-native-panel", baseline: "expected regression failure: HTML tile steals native non-WebKit panel wheel"),
         Scenario(name: "focus-loss-content-owner", baseline: "expected regression failure: crossed content owner not retained; focus preservation is an unchanged control"),
         Scenario(name: "focus-loss-cancels-space-only", baseline: "new Space cancellation regression; baseline has no Space pan, not a fail-before claim"),
@@ -849,6 +881,14 @@ private enum SelectionTyping {
         }
         if name == "page-zero-begin-coalescing" {
             try await pageZeroBeginCoalescing(f)
+            return
+        }
+        if name == "browser-horizontal-fitting" || name == "html-horizontal-fitting" {
+            try await pageZeroBeginCoalescing(f, type: name == "browser-horizontal-fitting" ? .browser : .html, horizontal: true)
+            return
+        }
+        if name == "browser-history-ownership" {
+            try await browserHistoryOwnership(f)
             return
         }
         if name == "space-click-shape" || name == "space-click-move-terminal" || name == "space-click-native-button" {
