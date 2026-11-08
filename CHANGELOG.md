@@ -10,6 +10,10 @@ Each version's section is its GitHub release's notes.
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
 
+### Fixed
+
+- Browser streaming converts WebKit snapshots to pixels off the drawing Mac's main thread. Frame sizes, scales, formats, and input fences are unchanged.
+
 ### Compatibility
 
 - Update every Mac that views an easld-hosted board before updating that easld. A viewer older than the host deletes HTML state keys by omission, so cleared keys can return on reread.
