@@ -70,6 +70,12 @@ result = canvas.object.batch(ops=[
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 2, 3, 5, 6)]
 check = canvas.layout.check(ids=ids)
+if check["overlaps"]:
+	box = canvas.object.get(id=ids[-1])["object"]["frame"]
+	below = [o["frame"]["y"] + o["frame"]["h"] for o in canvas.board.get()["objects"] if o["id"] not in ids and o.get("frame")
+		and o["frame"]["x"] < box["x"] + box["w"] and box["x"] < o["frame"]["x"] + o["frame"]["w"] and o["frame"]["y"] + o["frame"]["h"] > box["y"]]
+	canvas.layout.translate(ids=[ids[-1]], dx=0, dy=max(below) + 48 - box["y"])
+	check = canvas.layout.check(ids=ids)
 assert not check["overlaps"], check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```

@@ -42,9 +42,16 @@ for i, html in enumerate(["<h1>PROTOTYPE A</h1><p>Cedar: 12</p><p>Birch: 7</p>",
 	variants.append(c.object.create(type="html", props={"key": keys[i+1], "title": "PROTOTYPE "+"AB"[i], "html": html}, frame={"w": 480, "h": 320}, expires_in="1d")["object"]["id"])
 q = c.object.create(type="question", props={"key": keys[3], "question": "Which PROTOTYPE layout makes the larger count easier to find?", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "neither", "label": "Neither"}], "context": [{"object": v} for v in variants], "expiresAt": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()}, expires_in="1d")["object"]["id"]
 ids = [m, criteria, *variants, q]
-c.object.create(type="group", props={"key": g, "title": "PROTOTYPE comparison", "members": ids}, expires_in="1d")
+group = c.object.create(type="group", props={"key": g, "title": "PROTOTYPE comparison", "members": ids}, expires_in="1d")["object"]["id"]
 c.layout.grid(cells=[{"id": m, "row": 0, "col": 0}, {"id": criteria, "row": 1, "col": 0}, *[{"id": v, "row": 2, "col": i} for i, v in enumerate(variants)], {"id": q, "row": 3, "col": 0}], col_gap=60, row_gap=60, origin={"x": x, "y": y})
-check = c.layout.check(ids=ids)
+owned = [*ids, group]
+check = c.layout.check(ids=owned)
+if check["overlaps"]:
+	box = c.object.get(id=group)["object"]["frame"]
+	below = [o["frame"]["y"] + o["frame"]["h"] for o in c.board.get()["objects"] if o["id"] not in owned and o.get("frame")
+		and o["frame"]["x"] < box["x"] + box["w"] and box["x"] < o["frame"]["x"] + o["frame"]["w"] and o["frame"]["y"] + o["frame"]["h"] > box["y"]]
+	c.layout.translate(ids=[group], dx=0, dy=max(below) + 48 - box["y"])
+	check = c.layout.check(ids=owned)
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
 PY
