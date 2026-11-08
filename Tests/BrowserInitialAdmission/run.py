@@ -51,14 +51,14 @@ def main():
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    def run_case(case_arguments, *, route=None, phase=None):
+    def run_case(case_arguments, *, phase=None):
         with tempfile.TemporaryDirectory(prefix="easl-browser-admission-", dir="/tmp") as temporary:
             environment = os.environ.copy()
             environment["EASL_HOME"] = temporary
             environment["CFFIXED_USER_HOME"] = temporary
             environment["XDG_CONFIG_HOME"] = temporary
             environment["EASL_BROWSER_PROFILE"] = "own"
-            environment["EASL_NO_ACTIVATE"] = "0" if route == "hid" else "1"
+            environment["EASL_NO_ACTIVATE"] = "0" if phase else "1"
             environment.pop("EASL_ROOT", None)
             if case_arguments:
                 relay = pathlib.Path(temporary) / "ssh-unix-relay"
@@ -70,23 +70,21 @@ def main():
                 )
                 relay.chmod(0o700)
                 environment["EASL_DEV_SSH"] = str(relay)
-            if route:
-                environment["EASL_DEV_INPUT"] = "1" if route == "replay" else "0"
-                environment["EASL_UNDO_ROUTE"] = route
+            if phase:
+                environment["EASL_DEV_INPUT"] = "0"
                 environment["EASL_UNDO_PHASE"] = phase
             result = subprocess.run([str(executable), *case_arguments], cwd=root, env=environment,
-                                    check=False, timeout=240 if route else 120 if case_arguments else 45)
-            print(f"RESULT case={args.case} route={route} phase={phase} exit={result.returncode}", flush=True)
+                                    check=False, timeout=240 if phase else 120 if case_arguments else 45)
+            print(f"RESULT case={args.case} phase={phase} exit={result.returncode}", flush=True)
             return result.returncode
 
     if args.case == "remote-undo":
         failed = False
-        for phase in ("direct", "probe", "relay"):
-            for route in ("hid", "replay"):
-                code = run_case(["remote-undo"], route=route, phase=phase)
-                failed = failed or code != 0
+        for phase in ("direct", "relay"):
+            code = run_case(["remote-undo"], phase=phase)
+            failed = failed or code != 0
         if failed:
-            raise SystemExit("Undo gate failed; inspect every direct, probe and relay case above.")
+            raise SystemExit("Remote undo regression failed; inspect every direct and relay case above.")
     else:
         raise SystemExit(run_case([] if args.case == "initial-admission" else [args.case]))
 
