@@ -153,7 +153,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   and, only when there is one, `hints` (advice, not faults: more than 6 labelled arrows all one color, so a label can't show which line it names: color arrows by lane or flow).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and are never reported.
   With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
-  It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.
+  It judges what is drawn (whole tile frames, routes and line-bound ends as drawn). A group can overlap non-members, but an empty report does not rule out a stretched group. Run it after a layout pass.
 - Groups are regions: `{"members": [...], "title": "…", "color": "blue", "padding": 24}`. The frame is always the members' bounds plus padding and a 32 pt title band, updated as members move;
   it is what `encloses` uses. One group per lane replaces a rect + title text + group.
 - Arrows: `route: "straight"` (default), `"orthogonal"` (horizontal/vertical with one jog), or `"avoid"` (horizontal/vertical around every tile in the way, routed with the board's other `avoid` arrows: own ports, parallel tracks, the group's `flow`).
@@ -265,7 +265,7 @@ Tiles and arrows are things the user can move, mention and step through; a page 
 2. **The structure as shapes and arrows** between those tiles: a `group` per part (`title`, `members`), `arrow`s with a `relation` (`"calls"`) and a two-word `label` only where the ends don't say it.
    For who calls what, use a `diagram` tile (`symbol`, `direction`) instead of drawing the call graph by hand. See [Live diagrams and authored graphs](#live-diagrams-and-authored-graphs) for language-server requirements.
 3. **A browser tile when a page makes the point**: the running app, or the docs or README the code follows (`browser` `{"url": "…"}`).
-4. **A note for what should last**: the summary in a few lines, with `path:line` links and anchored fences (```` ```ts file=src/store.ts#L41-60 ````), not pasted code.
+4. **A summary note**: the finding in a few lines, with `path:line` links and anchored fences (```` ```ts file=src/store.ts#L41-60 ````), not pasted code.
 5. **A short terminal answer**: the answer in a sentence or two and where to look, with a `view.attention` marker on the first stop; don't retell the tiles in prose.
 6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>` in [HTML explainers](html-explainers.md)), or when the user asks for one page.
 

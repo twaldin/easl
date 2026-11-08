@@ -39,7 +39,7 @@ Inspect staged mentions with `tray.list`, never drain the user's tray. Full rule
 ## Board grammar and the user's keyboard
 
 A tile shows code, changes, a note, a diagram, an image, a video, a browser, HTML, a question or a terminal.
-A `group` is a titled region with explicit `members`. Update that list when adding tiles. Arrows carry a machine-readable `relation`.
+A `group` is a titled region with explicit `members`. Update your own group's list when adding tiles. Arrows carry a machine-readable `relation`.
 Use stable keys: `props.key` on create, top-level `key` on `object.upsert`. Keys are unique per board.
 Upsert updates in place. Find by `object.find --key <key>` or `--keyPrefix <prefix>`. A key/type conflict means inspect, not overwrite.
 Caption code tiles with what to notice and name new terminals. Go to, ⌘P, searches titles, captions, terminal names, files and `@symbols`.
@@ -70,6 +70,8 @@ Choose the lifetime at creation, including groups, manifests, shapes and arrows.
 | Task evidence | `expiresIn: "1d"` or the task's real deadline | Delete at task end unless the user retains it. |
 | Standing state | `expires: null` | Name its owner, producer and refresh trigger in the manifest. Remove at retirement. |
 
+Treat a grill/decision round or an explainer map as task evidence. Give its tiles, group and manifest `expiresIn: "1d"` or shorter at creation, or delete them as soon as the round or map is complete and its decisions or answers are recorded.
+
 `expiresIn` is a relative duration resolved once by the host. `expires` is an absolute RFC3339 deletion deadline, or `null` to clear it.
 Both are top-level create, update or upsert params. Never send both. Omission on update preserves the deadline.
 An upsert that creates (`created: true`) has no deadline unless you pass one. Use update-by-id for refreshes that must not recreate expired tiles.
@@ -79,7 +81,8 @@ Questions are task evidence, including their answers. Set deletion later than th
 Immediately set a convenience-created question's chosen deletion deadline with `object.update --id <id> --expires <RFC3339-deadline>`.
 Prefer `object.create` with a lifetime for task questions and browsers, then `easl ask wait <id>` or attach the browser tool by id.
 Convenience creators such as `easl ask`, the browser tool and `easl browser open` can omit deletion lifetimes. Set your own new tile's deadline as soon as its id is available. Never start `ask --wait` before setting that deadline.
-Closed questions archive automatically unless kept. Cancel a question as soon as it becomes moot.
+Never pass CLI `--keep` or API `keep` unless the user asked to keep that question. Answered or cancelled questions archive themselves.
+Cancel a question the moment it becomes moot.
 
 At task end, run `easl board.stale --older-than 7d --mine` and inspect reasons and creators.
 `--mine` uses `EASL_TILE_ID`; the API filter is `createdBy: "<tile-id>"`. It lists candidates without changing the board.
@@ -96,6 +99,8 @@ Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetime
 A manifest is a plain note, not a new object type or a lock. Use group key `region/<work>` and note key `region/<work>/manifest`.
 For a branch region discovered by `board.get --branch`, use the shipped group key `branch:<name>` instead, with the same manifest pattern and ownership rules.
 Read an existing manifest before claiming its key. Never replace another owner's claim or move their region.
+Never add your tiles to a group whose manifest names another agent, a `tstack/*` group, or a group you didn't create. A group's frame follows its members, so one far-away member stretches it across the board.
+Put your tiles in your own keyed group instead, or use `show/<project>/…` keys that tstack shelves for you.
 Include these fields in the note, with real values:
 
 ```text
@@ -108,9 +113,9 @@ Include these fields in the note, with real values:
 ```
 
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
-Place your region once with layout helpers. Run `layout.check`, fix your objects, then set `Layout owner: user` in the manifest.
+Place your region once with layout helpers. After checking the region, set `Layout owner: user` in the manifest.
 The user's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
-To add a member after hand-back, place only the new tile near an existing member with `layout.place`, then update the group's `members` and the manifest's Member keys, and check the region.
+To add a member to your own group after hand-back, place only the new tile near an existing member with `layout.place`, then update the group's `members` and the manifest's Member keys, and check the region.
 If the result is not clean, move or delete only the new tile and hand the issue back. Never move existing members.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
 Hand back by naming the user or a successor as refresher in the manifest, or by deleting your own task tiles, group and manifest. Once `Layout owner: user` is set it stays `user` unless the user asks.
@@ -129,7 +134,9 @@ For easl itself, use this skill and [ui.md](references/ui.md); when the board is
 Detailed walkthrough instructions remain in [Explain code on the board](references/api.md#explain-code-on-the-board).
 
 Omit `frame` to place a new tile in free space near your terminal. Read its returned frame before placing related tiles.
-For deliberate layouts, use `size: "fit"`, `layout.place`, `layout.stack` or `layout.grid`, then `layout.check`.
+For deliberate layouts, use `size: "fit"`, `layout.place`, `layout.stack` or `layout.grid`.
+After any placement of more than one tile, run `layout.check` and fix the overlaps your tiles caused before pointing the user at them.
+`layout.check` does not flag stretching itself today. A clean check leaves the group-ownership rule as the only guard.
 Free placement clears each new tile, not the row or grid built from it; if that layout overlaps foreign objects, translate only your own group below them, as the worked examples do.
 Use `object.batch` and `$0` references for one undoable build. Groups move as a whole. Do not hand-compute a grid around the follow tile.
 Check overlaps, arrow crossings, label collisions, overflow, scrolls and truncated captions or tables. Fix your initial layout before hand-back.

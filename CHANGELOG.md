@@ -8,6 +8,7 @@ Each version's section is its GitHub release's notes.
 
 - The easl agent skill is a short core with ten board playbooks and a shared representation guide. It assigns lifetimes at creation, requires cleanup of agents' own task tiles, and records region layout ownership in plain manifest notes. It documents the existing tstack board engine instead of another renderer.
 - Detailed client, tile, board and agent instructions remain in the existing skill references. The core and playbooks include content-age cleanup, same-board object links, selection and typing, and the content-first scroll rule.
+- The core easl skill forbids keeping questions unless requested and adding tiles to foreign groups, requires overlap checks after multi-tile placement, and gives finished rounds and explainer maps an expiry or immediate cleanup.
 
 ### Fixed
 
