@@ -1490,16 +1490,18 @@ final class BrowserWebView: WKWebView {
         }
     }
 
-    func prepareWheel(direction: CGVector) {
+    func prepareWheel(_ event: NSEvent, direction: CGVector) -> Bool {
+        guard !event.phase.isEmpty, direction.dx != 0 else { return false }
+        // AppKit's deltas already include isDirectionInvertedFromDevice.
         let back = (direction.dx > 0) == (userInterfaceLayoutDirection == .leftToRight)
-        // Without history, WebKit's swipe navigation consumes horizontal input as edge bounce.
-        super.allowsBackForwardNavigationGestures = historySwipesEnabled
-            && (direction.dx == 0 || (back ? canGoBack : canGoForward))
+        let eligible = historySwipesEnabled && NSEvent.isSwipeTrackingFromScrollEventsEnabled
+            && (back ? canGoBack : canGoForward)
+        super.allowsBackForwardNavigationGestures = eligible
+        return eligible
     }
 
-    override func swipe(with event: NSEvent) {
+    func restoreWheel() {
         super.allowsBackForwardNavigationGestures = historySwipesEnabled
-        super.swipe(with: event)
     }
 
     private lazy var pageUndoManager = UndoManager()
