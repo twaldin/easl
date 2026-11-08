@@ -11,9 +11,9 @@ import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run native browser admission or remote wheel negotiation against an existing Easl build.")
+    parser = argparse.ArgumentParser(description="Run native browser admission, remote wheel, or remote undo regressions against an existing Easl build.")
     parser.add_argument("--bin-path", required=True, type=pathlib.Path)
-    parser.add_argument("--case", choices=("initial-admission", "remote-wheel"), default="initial-admission")
+    parser.add_argument("--case", choices=("initial-admission", "remote-wheel", "remote-undo"), default="initial-admission")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("This AppKit regression requires macOS.")
@@ -45,32 +45,48 @@ def main():
             command.extend(["-I", arguments[index + 1]])
     executable = build / "BrowserInitialAdmission"
     command.append(str(root / "Tests/BrowserInitialAdmission/BrowserInitialAdmission.swift"))
+    command.append(str(root / "Tests/BrowserInitialAdmission/BrowserUndo.swift"))
     command.extend(str(p) for p in objects)
     command.extend(["-F", str(build), "-L", str(build), "-lghostty",
                     "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "Carbon", "-lc++",
                     "-o", str(executable)])
     subprocess.run(command, cwd=root, check=True)
-    with tempfile.TemporaryDirectory(prefix="easl-browser-admission-", dir="/tmp") as temporary:
-        environment = os.environ.copy()
-        environment["EASL_HOME"] = temporary
-        environment["CFFIXED_USER_HOME"] = temporary
-        environment["XDG_CONFIG_HOME"] = temporary
-        environment["EASL_NO_ACTIVATE"] = "1"
-        environment.pop("EASL_ROOT", None)
-        case_arguments = []
-        if args.case == "remote-wheel":
-            relay = pathlib.Path(temporary) / "ssh-unix-relay"
-            relay.write_text(
-                f"#!{sys.executable}\n"
-                "import os, shlex, sys\n"
-                "path, = shlex.split(sys.argv[-1])\n"
-                "os.execv('/usr/bin/nc', ['nc', '-U', path])\n"
-            )
-            relay.chmod(0o700)
-            environment["EASL_DEV_SSH"] = str(relay)
-            case_arguments.append("remote-wheel")
-        subprocess.run([str(executable), *case_arguments], cwd=root, env=environment,
-                       check=True, timeout=120 if case_arguments else 45)
+    def run_case(case_arguments, *, phase=None):
+        with tempfile.TemporaryDirectory(prefix="easl-browser-admission-", dir="/tmp") as temporary:
+            environment = os.environ.copy()
+            environment["EASL_HOME"] = temporary
+            environment["CFFIXED_USER_HOME"] = temporary
+            environment["XDG_CONFIG_HOME"] = temporary
+            environment["EASL_BROWSER_PROFILE"] = "own"
+            environment["EASL_NO_ACTIVATE"] = "0" if phase else "1"
+            environment.pop("EASL_ROOT", None)
+            if case_arguments:
+                relay = pathlib.Path(temporary) / "ssh-unix-relay"
+                relay.write_text(
+                    f"#!{sys.executable}\n"
+                    "import os, shlex, sys\n"
+                    "path, = shlex.split(sys.argv[-1])\n"
+                    "os.execv('/usr/bin/nc', ['nc', '-U', path])\n"
+                )
+                relay.chmod(0o700)
+                environment["EASL_DEV_SSH"] = str(relay)
+            if phase:
+                environment["EASL_DEV_INPUT"] = "0"
+                environment["EASL_UNDO_PHASE"] = phase
+            result = subprocess.run([str(executable), *case_arguments], cwd=root, env=environment,
+                                    check=False, timeout=240 if phase else 120 if case_arguments else 45)
+            print(f"RESULT case={args.case} phase={phase} exit={result.returncode}", flush=True)
+            return result.returncode
+
+    if args.case == "remote-undo":
+        failed = False
+        for phase in ("direct", "relay"):
+            code = run_case(["remote-undo"], phase=phase)
+            failed = failed or code != 0
+        if failed:
+            raise SystemExit("Remote undo regression failed; inspect every direct and relay case above.")
+    else:
+        raise SystemExit(run_case([] if args.case == "initial-admission" else [args.case]))
 
 
 if __name__ == "__main__":

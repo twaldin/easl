@@ -959,7 +959,10 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         guard window?.firstResponder === self, event.type == .keyDown else {
             return super.performKeyEquivalent(with: event)
         }
-        if CanvasWindowController.menuItem(for: event, in: NSApp.mainMenu)?.action == #selector(AppDelegate.deleteSelection(_:)) {
+        let action = CanvasWindowController.menuItem(for: event, in: NSApp.mainMenu)?.action
+        if action == #selector(AppDelegate.deleteSelection(_:))
+            || action == #selector(AppDelegate.undoCanvas(_:))
+            || action == #selector(AppDelegate.redoCanvas(_:)) {
             sendKey(.down, event)
             return true
         }

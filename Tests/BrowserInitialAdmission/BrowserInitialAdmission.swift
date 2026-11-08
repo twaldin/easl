@@ -6,7 +6,7 @@ import CanvasCore
 
 @main
 @MainActor
-private enum BrowserInitialAdmission {
+enum BrowserInitialAdmission {
     private static var failures = 0
     private static let initial = Viewport(
         rect: Frame(x: -5045.000000345375, y: -2260.000000355707,
@@ -48,6 +48,10 @@ private enum BrowserInitialAdmission {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         if CommandLine.arguments.contains("remote-wheel") {
             try await remoteWheel(root: root)
+            return
+        }
+        if CommandLine.arguments.contains("remote-undo") {
+            try await remoteUndo(root: root)
             return
         }
         try await exercise(root: root, remote: nil, kind: "BrowserTile")
@@ -110,15 +114,15 @@ private enum BrowserInitialAdmission {
         }
     }
 
-    private struct WheelFailure: Error, CustomStringConvertible {
+    struct WheelFailure: Error, CustomStringConvertible {
         let description: String
     }
 
-    private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw WheelFailure(description: message) }
     }
 
-    private static func until(_ message: String, _ condition: () async -> Bool) async throws {
+    static func until(_ message: String, _ condition: () async -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(12)
         while !(await condition()), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
@@ -127,7 +131,7 @@ private enum BrowserInitialAdmission {
         try expect(passed, message)
     }
 
-    private static func pageMatches(_ web: WKWebView, _ script: String) async -> Bool {
+    static func pageMatches(_ web: WKWebView, _ script: String) async -> Bool {
         await withCheckedContinuation { continuation in
             web.evaluateJavaScript(script) { value, error in
                 continuation.resume(returning: error == nil && value as? Bool == true)
@@ -135,7 +139,7 @@ private enum BrowserInitialAdmission {
         }
     }
 
-    private enum WheelHostMode: CaseIterable {
+    enum WheelHostMode: CaseIterable {
         case absent, noFeedback, current
     }
 
@@ -151,7 +155,7 @@ private enum BrowserInitialAdmission {
     }
 
     @MainActor
-    private final class WheelFixture {
+    final class WheelFixture {
         struct Wheel {
             let stream: String
             let gesture: Int?
@@ -167,13 +171,18 @@ private enum BrowserInitialAdmission {
         var mirror: BoardMirror?
         var controller: CanvasWindowController?
         var viewerWindow: CanvasWindow?
+        var hostController: CanvasWindowController?
         var streams: [(id: String, connection: SocketServer.Connection)] = []
         var wheels: [Wheel] = []
         var errors: [String] = []
         var advertised: [Bool?] = []
+        var inputs: [JSONValue] = []
+        var inputBatches: [[JSONValue]] = []
+        var holdNextReply = false
+        var heldReply: CheckedContinuation<Void, Never>?
         var acknowledgements = 0
 
-        init(root: URL, mode: WheelHostMode) async throws {
+        init(root: URL, mode: WheelHostMode, editing: Bool = false) async throws {
             self.mode = mode
             let directory = root.appendingPathComponent("wheel-\(mode)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -181,13 +190,28 @@ private enum BrowserInitialAdmission {
             registry = BoardRegistry(store: BoardStore(directory: directory.appendingPathComponent("boards")))
             board = try await registry.open(root: directory)
             router = ApiRouter(registry: registry)
-            hostCanvas = CanvasView(board: board, viewport: nil)
-            hostWindow = NSWindow(contentRect: NSRect(x: 10, y: 10, width: 900, height: 700),
-                                  styleMask: [.titled], backing: .buffered, defer: false)
+            if editing {
+                let window = CanvasWindow(contentRect: NSRect(x: 10, y: 10, width: 900, height: 700),
+                                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                hostWindow = window
+                let controller = CanvasWindowController(window: window, board: board, registry: registry,
+                                                        viewport: nil, composerState: ComposerState())
+                hostCanvas = controller.canvas
+                hostController = controller
+                controller.isBoardOpen = true
+            } else {
+                hostCanvas = CanvasView(board: board, viewport: nil)
+                hostWindow = NSWindow(contentRect: NSRect(x: 10, y: 10, width: 900, height: 700),
+                                      styleMask: [.titled], backing: .buffered, defer: false)
+                hostCanvas.frame = hostWindow.contentView!.bounds
+                hostWindow.contentView!.addSubview(hostCanvas)
+            }
             hostWindow.isReleasedWhenClosed = false
-            hostCanvas.frame = hostWindow.contentView!.bounds
-            hostWindow.contentView!.addSubview(hostCanvas)
-            board.onEvent = { [weak hostCanvas] in hostCanvas?.apply($0) }
+            if let hostController {
+                board.onEvent = { [weak hostController] in hostController?.apply($0) }
+            } else {
+                board.onEvent = { [weak hostCanvas] in hostCanvas?.apply($0) }
+            }
             hostWindow.orderFrontRegardless()
             hostCanvas.show(Viewport(rect: Frame(x: -100, y: -100, w: 900, h: 700), zoom: 1))
             router.surface = { [weak self] request, connection in
@@ -234,11 +258,19 @@ private enum BrowserInitialAdmission {
             }
             if reply?["ok"]?.bool == true {
                 if method == "surface.ack" { acknowledgements += 1 }
+                if method == "surface.input" {
+                    inputs.append(contentsOf: events)
+                    inputBatches.append(events)
+                }
                 if method == "surface.input", let stream = request["params"]?["stream"]?.string {
                     for event in events where event["kind"]?.string == "scroll" {
                         wheels.append(Wheel(stream: stream, gesture: event["gesture"]?.int))
                     }
                 }
+            }
+            if method == "surface.input", holdNextReply {
+                holdNextReply = false
+                await withCheckedContinuation { heldReply = $0 }
             }
             return reply
         }
@@ -264,13 +296,17 @@ private enum BrowserInitialAdmission {
         }
 
         func close() {
+            heldReply?.resume()
+            heldReply = nil
             controller?.board.onEvent = nil
             controller?.discard()
             viewerWindow?.delegate = nil
             viewerWindow?.close()
             mirror?.close()
             board.onEvent = nil
-            hostCanvas.discard()
+            if let hostController { hostController.discard() }
+            else { hostCanvas.discard() }
+            hostWindow.delegate = nil
             hostWindow.close()
             server.stop()
         }

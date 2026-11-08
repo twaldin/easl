@@ -658,7 +658,7 @@ final class BrowserSurface {
               let event = NSEvent.keyEvent(with: down ? .keyDown : .keyUp, location: .zero, modifierFlags: NSEvent.ModifierFlags(rawValue: mods),
                                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
                                            characters: chars, charactersIgnoringModifiers: plain, isARepeat: isRepeat, keyCode: code) else { return }
-        SurfaceEventQueue.adopt(event)
+        SurfaceEventQueue.adopt(event, on: webView)
         if down { webView.keyDown(with: event) } else { webView.keyUp(with: event) }
     }
 
@@ -932,8 +932,8 @@ private final class Once {
 /// Streamed input's place in this app's own event queue. A batch waits behind the events already
 /// queued (a real click, a key) and runs when AppKit dispatches its marker
 /// (`CanvasApplication.sendEvent`), never through a window's hit test or the system's event
-/// stream. The events it synthesizes are remembered weakly: WebKit hands a key its page didn't
-/// handle back to the app, and that key must reach nothing on this Mac.
+/// stream. Synthesized events and their target pages are remembered weakly: an unhandled key
+/// may use only its page's history, never this Mac's canvas or menus.
 @MainActor
 enum SurfaceEventQueue {
     private static let subtype: Int16 = 0x5346
@@ -941,6 +941,7 @@ enum SurfaceEventQueue {
     private static var pending: [Int: () -> Void] = [:]
     private static var next = 0
     private static let synthesized = NSHashTable<NSEvent>(options: [.weakMemory, .objectPointerPersonality])
+    private static let keyPages = NSMapTable<NSEvent, WKWebView>(keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .weakMemory)
 
     /// Runs `body` once the app's event queue reaches the point this call put it at.
     static func run<T: Sendable>(_ body: @escaping @MainActor () -> T) async throws -> T {
@@ -964,11 +965,22 @@ enum SurfaceEventQueue {
             pending.removeValue(forKey: event.data2)?()
             return true
         }
-        return synthesized.contains(event)
+        guard synthesized.contains(event) else { return false }
+        if event.type == .keyDown, let page = keyPages.object(forKey: event) {
+            keyPages.removeObject(forKey: event)
+            let action = CanvasWindowController.menuItem(for: event, in: NSApp.mainMenu)?.action
+            if action == #selector(AppDelegate.undoCanvas(_:)), let manager = page.undoManager, manager.canUndo {
+                manager.undo()
+            } else if action == #selector(AppDelegate.redoCanvas(_:)), let manager = page.undoManager, manager.canRedo {
+                manager.redo()
+            }
+        }
+        return true
     }
 
-    static func adopt(_ event: NSEvent) {
+    static func adopt(_ event: NSEvent, on page: WKWebView? = nil) {
         synthesized.add(event)
+        if event.type == .keyDown, let page { keyPages.setObject(page, forKey: event) }
     }
 
     static func isSynthesized(_ event: NSEvent) -> Bool {
