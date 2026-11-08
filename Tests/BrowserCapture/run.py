@@ -14,7 +14,7 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-path', required=True, type=pathlib.Path)
-    parser.add_argument('--output', type=pathlib.Path)
+    parser.add_argument('--output', required=True, type=pathlib.Path)
     parser.add_argument('--compile-only', action='store_true')
     parser.add_argument('--width', type=int, default=4800)
     parser.add_argument('--height', type=int, default=3142)
@@ -26,8 +26,6 @@ def main():
     args = parser.parse_args()
     if platform.system() != 'Darwin':
         parser.error('Compilation and execution require macOS; --compile-only never runs AppKit.')
-    if not args.compile_only and args.output is None:
-        parser.error('--output is required for execution.')
     if not (64 <= args.width <= 16384 and 64 <= args.height <= 16384 and args.frames >= 2):
         parser.error('Viewport axes must be 64..16384 and --frames at least 2.')
     if args.max_main_ms is not None and (not math.isfinite(args.max_main_ms) or args.max_main_ms <= 0):
@@ -49,6 +47,10 @@ def main():
     app = next(v for v in description['swiftCommands'].values() if v['moduleName'] == 'CanvasApp')
     if '-O' not in app['otherArguments'] and '-Osize' not in app['otherArguments']:
         parser.error('CanvasApp must be optimized (-O or -Osize).')
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    if any(output.iterdir()):
+        parser.error('--output must be empty to avoid mixing evidence.')
     compiler = subprocess.check_output(['xcrun', '--find', 'swiftc'], text=True).strip()
     sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
     command = [compiler, '-O', '-swift-version', '6', '-parse-as-library', '-enable-testing',
@@ -60,7 +62,7 @@ def main():
             command.extend(['-Xcc', arguments[index + 1]])
         elif argument == '-I' and 'libghostty' in arguments[index + 1]:
             command.extend(['-I', arguments[index + 1]])
-    executable = build / 'BrowserCapture'
+    executable = output / 'BrowserCapture'
     command.append(str(root / 'Tests/BrowserCapture/BrowserCapture.swift'))
     command.extend(str(p) for p in objects)
     command.extend(['-F', str(build), '-L', str(build), '-lghostty', '-framework', 'AppKit',
@@ -70,10 +72,6 @@ def main():
     if args.compile_only:
         print(f'Compiled {executable}; no AppKit/WebKit execution, no runtime claim.')
         return
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    if any(output.iterdir()):
-        parser.error('--output must be empty to avoid mixing evidence.')
     with tempfile.TemporaryDirectory(prefix='easl-browser-capture-', dir='/tmp') as temporary:
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary, XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE='1')

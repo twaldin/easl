@@ -152,7 +152,7 @@ The default page viewport is 4800 × 3142 points. Use identical `--width`, `--he
 
 Results also record the window's backing scale and display color-space name. Pixel comparison refuses missing or different display conditions. CI runs the frame and fence checks without a timing threshold; the measured base-failure/candidate-success gate remains guest-only.
 
-Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format, and phase count. No timing threshold is invented: without `--max-main-ms`, the runner reports measurements and makes no timing pass claim. Calibration must demonstrate base failure and candidate success before claiming the regression is fixed. These commands document pending qualification, not a passing result.
+Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format, and phase count. No timing threshold is invented: without `--max-main-ms`, the runner reports measurements and makes no timing pass claim. Calibration must demonstrate base failure and candidate success before claiming the regression is fixed. Each output directory retains its own linked executable through cleanup; repeated runs never overwrite the compared builds or an earlier run's binary.
 
 ### Browser response and sharp-settle gates
 
