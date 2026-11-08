@@ -14,6 +14,7 @@ Each version's section is its GitHub release's notes.
 - The skill's worked examples move only their new group clear of foreign tiles before layout hand-back. Operator content refreshes check overflow and truncation without rejecting overlaps in the user's layout, and document that headless refreshes defer without live focus.
 - Wheel and trackpad scrolling use the first directional axis to choose one owner on local and remote boards, retaining both axes through crossings, edges, and momentum. Phaseless bursts end after a 250 ms gap; initial modifiers and Move choose owner eligibility. Direct board ownership retains per-event pan/zoom modifiers; page handoff retains pan with initial Shift. Space-drag pans anywhere only with board keys, leaves typed spaces untouched, and replays a non-drag click like middle-drag.
 - Pages receive wheel input first and hand off only on WebKit's first-event unhandled result. JavaScript pages that prevent default keep their gesture even at a bound; typing terminals without scrollback keep Ghostty's behavior, so a short normal shell may not move. Pages lose native edge bounce. Missing private WebKit selectors or older remote hosts keep page-first input without handoff.
+- Undo and redo in relayed browser pages use the page's own history, preserving page-owned key handlers, configured shortcuts and the order of typing queued before undo. The key format is unchanged; older drawing Macs keep their existing behavior.
 
 ## 0.3.7
 
