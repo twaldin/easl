@@ -153,7 +153,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   and, only when there is one, `hints` (advice, not faults: more than 6 labelled arrows all one color, so a label can't show which line it names: color arrows by lane or flow).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and are never reported.
   With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
-  It judges what is drawn (whole tile frames, routes and line-bound ends as drawn). A group can overlap non-members, but an empty report does not rule out a stretched group. Run it after a layout pass instead of screenshots.
+  It judges what is drawn (whole tile frames, routes and line-bound ends as drawn). A group can overlap non-members, but an empty report does not rule out a stretched group. Run it after a layout pass.
 - Groups are regions: `{"members": [...], "title": "…", "color": "blue", "padding": 24}`. The frame is always the members' bounds plus padding and a 32 pt title band, updated as members move;
   it is what `encloses` uses. One group per lane replaces a rect + title text + group.
 - Arrows: `route: "straight"` (default), `"orthogonal"` (horizontal/vertical with one jog), or `"avoid"` (horizontal/vertical around every tile in the way, routed with the board's other `avoid` arrows: own ports, parallel tracks, the group's `flow`).

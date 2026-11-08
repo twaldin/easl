@@ -132,7 +132,8 @@ For options, before/after, or two implementations.
 ### Decision record
 
 For choices that should be remembered: context (two lines), the `<canvas-decisions>` block, consequences per option.
-After the user decides, record the decision in the task's durable record and delete your task tiles, group and manifest unless the user asked to retain them.
+After the user decides, record the decision in the task's durable record. Delete only that decision's completed evidence unless the user asked to retain it.
+Keep shared task tiles, group and manifest until their remaining decisions or explanations are complete.
 
 ### Architecture map
 

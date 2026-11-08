@@ -70,7 +70,7 @@ Choose the lifetime at creation, including groups, manifests, shapes and arrows.
 | Task evidence | `expiresIn: "1d"` or the task's real deadline | Delete at task end unless the user retains it. |
 | Standing state | `expires: null` | Name its owner, producer and refresh trigger in the manifest. Remove at retirement. |
 
-Treat a grill/decision round or an explainer map as task evidence. Give its tiles, group and manifest `expiresIn: "1d"` or shorter at creation, or delete them as soon as its decision or answer is recorded.
+Treat a grill/decision round or an explainer map as task evidence. Give its tiles, group and manifest `expiresIn: "1d"` or shorter at creation, or delete them as soon as the round or map is complete and its decisions or answers are recorded.
 
 `expiresIn` is a relative duration resolved once by the host. `expires` is an absolute RFC3339 deletion deadline, or `null` to clear it.
 Both are top-level create, update or upsert params. Never send both. Omission on update preserves the deadline.
