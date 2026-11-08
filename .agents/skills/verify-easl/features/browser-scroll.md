@@ -4,6 +4,8 @@ On local and remote boards, the first directional event's dominant axis chooses 
 
 Pages get input first. Only the matching first-event WebKit unhandled callback can transfer the gesture to the board. JavaScript pages that call `preventDefault` keep their gesture even at a bound. Typing terminals without scrollback retain Ghostty's program behavior, so a short normal shell moves nothing. These are the two accepted exceptions. Missing required private WebKit selectors or older remote hosts keep pages page-first with no handoff. Pages lose native edge bounce.
 
+Browser tiles keep native history gestures off, including after a remote viewer detaches. Two- and three-finger swipes do not navigate history. Unused sideways input follows the same page-first board fallback as HTML tiles, even with back history. Back/Forward buttons, page-owned ⌘[ / ⌘], the context menu and browser automation remain available. WebKit does not record the unused swipe-preview snapshots.
+
 Wheel and trackpad scrolling preserve selection and typing. A press inside an HTML or browser page, including its own scrollbar, is the one exception to selection and typing preservation: it selects the tile and gives it typing.
 
 ## Sub-features
@@ -31,6 +33,8 @@ python3 "$R/Tests/BrowserScrolling/resize.py" --app "$G/frozen.app" --drift
 ```
 
 Retain each command's stdout/stderr under a distinct evidence name. `resize.py` has no `--out` and removes its temporary home. The main runner retains per-case captures and readbacks, exact-PID/window receipts, `pixels.json`, and `app.log` under `--out`. Inspect the actual PNGs, including the final END marker's coloured border clear of native chrome. It checks unchanged tile frame and WebKit viewport.
+
+The CI `Tests/TileScrolling` cases cover fitting browser and HTML pages in both horizontal directions, pointer crossings, and board-owned momentum. `browser-history-fitting` checks board panning with back history, zero begin and momentum, with an unchanged URL after an asynchronous WebKit rejection barrier. `browser-history-controls` clicks the Back/Forward buttons and sends page-owned ⌘[ / ⌘] to verify navigation. Synthetic AppKit input is not physical-trackpad proof.
 
 For manual replay in the health-checked viewer, measure `X`,`Y` inside the page body in content points. Match the intended board and exact own window in fresh `input state` and window-discovery receipts, then pass `--window "$WINDOW"` on every scroll. A stale window ID drops the input. Without that flag, replay uses the front board window; `selected:true` alone is ambiguous across window groups.
 

@@ -362,7 +362,7 @@ final class BrowserTile: NSView, TileContent {
         view.navigationDelegate = self
         view.uiDelegate = self
         view.wheelHandoffEnabled = PageWheelHandoff.configure(view)
-        view.allowsBackForwardNavigationGestures = true
+        view.allowsBackForwardNavigationGestures = false
         view.isInspectable = true
         webView = view
         observations = [

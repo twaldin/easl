@@ -33,6 +33,8 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
+  While a browser page holds the keyboard, these keys navigate its page history. Its Back/Forward buttons, context menu and browser automation still navigate history.
+  Browser tiles disable two- and three-finger history swipes so unused sideways scrolls pan the board. Swipe previews are not shown, and WebKit does not record their snapshots.
 - **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
   Esc on the board or the item again brings them back.
 

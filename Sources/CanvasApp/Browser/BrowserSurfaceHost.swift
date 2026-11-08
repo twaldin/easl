@@ -242,7 +242,6 @@ final class BrowserSurface {
         guard let tile, tile.surface === self else { return }
         tile.surface = nil
         guard let webView = tile.webView else { return }
-        webView.allowsBackForwardNavigationGestures = true
         webView.configuration.preferences.isElementFullscreenEnabled = true
         tile.endSurfaceDrive()
         Task { [weak tile] in
@@ -263,10 +262,8 @@ final class BrowserSurface {
         if let webView = tile?.webView { prepare(webView) }
     }
 
-    /// A swipe would track this Mac's own input stream, which a viewer's scrolls never reach, and
-    /// a select's menu would open here where nobody sees it.
+    /// A select's menu must not open on the drawing Mac where the viewer cannot see it.
     private func prepare(_ webView: WKWebView) {
-        webView.allowsBackForwardNavigationGestures = false
         webView.configuration.preferences.isElementFullscreenEnabled = false
         tile?.beginSurfaceDrive()
         Task { [weak self] in

@@ -50,6 +50,7 @@ public enum CanvasBasics {
             Item(term: "⌘P", text: "find a tile by its title or caption."),
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Links select the destination without taking typing from the source."),
             Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
+            Item(term: "Browser history", text: "two- and three-finger history swipes are off so unused sideways scrolls pan the board. Use the tile's Back and Forward buttons or its context menu. While the page holds the keyboard, ⌘[ and ⌘] navigate its history. Browser automation still works. Swipe previews are not shown or recorded."),
             Item(term: "Hide Board Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
         ]),
         Section(title: "Agents", items: [
