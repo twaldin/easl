@@ -9,6 +9,7 @@ Users browse in native WebKit tiles, automate page controls through the CLI, and
 - `browser-relay` forwards native input from viewer B to a page drawn by viewer A.
 - `browser-gates` distinguishes first visible response from settled sharp assignment.
 - `browser-scroll` uses the separate [native scrolling journey](browser-scroll.md) for oversized-edge reveal, wheel units, phased ownership, and replay limits.
+- `browser-capture-main` measures real main run-loop busy turns while the production browser surface streams a deterministic image-rich 4MP page.
 
 ## How to get to it (user POV)
 
@@ -26,6 +27,7 @@ Preconditions: a guest-local HTTP fixture with unique text, a labelled input, a 
 - Park and restore the browser, then require new page state and native input. A saved card is allowed while parked; the restored live page must not remain a stale picture. Whole-board `view.render` coverage, including unseen browsers assigned to both drawing clients, is a separate contract in `docs/testing.md` and does not replace native relay proof.
 - On a fresh board, place a cold browser far outside the viewport. Confirm preview work is deferred until it approaches the viewport. Separately move a previously live browser out of view and require its departure snapshot, then restore it and require advancing page content. These are distinct deferred-preview cases.
 - For cold first-command admission, configure the fixture to hold its first response headers, then issue a click on a tile with no web view. Require the command to remain pending until release, then click exactly once on the tile URL's document within its existing bound. Use `Tests/BrowserColdResponse/run.py` for native coverage and `scripts/test-browser-cold-response.py` for the app sockets. Keep `BrowserColdCommands` and `BrowserInitialAdmission` unchanged during qualification.
+- For capture rasterization changes, use the queued GUI guest commands in [Measure browser capture main-thread work](../../../../docs/testing.md#measure-browser-capture-main-thread-work). Invoke the candidate runner against both native release builds. Retain `results.json`, encoded images, RGBA images, and `comparison.json`. Calibrate `--max-main-ms` from repeated base runs, then require base failure and candidate success with the same threshold. No threshold means measurements only. `--compile-only` links on headless macOS without launching AppKit or WebKit. The separate two-viewer scratch-easld relay, fixed-page pixel comparison, source profiles, and idle CPU, wakeup and zero-write gates remain required. These are pending checks, not passing claims.
 
 ## Gotchas
 

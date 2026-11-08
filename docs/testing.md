@@ -129,6 +129,28 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 
 `scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. The link-death regression reads the `easl/hostProcess` PID notification before killing the input link, then checks that the server is reaped. It does not prove cleanup before PID delivery. Separate retained real-SSH proof holds that notification back, verifies that the viewer receives zero bytes, and kills the SSH link before checking the host process. Other script cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. The scripts run through the Python discovery command above and need Bun, as the host launcher does.
 
+### Measure browser capture main-thread work
+
+Use a queued macOS GUI guest for execution. Build the base (`9a1affa1fc79dbf1886d66cac4c76770577298f7`) and candidate separately with the same toolchain. Invoke the candidate checkout's runner for both builds, passing each build's bin path. The fixture uses existing production APIs and needs no base patch.
+
+```sh
+	swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	BIN="$(swift build --build-system native -c release --show-bin-path)"
+	# Headless macOS: link only. Do not launch AppKit or WebKit.
+	python3 Tests/BrowserCapture/run.py --bin-path "$BIN" --output /absolute/scratch/capture-compile --compile-only
+	# Queued GUI guest: CANDIDATE is the checkout containing this runner.
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix --compare /absolute/scratch/capture-base
+	# After calibrating LIMIT from repeated base measurements, use a new output directory:
+	python3 Tests/BrowserCapture/run.py --bin-path "$BIN" --output /absolute/scratch/capture-gated --max-main-ms "$LIMIT"
+```
+
+`BrowserCapture` streams a deterministic local image-rich page through the real socket, `BrowserSurfaceHost`, and `SurfaceStream`. It acknowledges frames, checks the fitted 4MP dimensions and requested PNG or JPEG format, decodes pixels, and requires alternating red and blue markers with image content. Each retained phase must cover a sequenced focus input in its input fence. This does not prove native click presentation.
+
+The default page viewport is 4800 × 3142 points. Use identical `--width`, `--height`, `--frames`, and `--format` on both builds. PNG is the default. `results.json` includes `surface.capture`, `main.stretch50`, and `main.stretch250` under the metrics counters (absent counters mean zero), frame records, and `maxMainMs`. The latter observes real busy run-loop turns with the same activity boundaries as Metrics, including turns below 50 ms. It is not snapshot wall time. The interval includes the streaming fixture's own socket and page-update work. Decoding, pixel scans, and image artifact writes run off main.
+
+Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format, and phase count. No timing threshold is invented: without `--max-main-ms`, the runner reports measurements and makes no timing pass claim. Calibration must demonstrate base failure and candidate success before claiming the regression is fixed. These commands document pending qualification, not a passing result.
+
 ### Browser response and sharp-settle gates
 
 `scripts/perf-browser-gates.py` observes an existing counter-and-marker page in an isolated native viewer. Its module help documents the fixture and JSON config. Supply the viewer's exact PID, window, current stream, and measured viewport geometry. Use the same native input helper, route, page, and compiler for before and after, retaining source and bundle hashes.
