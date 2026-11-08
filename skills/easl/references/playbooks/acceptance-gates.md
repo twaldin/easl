@@ -44,9 +44,16 @@ def manifest(owner):
 		"Refresh trigger: New measured run or revision or approved criteria\n\nLifetimes: All non-terminal task evidence expiresIn 1d; delete at task end")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", expires_in="1d")["object"]["id"]
 a = c.object.create(type="note", props={"key": g+"/gates", "markdown": body}, size="fit", frame={"w": 960}, expires_in="1d")["object"]["id"]
-c.object.create(type="group", props={"key": g, "title": "Acceptance gates", "members": [m, a]}, expires_in="1d")
+group = c.object.create(type="group", props={"key": g, "title": "Acceptance gates", "members": [m, a]}, expires_in="1d")["object"]["id"]
 c.layout.stack(ids=[m, a], direction="column", gap=60)
-check = c.layout.check(ids=[m, a])
+owned = [m, a, group]
+check = c.layout.check(ids=owned)
+if check["overlaps"]:
+	box = c.object.get(id=group)["object"]["frame"]
+	below = [o["frame"]["y"] + o["frame"]["h"] for o in c.board.get()["objects"] if o["id"] not in owned and o.get("frame")
+		and o["frame"]["x"] < box["x"] + box["w"] and box["x"] < o["frame"]["x"] + o["frame"]["w"] and o["frame"]["y"] + o["frame"]["h"] > box["y"]]
+	c.layout.translate(ids=[group], dx=0, dy=max(below) + 48 - box["y"])
+	check = c.layout.check(ids=owned)
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
 PY

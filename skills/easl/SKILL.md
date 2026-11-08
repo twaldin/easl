@@ -130,6 +130,7 @@ Detailed walkthrough instructions remain in [Explain code on the board](referenc
 
 Omit `frame` to place a new tile in free space near your terminal. Read its returned frame before placing related tiles.
 For deliberate layouts, use `size: "fit"`, `layout.place`, `layout.stack` or `layout.grid`, then `layout.check`.
+Free placement clears each new tile, not the row or grid built from it; if that layout overlaps foreign objects, translate only your own group below them, as the worked examples do.
 Use `object.batch` and `$0` references for one undoable build. Groups move as a whole. Do not hand-compute a grid around the follow tile.
 Check overlaps, arrow crossings, label collisions, overflow, scrolls and truncated captions or tables. Fix your initial layout before hand-back.
 Inspect a render before pointing the user at a visual. Headless easld checks geometry approximately, but does not prove Mac rendering.

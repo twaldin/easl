@@ -26,7 +26,7 @@ At task end, delete the now note, your supporting notes, group, and manifest unl
 
 ## Worked example: publish a file-backed update
 
-Prerequisites: Python with `easl_sdk`, an already running scratch easld selected by `EASL_SOCKET`, and `EASL_BOARD_ID` for its scratch board. Set `UPDATE_FILE` to a real, short Markdown update readable on the host. It must already state what changed, the decisions, and the next action with evidence links. Use an unused slug. No viewer or agent process is required to create it.
+Prerequisites: Python with `easl_sdk`, an already running scratch easld selected by `EASL_SOCKET`, and `EASL_BOARD_ID` for its scratch board. Set `UPDATE_FILE` to a real, short Markdown update readable on the host. It must already state what changed, the decisions, and the next action with evidence links. Use an unused slug. No viewer or agent process is required to create it. The refresh step reads live focus, so it applies only while an app shows the board; on a headless easld it always defers.
 
 ```python
 import os
@@ -57,6 +57,12 @@ result = canvas.object.batch(ops=[
 ])
 ids = [result["results"][i]["object"]["id"] for i in (0, 1, 3)]
 check = canvas.layout.check(ids=ids)
+if check["overlaps"]:
+	box = canvas.object.get(id=ids[-1])["object"]["frame"]
+	below = [o["frame"]["y"] + o["frame"]["h"] for o in canvas.board.get()["objects"] if o["id"] not in ids and o.get("frame")
+		and o["frame"]["x"] < box["x"] + box["w"] and box["x"] < o["frame"]["x"] + o["frame"]["w"] and o["frame"]["y"] + o["frame"]["h"] > box["y"]]
+	canvas.layout.translate(ids=[ids[-1]], dx=0, dy=max(below) + 48 - box["y"])
+	check = canvas.layout.check(ids=ids)
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 canvas.object.update(id=ids[0], props={"markdown": manifest.replace(f"Layout owner: {owner}", "Layout owner: user")})
 ```
@@ -79,9 +85,12 @@ else:
 	else:
 		canvas.object.update(id=ids[1], props={"markdown": markdown})
 		check = canvas.layout.check(ids=[ids[1]])
-		assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
+		assert not (check["overflow"] or check["truncated"]), check
+		if check["overlaps"]:
+			print("User-owned layout overlaps:", check["overlaps"])
 ```
 
 This shows an absolute source time, not a ticking age. It does not install a feed or claim that the file's contents are derived facts. Headless text measurement can be approximate. See [object keys and updates](../api.md#objects) and [rendering](../rendering.md).
 
 After refresh, resolve overflow or truncation before presenting it. Shorten the authored update or hand the layout issue to its owner; do not resize a user-owned frame. Keep the next action and evidence links visible.
+Overlaps in the user's layout belong to the layout owner; report them, never move or resize to clear them.

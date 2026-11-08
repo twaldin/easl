@@ -46,9 +46,16 @@ def manifest(owner):
 		f"Sources of truth: GitHub merged PR records for {repo}\n\nRefresh trigger: Manual republish after merges or the window boundary; no refresher installed\n\nLifetimes: All non-terminal task evidence expiresIn 1d; this invocation owns cleanup")
 m = c.object.create(type="note", props={"key": g+"/manifest", "markdown": manifest("agent:"+os.environ["EASL_TILE_ID"])}, size="fit", frame={"w": 1000}, expires_in="1d")["object"]["id"]
 ids = [c.object.create(type="note", props={"key": k, "markdown": text}, size="fit", frame={"w": width}, expires_in="1d")["object"]["id"] for k, text, width in [(keys[0], body, 1000), (keys[1], source, 480)]]
-c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires_in="1d")
+group = c.object.create(type="group", props={"key": g, "title": "Seven-day ship log", "members": [m, *ids]}, expires_in="1d")["object"]["id"]
 c.layout.grid(cells=[{"id": m, "row": 0, "col": 0}, {"id": ids[0], "row": 1, "col": 0}, {"id": ids[1], "row": 1, "col": 1}], col_gap=60, row_gap=60)
-check = c.layout.check(ids=[m, *ids])
+owned = [m, *ids, group]
+check = c.layout.check(ids=owned)
+if check["overlaps"]:
+	box = c.object.get(id=group)["object"]["frame"]
+	below = [o["frame"]["y"] + o["frame"]["h"] for o in c.board.get()["objects"] if o["id"] not in owned and o.get("frame")
+		and o["frame"]["x"] < box["x"] + box["w"] and box["x"] < o["frame"]["x"] + o["frame"]["w"] and o["frame"]["y"] + o["frame"]["h"] > box["y"]]
+	c.layout.translate(ids=[group], dx=0, dy=max(below) + 48 - box["y"])
+	check = c.layout.check(ids=owned)
 assert not any(v for k, v in check.items() if k not in ("approximate", "hints")), check
 c.object.update(id=m, props={"markdown": manifest("user")}, size="fit")
 PY
