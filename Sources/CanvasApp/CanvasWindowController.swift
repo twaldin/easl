@@ -1791,6 +1791,7 @@ final class CanvasWindow: NSWindow {
             let content = target.tile?.content
             let page: WKWebView? = (content as? BrowserTile)?.webView ?? (content as? HtmlTile)?.webView
             if let page, hit === page || hit.isDescendant(of: page) {
+                (page as? BrowserWebView)?.prepareWheel(direction: direction)
                 target.responder = page
                 target.pageFallback = PageFallback(event)
                 wheelState = .content(target)

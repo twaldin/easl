@@ -4,6 +4,8 @@ On local and remote boards, the first directional event's dominant axis chooses 
 
 Pages get input first. Only the matching first-event WebKit unhandled callback can transfer the gesture to the board. JavaScript pages that call `preventDefault` keep their gesture even at a bound. Typing terminals without scrollback retain Ghostty's program behavior, so a short normal shell moves nothing. These are the two accepted exceptions. Missing required private WebKit selectors or older remote hosts keep pages page-first with no handoff. Pages lose native edge bounce.
 
+Browser tiles enable native history swipes only in directions with history at the first directional event. Page-first delivery and the matching first-event fallback still determine the owner.
+
 Wheel and trackpad scrolling preserve selection and typing. A press inside an HTML or browser page, including its own scrollbar, is the one exception to selection and typing preservation: it selects the tile and gives it typing.
 
 ## Sub-features
@@ -31,6 +33,8 @@ python3 "$R/Tests/BrowserScrolling/resize.py" --app "$G/frozen.app" --drift
 ```
 
 Retain each command's stdout/stderr under a distinct evidence name. `resize.py` has no `--out` and removes its temporary home. The main runner retains per-case captures and readbacks, exact-PID/window receipts, `pixels.json`, and `app.log` under `--out`. Inspect the actual PNGs, including the final END marker's coloured border clear of native chrome. It checks unchanged tile frame and WebKit viewport.
+
+The CI `Tests/TileScrolling` cases cover fitting browser and HTML pages in both horizontal directions, pointer crossings, and board-owned momentum. `browser-history-ownership` checks board panning without forward history and retained native back-swipe ownership. Synthetic AppKit input does not prove completed history navigation.
 
 For manual replay in the health-checked viewer, measure `X`,`Y` inside the page body in content points. Match the intended board and exact own window in fresh `input state` and window-discovery receipts, then pass `--window "$WINDOW"` on every scroll. A stale window ID drops the input. Without that flag, replay uses the front board window; `selected:true` alone is ambiguous across window groups.
 

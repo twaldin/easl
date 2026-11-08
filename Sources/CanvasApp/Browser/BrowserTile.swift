@@ -1480,6 +1480,27 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 /// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
     var wheelHandoffEnabled = false
+    private var historySwipesEnabled = false
+
+    override var allowsBackForwardNavigationGestures: Bool {
+        get { super.allowsBackForwardNavigationGestures }
+        set {
+            historySwipesEnabled = newValue
+            super.allowsBackForwardNavigationGestures = newValue
+        }
+    }
+
+    func prepareWheel(direction: CGVector) {
+        let back = (direction.dx > 0) == (userInterfaceLayoutDirection == .leftToRight)
+        // Without history, WebKit's swipe navigation consumes horizontal input as edge bounce.
+        super.allowsBackForwardNavigationGestures = historySwipesEnabled
+            && (direction.dx == 0 || (back ? canGoBack : canGoForward))
+    }
+
+    override func swipe(with event: NSEvent) {
+        super.allowsBackForwardNavigationGestures = historySwipesEnabled
+        super.swipe(with: event)
+    }
 
     private lazy var pageUndoManager = UndoManager()
     override var undoManager: UndoManager? { pageUndoManager }
