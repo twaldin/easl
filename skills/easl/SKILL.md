@@ -99,7 +99,7 @@ Exact expiry and stale rules: [Lifetimes and cleanup](references/api.md#lifetime
 A manifest is a plain note, not a new object type or a lock. Use group key `region/<work>` and note key `region/<work>/manifest`.
 For a branch region discovered by `board.get --branch`, use the shipped group key `branch:<name>` instead, with the same manifest pattern and ownership rules.
 Read an existing manifest before claiming its key. Never replace another owner's claim or move their region.
-Never add your tiles to a group whose manifest names another owner, a `tstack/*` group, or a group you didn't create. Its frame follows its members, so one far-away member stretches it across the board.
+Never add your tiles to a group whose manifest names another agent, a `tstack/*` group, or a group you didn't create. A group's frame follows its members, so one far-away member stretches it across the board.
 Put your tiles in your own keyed group instead, or use `show/<project>/…` keys that tstack shelves for you.
 Include these fields in the note, with real values:
 
@@ -136,7 +136,7 @@ Detailed walkthrough instructions remain in [Explain code on the board](referenc
 Omit `frame` to place a new tile in free space near your terminal. Read its returned frame before placing related tiles.
 For deliberate layouts, use `size: "fit"`, `layout.place`, `layout.stack` or `layout.grid`.
 After any placement of more than one tile, run `layout.check` and fix the overlaps your tiles caused before pointing the user at them.
-`layout.check` does not flag a stretched group today. The group-ownership rule above is the only guard against that.
+`layout.check` does not flag stretching itself today. A clean check leaves the group-ownership rule as the only guard.
 Free placement clears each new tile, not the row or grid built from it; if that layout overlaps foreign objects, translate only your own group below them, as the worked examples do.
 Use `object.batch` and `$0` references for one undoable build. Groups move as a whole. Do not hand-compute a grid around the follow tile.
 Check overlaps, arrow crossings, label collisions, overflow, scrolls and truncated captions or tables. Fix your initial layout before hand-back.
