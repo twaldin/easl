@@ -206,6 +206,7 @@ private enum BrowserCapture {
         let colorSpace = window.screen?.colorSpace?.localizedName
         let result: JSONValue = .object(["frames": .array(records), "receivedFrames": .number(Double(receivedCount)),
             "backingScale": .number(window.backingScaleFactor), "colorSpace": colorSpace.map(JSONValue.string) ?? .null,
+            "viewport": SurfaceEvent.size(web.bounds.size), "scale": .number(scale), "format": .string(format.rawValue),
             "metrics": Metrics.shared.snapshot(), "maxMainMs": .number(busy.maximum),
             "maxMainLimitMs": limit > 0 ? .number(limit) : .null, "assertsTiming": .bool(limit > 0)])
         let json = try JSONEncoder().encode(result)

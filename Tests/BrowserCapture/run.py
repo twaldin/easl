@@ -84,7 +84,7 @@ def main():
     if args.compare:
         baseline = json.loads((args.compare / 'results.json').read_text())
         current = json.loads((output / 'results.json').read_text())
-        for key in ('backingScale', 'colorSpace'):
+        for key in ('backingScale', 'colorSpace', 'viewport', 'scale', 'format'):
             if baseline.get(key) is None or baseline.get(key) != current.get(key):
                 parser.error(f'Comparison requires identical known {key} values.')
         if [(f['phase'], f['width'], f['height']) for f in baseline['frames']] != [(f['phase'], f['width'], f['height']) for f in current['frames']]:
