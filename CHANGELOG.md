@@ -12,7 +12,9 @@ Scroll ownership on local and remote boards, Space-drag, and the browser swipe p
 
 The wire adds the optional `scrollGestures` capability, scroll gesture identities, and `surface.scrollUnhandled`. The API schema stays at version 2. Older remote hosts keep page-first input without board handoff because the app sends gesture identities only after capability advertisement. Missing private WebKit selectors also leave pages first without handoff.
 
-The mixed-version release check passed all five pairings with 0.3.7 and 0.3.6, including both old/new relay directions, 40 CLI reads, and saved-board round trips. It did not exercise every CLI write method. The agent skill and playbooks ship with the app and do not require a new CLI.
+The mixed-version release check passed all five pairings with 0.3.7 and 0.3.6, including both old/new relay directions, 40 CLI reads, and saved-board round trips. It did not exercise every CLI write method.
+
+The app bundles the agent skill and playbooks. Agents on an easld host use that host's separately installed copy in `~/.local/share/easl/skills/easl`, which must also be updated to get the rewritten skill. Neither needs a new CLI.
 
 ### Board format
 
