@@ -254,13 +254,19 @@ export type Guidance = { role: "custom"; customType: typeof GUIDANCE; content: s
 
 /**
  * One request's messages with `text` as hidden context: just before the first card carrying one
- * of `ids`, else (compacted away) first, so it stays where it was from one request to the next.
+ * of `ids`, else (compacted away) after the compaction head.
  */
 export function guided<M extends Recorded>(messages: readonly M[], ids: ReadonlySet<string>, text: string): (M | Guidance)[] {
-  const at = Math.max(
-    messages.findIndex((message) => recordedKeys(message).some((id) => ids.has(id))),
-    0,
-  );
+  let at = messages.findIndex((message) => recordedKeys(message).some((id) => ids.has(id)));
+  if (at < 0) {
+    at = 0;
+    const head = messages[0] as (Recorded & { providerPayload?: { type?: unknown } }) | undefined;
+    if (head?.role === "compactionSummary" && head.providerPayload?.type === "anthropicCompaction") {
+      at = 1;
+      if (messages[at]?.role === "assistant") at++;
+      while (messages[at]?.role === "toolResult") at++;
+    }
+  }
   const stamp = messages[at]?.timestamp;
   const guidance: Guidance = { role: "custom", customType: GUIDANCE, content: text, display: false, attribution: "agent", timestamp: typeof stamp === "number" ? stamp : Date.now() };
   return [...messages.slice(0, at), guidance, ...messages.slice(at)];
