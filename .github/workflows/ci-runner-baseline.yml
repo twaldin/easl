@@ -1,0 +1,40 @@
+name: Historical text measurement proof
+on:
+  pull_request:
+jobs:
+  baseline:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Swift 6.4
+        run: scripts/select-ci-swift.sh
+      - uses: actions/checkout@v5
+        with:
+          ref: dc002d182f9bea3af1c0a05a1ba09a98c0c19751
+          path: historical-base
+      - name: Run unchanged app base with CI timing mode
+        shell: bash
+        run: |
+          cp Tests/CanvasCoreTests/TextMeasureRegression.swift historical-base/Tests/CanvasCoreTests/
+          cp Tests/CanvasCoreTests/DelegatedCallsTests.swift historical-base/Tests/CanvasCoreTests/
+          cp Tests/CanvasCoreTests/main.swift historical-base/Tests/CanvasCoreTests/
+          cd historical-base
+          swift build -j 2 --product CanvasCoreTests
+          set +e
+          .build/debug/CanvasCoreTests --text-measure-regression --output "$RUNNER_TEMP/text-measure-baseline" --ci-timing-report-only
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 - "$RUNNER_TEMP/text-measure-baseline/report.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          print(json.dumps(report, sort_keys=True))
+          assert any('main.stretch250' in failure for failure in report['failures']), report
+          assert not any('main.stretch50' in failure for failure in report['failures']), report
+          print('PASS historical regression still fails on main.stretch250 under --ci-timing-report-only')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: text-measure-baseline
+          path: ${{ runner.temp }}/text-measure-baseline

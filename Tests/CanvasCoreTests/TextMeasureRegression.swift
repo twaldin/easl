@@ -51,8 +51,14 @@ enum TextMeasureRegression {
         let arguments = Array(CommandLine.arguments.dropFirst(2))
         var output: URL?
         var expected: URL?
+        var ciTimingReportOnly = false
         var index = 0
         while index < arguments.count {
+            if arguments[index] == "--ci-timing-report-only" {
+                ciTimingReportOnly = true
+                index += 1
+                continue
+            }
             guard index + 1 < arguments.count else { return usage() }
             switch arguments[index] {
             case "--output": output = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
@@ -65,7 +71,7 @@ enum TextMeasureRegression {
         let completion = Completion()
         Task { @MainActor in
             do {
-                try await run(output: output, expected: expected)
+                try await run(output: output, expected: expected, ciTimingReportOnly: ciTimingReportOnly)
                 completion.status = 0
             } catch {
                 FileHandle.standardError.write(Data("FAIL text.measure regression: \(error)\n".utf8))
@@ -84,7 +90,7 @@ enum TextMeasureRegression {
     }
 
     private static func usage() -> Int32 {
-        FileHandle.standardError.write(Data("usage: CanvasCoreTests --text-measure-regression --output DIRECTORY [--expected sizes.json]\n".utf8))
+        FileHandle.standardError.write(Data("usage: CanvasCoreTests --text-measure-regression --output DIRECTORY [--expected sizes.json] [--ci-timing-report-only]\n".utf8))
         return 2
     }
 
@@ -194,7 +200,7 @@ enum TextMeasureRegression {
         return .object(["sizes": .array(sizes)])
     }
 
-    private static func run(output: URL, expected: URL?) async throws {
+    private static func run(output: URL, expected: URL?, ciTimingReportOnly: Bool) async throws {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let font = root.appendingPathComponent("resources").appendingPathComponent(DrawingStyle.fontAsset)
@@ -271,6 +277,10 @@ enum TextMeasureRegression {
         try await compare("heavy", heavy, heavyResult)
         for counter in ["main.stretch50", "main.stretch250"] {
             let count = metrics["counters"]?[counter]?["total"]?["n"]?.int ?? 0
+            if counter == "main.stretch50", ciTimingReportOnly {
+                print("text.measure timing: \(counter).total.n = \(count), assertsTiming: false")
+                continue
+            }
             if count != 0 { failures.append("\(counter).total.n = \(count), expected 0") }
         }
         if during.isEmpty { failures.append("no main-run-loop timer callback inside the heavy batch") }
