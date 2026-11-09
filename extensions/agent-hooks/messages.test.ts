@@ -93,7 +93,7 @@ test("a recorded card names the messages it carries, and so does its text sent b
   expect(recordedIds({ role: "custom", customType: "irc:incoming", details: { id: "1", from: "Main", message: "hi" } })).toEqual([]);
 });
 
-test("guidance goes just before the first marked card, else (compacted away) first", () => {
+test("guidance goes just before the first marked card, else first without compaction", () => {
   const history = { role: "user", content: "earlier", timestamp: 1 };
   const sent = { role: "custom", ...card([{ ...message({ name: "ci" }), id: "msg_01A" }]), timestamp: 2 };
   const reply = { role: "assistant", content: [], timestamp: 3 };
@@ -101,6 +101,27 @@ test("guidance goes just before the first marked card, else (compacted away) fir
   expect(added.map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["user", GUIDANCE, "easl:message", "assistant"]);
   expect(added[1]).toMatchObject({ role: "custom", content: "You are running in an easl terminal tile.", display: false, attribution: "agent" });
   expect(guided([history, reply], new Set(["msg_01A"]), "g").map((m) => ("customType" in m ? m.customType : m.role))).toEqual([GUIDANCE, "user", "assistant"]);
+});
+
+test("compacted-away guidance follows the native compaction head and retained tool turn", () => {
+  const summary = { role: "compactionSummary", providerPayload: { type: "anthropicCompaction" }, timestamp: 1 };
+  const reply = { role: "assistant", content: [], timestamp: 2 };
+  const result = { role: "toolResult", content: [], timestamp: 3 };
+  const history = { role: "user", content: "continue", timestamp: 4 };
+  const added = guided([summary, reply, result, history], new Set(["gone"]), "g");
+  expect(added.map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["compactionSummary", "assistant", "toolResult", GUIDANCE, "user"]);
+});
+
+test("compacted-away guidance follows a native summary directly before a user message", () => {
+  const summary = { role: "compactionSummary", providerPayload: { type: "anthropicCompaction" }, timestamp: 1 };
+  const history = { role: "user", content: "continue", timestamp: 2 };
+  const added = guided([summary, history], new Set(["gone"]), "g");
+  expect(added.map((m) => ("customType" in m ? m.customType : m.role))).toEqual(["compactionSummary", GUIDANCE, "user"]);
+});
+
+test("a non-native compaction summary does not move compacted-away guidance", () => {
+  const summary = { role: "compactionSummary", timestamp: 1 };
+  expect(guided([summary], new Set(["gone"]), "g").map((m) => ("customType" in m ? m.customType : m.role))).toEqual([GUIDANCE, "compactionSummary"]);
 });
 
 test("a card draws as omp's IRC card: the sender, its age, the text quoted, three lines until unfolded", () => {
