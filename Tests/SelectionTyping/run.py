@@ -123,6 +123,7 @@ def main():
             print(f"{case['name']}\t{case['baseline']}")
         return
     results = []
+    timeout_streak = []
     for case in cases:
         directory = output / case["name"]
         with tempfile.TemporaryDirectory(prefix="easl-selection-", dir="/tmp") as temporary:
@@ -165,6 +166,16 @@ def main():
                 print(stdout + stderr, end="", flush=True)
             if verdict.get("interrupted"):
                 raise SystemExit("Selection/typing interrupted; partial records retained.")
+            if verdict["timed_out"]:
+                timeout_streak.append(case["name"])
+            else:
+                timeout_streak.clear()
+            if len(timeout_streak) == 3:
+                (output / "aborted.json").write_text(json.dumps({
+                    "first_timed_out_case": timeout_streak[0],
+                    "not_run_cases": cases[len(results):],
+                }, indent=2) + "\n")
+                raise SystemExit(f"Selection/typing runner hung at {timeout_streak[0]}: 3 consecutive case timeouts; remaining cases not run.")
     if not all(result["passed"] for result in results):
         raise SystemExit("Selection/typing failures: " + ", ".join(result["name"] for result in results if not result["passed"]))
 

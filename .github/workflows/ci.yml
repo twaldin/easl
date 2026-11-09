@@ -18,6 +18,8 @@ jobs:
       - name: Build
         run: swift build -j 2
       - name: Test
+        env:
+          EASL_CI_TIMING_REPORT_ONLY: "1"
         run: |
           swift --version
           bun --version
