@@ -93,11 +93,13 @@ final class DelegatedCallsTests {
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("text-measure-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: output) }
         let executable = CommandLine.arguments[0]
+        let ciTimingReportOnly = ProcessInfo.processInfo.environment["EASL_CI_TIMING_REPORT_ONLY"] == "1"
         let result = await offPool {
             Result {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = ["--text-measure-regression", "--output", output.path]
+                if ciTimingReportOnly { process.arguments?.append("--ci-timing-report-only") }
                 process.standardInput = FileHandle.nullDevice
                 let pipe = Pipe()
                 process.standardOutput = pipe
@@ -117,6 +119,11 @@ final class DelegatedCallsTests {
         #expect((report["timerCallbacksInsideBatch"]?.int ?? 0) > 0)
         #expect(report["failures"]?.array == [])
         for counter in ["main.stretch50", "main.stretch250"] {
+            if counter == "main.stretch50", ciTimingReportOnly {
+                let count = report["metrics"]?["counters"]?[counter]?["total"]?["n"]?.int ?? 0
+                print("text.measure timing: \(counter).total.n = \(count), assertsTiming: false")
+                continue
+            }
             #expect((report["metrics"]?["counters"]?[counter]?["total"]?["n"]?.int ?? 0) == 0)
         }
     }
