@@ -2,7 +2,28 @@
 
 Each version's section is its GitHub release's notes.
 
-## 0.3.8 (unreleased)
+## 0.3.8
+
+easl 0.3.8 lets content scroll first and pans the board only when that content can't use the scroll, while Space-drag pans anywhere when the board has the keys. Browser tiles hand unused sideways scrolls to the board, with two- and three-finger back/forward swipes turned off. The agent skill is rewritten around ten board playbooks and shared-board hygiene rules.
+
+### easld, the app, and the CLI
+
+Local scroll ownership, Space-drag, and the browser swipe policy need the 0.3.8 app, not a new easld or CLI. Full browser scroll handoff on remote boards needs the 0.3.8 app on both the drawing and viewing Macs and easld 0.3.8.
+
+The wire adds the optional `scrollGestures` capability, scroll gesture identities, and `surface.scrollUnhandled`. The API schema stays at version 2. Older remote hosts keep page-first input without board handoff because the app sends gesture identities only after capability advertisement. Missing private WebKit selectors also leave pages first without handoff.
+
+The mixed-version release check passed all five pairings with 0.3.7 and 0.3.6, including both old/new relay directions, 40 CLI reads, and saved-board round trips. It did not exercise every CLI write method. The agent skill and playbooks ship with the app and do not require a new CLI.
+
+### Board format
+
+The board format is unchanged, still format 3. The persisted object model is unchanged from 0.3.7.
+
+### Known limits
+
+- The release check used synthetic input, not a physical trackpad.
+- macOS 14 and 15 were checked by code review only, not runtime tests.
+- Pages lose native edge bounce. JavaScript pages that block scrolling keep their gesture even at a bound.
+- With separate drawing and viewing Macs, a relayed browser still loses queued input completion and Command-Z does not undo its page edits. The relay undo fix in #242 is not included.
 
 ### Changed
 
