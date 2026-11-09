@@ -8,9 +8,9 @@ easl 0.3.8 lets content scroll first and pans the board only when that content c
 
 ### easld, the app, and the CLI
 
-Scroll ownership on local and remote boards, Space-drag, and the browser swipe policy need the 0.3.8 app, not a new easld or CLI. Full browser scroll handoff on remote boards needs the 0.3.8 app on both the drawing and viewing Macs, plus easld 0.3.8 when easld hosts the board.
+Scroll ownership, Space-drag, and the browser swipe policy need the 0.3.8 app, not a new easld or CLI, for content drawn on the viewing Mac. This includes locally drawn browsers on easld-hosted boards. A browser relayed from another Mac needs the 0.3.8 app on both Macs for scroll handoff, plus easld 0.3.8 when easld hosts the board.
 
-The wire adds the optional `scrollGestures` capability, scroll gesture identities, and `surface.scrollUnhandled`. The API schema stays at version 2. Older remote hosts keep page-first input without board handoff because the app sends gesture identities only after capability advertisement. Missing private WebKit selectors also leave pages first without handoff.
+The wire adds the optional `scrollGestures` capability, scroll gesture identities, and `surface.scrollUnhandled`. The API schema stays at version 2. A relayed page with an older drawing app or easld keeps page-first input without board handoff because the viewer sends gesture identities only after `scrollGestures` is advertised. Missing private WebKit selectors also leave pages first without handoff.
 
 The mixed-version release check passed all five pairings with 0.3.7 and 0.3.6, including both old/new relay directions, 40 CLI reads, and saved-board round trips. It did not exercise every CLI write method.
 
