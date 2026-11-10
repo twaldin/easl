@@ -110,8 +110,9 @@ public enum PillLayout {
     /// (each group top to bottom), then edge pills, which also keep clear of them. `bands`: the
     /// window chrome's free stretches (in the toolbar row), where an edge pill with no clear
     /// stretch of its edge goes.
-    public static func place(markers: [Marker], edges: [Edge], tiles: [Tile], focused: String? = nil, caret: CGRect? = nil, clear: CGRect, bands: [CGRect] = []) -> Placement {
-        var placed: [CGRect] = caret.map { [$0] } ?? []
+    public static func place(markers: [Marker], edges: [Edge], tiles: [Tile], focused: String? = nil, caret: CGRect? = nil, occupied: [CGRect] = [], clear: CGRect, bands: [CGRect] = []) -> Placement {
+        var placed = occupied
+        if let caret { placed.append(caret) }
         var bubbles: [String: CGRect] = [:]
         var blocked: [String: CGRect] = [:]
         // What no bubble but a terminal's own may cover: each blocked terminal inside its ring,

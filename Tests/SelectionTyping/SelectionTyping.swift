@@ -2775,6 +2775,20 @@ private enum SelectionTyping {
                     _ = try requireChrome(wide, marker: wideMarker, inline: false, typing: true)
                     show(wide.frame, zoom: zoom)
                     _ = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
+                    if scale == 1.5 {
+                        ChromeText.step(bigger: false)
+                        ChromeText.step(bigger: false)
+                        try require(ChromeText.scale == 1.15, "the real decrease API must restore two tracks")
+                        _ = try requireChrome(wide, marker: wideMarker, inline: false, typing: true)
+                        try require(descendants(wideTile).compactMap { $0 as? NSTextField }.contains {
+                            $0.stringValue == wideTile.author && !$0.isHiddenOrHasHiddenAncestor && $0.frame.width > 0
+                        }, "leaving inline placement must restore the visible author")
+                        ChromeText.step(bigger: true)
+                        ChromeText.step(bigger: true)
+                        try require(ChromeText.scale == 1.5, "the real increase API must restore the folded level")
+                        let restored = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
+                        try require(restored == widePosition, "the same marker must return to its inline slot")
+                    }
                 }
                 f.board.clearAttention(wide.id)
 

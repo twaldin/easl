@@ -2426,6 +2426,7 @@ final class CanvasView: NSScrollView {
         }
         var shownRects: [ObjectIdentifier: NSRect] = [:]
         var foldedBubbles: [ObjectID: NSRect] = [:]
+        var inlineObstacles: [NSRect] = []
         for view in views {
             guard let rect = docFrame(view.objectID) else {
                 view.isHidden = true
@@ -2446,7 +2447,12 @@ final class CanvasView: NSScrollView {
                                                                 height: AttentionMarker.bubbleHeight / zoom), bounds: space)
                 let slot = tile.placeNeedsYou(request)
                 if slot.width > 0 {
-                    foldedBubbles[view.objectID] = attention.convert(slot, from: tile)
+                    let bubble = attention.convert(slot, from: tile)
+                    foldedBubbles[view.objectID] = bubble
+                    inlineObstacles.append(bubble)
+                    if view.style == .blocked {
+                        inlineObstacles.append(shown.insetBy(dx: -AttentionMarker.inset, dy: -AttentionMarker.inset))
+                    }
                     shownRects[ObjectIdentifier(view)] = shown
                     continue
                 }
@@ -2467,7 +2473,7 @@ final class CanvasView: NSScrollView {
             terminal.caretRow.map { attention.convert($0, from: terminal.terminal) }
         }
         let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message, style: $0.style)) },
-                                         tiles: onScreen, focused: focused, caret: caret, clear: clear,
+                                         tiles: onScreen, focused: focused, caret: caret, occupied: inlineObstacles, clear: clear,
                                          bands: chromeBands().map { edges.convert($0, from: nil) })
         for view in views {
             let bubble = foldedBubbles[view.objectID] ?? (view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID])
