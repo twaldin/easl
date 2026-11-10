@@ -10,6 +10,11 @@ Each version's section is its GitHub release's notes.
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
 
+### Compatibility
+
+- Update every Mac that views an easld-hosted board before updating that easld. A viewer older than the host deletes HTML state keys by omission, so cleared keys can return on reread.
+- A 0.3.10 viewer on 0.3.9 easld can read cleared keys as `null`. The state APIs preserve nulls, and `<canvas-decisions>` treats them as unset. Custom pages must accept both `null` and `undefined`. Agent state writes still replace the whole state until easld updates.
+
 ## 0.3.9
 
 easl 0.3.9 keeps omp seats in easl tiles working after Anthropic's native compaction, with the app unchanged from 0.3.8 apart from the bundled omp extension. Hosts such as deckbox, where `scripts/offload-setup.sh` installs a separate extension copy, need the new `messages.ts` too.
