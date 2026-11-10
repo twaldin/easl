@@ -9,6 +9,16 @@ public enum TileChromeLayout {
         case twoTrack, folded
     }
 
+    public struct Pill: Equatable {
+        public var size: CGSize
+        public var bounds: CGRect
+
+        public init(size: CGSize, bounds: CGRect = .infinite) {
+            self.size = size
+            self.bounds = bounds
+        }
+    }
+
     public struct Frames {
         public var type: CGRect
         public var title: CGRect
@@ -25,8 +35,8 @@ public enum TileChromeLayout {
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
-    public static func frames(width: CGFloat, trailing: CGFloat = 0, terminal: Bool, scale: Double,
-                              state: Bool = true, typing: Bool = true, needsYouWidth: CGFloat = 0) -> Frames {
+    public static func frames(width: CGFloat, trailing: CGFloat = 0, attentionTrailing: CGFloat? = nil, terminal: Bool, scale: Double,
+                              state: Bool = true, typing: Bool = true, needsYou: Pill? = nil) -> Frames {
         let start: CGFloat = 28
         let end = max(start, width - 32 - trailing)
         func line(x: CGFloat, width: CGFloat, center: CGFloat, height: CGFloat) -> CGRect {
@@ -45,15 +55,20 @@ public enum TileChromeLayout {
                           typing: line(x: typingX, width: min(48, authorX - typingX - 6), center: 25, height: 15),
                           author: line(x: authorX, width: authorWidth, center: 25, height: 15), needsYou: .zero)
         }
-        let available = end - start
+        let inlineEnd = max(start, width - 32 - (attentionTrailing ?? trailing))
+        let available = inlineEnd - start
         let minimumTitle: CGFloat = 32
         let stateWidth = terminal && state ? 64 * CGFloat(scale) : 0
         let typingWidth = typing ? 48 * CGFloat(scale) : 0
         let labelCount = (stateWidth > 0 ? 1 : 0) + (typingWidth > 0 ? 1 : 0)
         let textWidth = minimumTitle + stateWidth + typingWidth + 6 * CGFloat(labelCount)
-        let pillWidth = needsYouWidth > 0 && needsYouWidth + 6 + textWidth <= available ? needsYouWidth : 0
-        let pillGap: CGFloat = pillWidth > 0 ? 6 : 0
-        let labelEnd = end - pillWidth - pillGap
+        let size = needsYou?.size ?? .zero
+        let candidate = CGRect(x: inlineEnd - size.width, y: (CGFloat(RenderMath.tileTitleHeight) - size.height) / 2,
+                               width: size.width, height: size.height)
+        let fits = size.width > 0 && size.height > 0 && size.width + 6 + textWidth <= available
+            && size.height <= CGFloat(RenderMath.tileTitleHeight) && (needsYou?.bounds.contains(candidate) ?? false)
+        let pill = fits ? candidate : .zero
+        let labelEnd = (fits ? inlineEnd : end) - pill.width - (fits ? 6 : 0)
         let gap = min(6, (labelEnd - start) / CGFloat(labelCount + 1))
         let labelsWidth = max(0, labelEnd - start - minimumTitle - gap * CGFloat(labelCount))
         let factor = min(1, labelsWidth / max(1, stateWidth + typingWidth))
@@ -65,7 +80,7 @@ public enum TileChromeLayout {
         return Frames(type: type, title: line(x: start, width: titleEnd - start, center: 17, height: 16),
                       state: line(x: stateX, width: stateW, center: 17, height: 15),
                       typing: line(x: typingX, width: typingW, center: 17, height: 15), author: .zero,
-                      needsYou: CGRect(x: end - pillWidth, y: 0, width: pillWidth, height: RenderMath.tileTitleHeight))
+                      needsYou: pill)
     }
 }
 public enum ChromeRole: String, CaseIterable, Sendable {

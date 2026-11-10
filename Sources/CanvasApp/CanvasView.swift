@@ -2357,7 +2357,7 @@ final class CanvasView: NSScrollView {
         }
         guard let item else {
             tiles[id]?.onChromeLayout = nil
-            _ = tiles[id]?.placeNeedsYou(width: 0)
+            _ = tiles[id]?.placeNeedsYou(nil)
             guard let marker = markers.removeValue(forKey: id) else { return }
             marker.removeFromSuperview()
             layoutPills()
@@ -2411,6 +2411,7 @@ final class CanvasView: NSScrollView {
         guard !markers.isEmpty || !edges.subviews.isEmpty else { return }
         let visible = documentVisibleRect
         let zoom = magnification
+        let clear = clearArea
         var shownMarkers: [PillLayout.Marker] = []
         var pointers: [ObjectID: AttentionEdgeView.Pointer] = [:]
         func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
@@ -2418,7 +2419,7 @@ final class CanvasView: NSScrollView {
         let views = markers.values.filter { view in
             if chromeHidden && view.style == .marker {
                 view.isHidden = true
-                _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
+                _ = tiles[view.objectID]?.placeNeedsYou(nil)
                 return false
             }
             return true
@@ -2440,17 +2441,17 @@ final class CanvasView: NSScrollView {
             let shown = attention.convert(rect, from: document)
             let header = headerOnScreen(view.objectID, zoom: zoom)
             if !chromeHidden, TileChromeLayout.mode(scale: ChromeText.scale) == .folded, let tile = tiles[view.objectID] {
-                let clearsHeader = TileFrameView.titleHeight * zoom >= AttentionMarker.bubbleHeight || tile.content.headerHeight == 0
-                let slot = tile.placeNeedsYou(width: clearsHeader ? min(view.naturalWidth, 160) / zoom : 0)
+                let space = tile.convert(clear, from: attention)
+                let request = TileChromeLayout.Pill(size: CGSize(width: min(view.naturalWidth, 160) / zoom,
+                                                                height: AttentionMarker.bubbleHeight / zoom), bounds: space)
+                let slot = tile.placeNeedsYou(request)
                 if slot.width > 0 {
-                    let row = attention.convert(slot, from: tile)
-                    foldedBubbles[view.objectID] = NSRect(x: row.minX, y: row.midY - AttentionMarker.bubbleHeight / 2,
-                                                         width: row.width, height: AttentionMarker.bubbleHeight)
+                    foldedBubbles[view.objectID] = attention.convert(slot, from: tile)
                     shownRects[ObjectIdentifier(view)] = shown
                     continue
                 }
             } else {
-                _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
+                _ = tiles[view.objectID]?.placeNeedsYou(nil)
             }
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
@@ -2465,7 +2466,6 @@ final class CanvasView: NSScrollView {
         let caret = focused.flatMap { tiles[$0]?.content as? TerminalTile }.flatMap { terminal in
             terminal.caretRow.map { attention.convert($0, from: terminal.terminal) }
         }
-        let clear = clearArea
         let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message, style: $0.style)) },
                                          tiles: onScreen, focused: focused, caret: caret, clear: clear,
                                          bands: chromeBands().map { edges.convert($0, from: nil) })

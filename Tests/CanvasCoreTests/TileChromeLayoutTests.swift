@@ -18,12 +18,12 @@ struct TileChromeLayoutTests {
     func foldedSlotsHaveOneRowAndNoAuthor(_ scale: Double) {
         for width: CGFloat in [160, 352, 800] {
             for trailing: CGFloat in [0, 84] {
-                let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: true, scale: scale, needsYouWidth: 160)
+                let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: true, scale: scale, needsYou: .init(size: CGSize(width: 160, height: 28)))
                 #expect(frames.author == .zero)
                 #expect(frames.type.maxX <= frames.title.minX)
                 #expect(frames.title.maxX <= frames.state.minX)
                 #expect(frames.state.maxX <= frames.typing.minX)
-                #expect(frames.typing.maxX <= frames.needsYou.minX)
+                #expect(frames.typing.maxX <= (frames.needsYou.width > 0 ? frames.needsYou.minX : width - 32 - trailing))
                 #expect(abs(frames.title.midY - frames.state.midY) <= 0.5)
                 #expect(abs(frames.title.midY - frames.typing.midY) <= 0.5)
                 for slot in [frames.type, frames.title, frames.state, frames.typing, frames.needsYou] {
@@ -40,27 +40,42 @@ struct TileChromeLayoutTests {
         for width: CGFloat in [280, 352, 460, 800] {
             for zoom: CGFloat in [1, 0.5] {
                 for terminal in [false, true] {
-                    let requested: CGFloat = 160 / zoom
+                    let requested = CGSize(width: 160 / zoom, height: 28 / zoom)
                     let trailing: CGFloat = width == 800 ? 84 : 0
-                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale, needsYouWidth: requested)
+                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale, needsYou: .init(size: requested))
                     #expect(frames.title.width >= 32)
-                    #expect(frames.needsYou.width == 0 || frames.needsYou.width == requested)
-                    #expect(frames.typing.maxX <= frames.needsYou.minX)
+                    #expect(frames.needsYou.size == .zero || frames.needsYou.size == requested)
+                    #expect(frames.typing.maxX <= (frames.needsYou.width > 0 ? frames.needsYou.minX : width - 32 - trailing))
                     #expect(frames.needsYou.maxX <= width - 32 - trailing)
                     if width == 280 { #expect(frames.needsYou.width == 0) }
-                    if width == 800 { #expect(frames.needsYou.width == requested) }
+                    if width == 800 { #expect(frames.needsYou.size == (zoom == 1 ? requested : .zero)) }
                 }
             }
         }
     }
 
     @Test(arguments: [1.3, 1.5])
-    func expandedControlsKeepTheTitleMinimum(_ scale: Double) {
-        let frames = TileChromeLayout.frames(width: 280, trailing: 114, terminal: false, scale: scale, needsYouWidth: 320)
+    func outsidePillReleasesPotentialControls(_ scale: Double) {
+        let frames = TileChromeLayout.frames(width: 280, attentionTrailing: 114, terminal: false, scale: scale,
+                                             needsYou: .init(size: CGSize(width: 320, height: 56)))
         #expect(frames.title.width >= 32)
         #expect(frames.title.maxX <= frames.typing.minX)
-        #expect(frames.typing.maxX <= 280 - 32 - 114)
+        #expect(frames.typing.maxX <= 280 - 32)
         #expect(frames.needsYou.width == 0)
+    }
+
+    @Test(arguments: [1.3, 1.5])
+    func inlinePillStaysInsideVisibleBounds(_ scale: Double) {
+        for clipped in [CGRect(x: 0, y: 60, width: 800, height: 600), CGRect(x: 0, y: 0, width: 500, height: 600)] {
+            let outside = TileChromeLayout.frames(width: 800, terminal: false, scale: scale,
+                                                  needsYou: .init(size: CGSize(width: 160, height: 28), bounds: clipped))
+            #expect(outside.needsYou.isEmpty)
+        }
+        let clear = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let inside = TileChromeLayout.frames(width: 800, terminal: false, scale: scale,
+                                             needsYou: .init(size: CGSize(width: 160, height: 28), bounds: clear))
+        #expect(inside.needsYou.size == CGSize(width: 160, height: 28))
+        #expect(clear.contains(inside.needsYou))
     }
 
     @Test(arguments: [1.0, 1.15, 1.3, 1.5])
@@ -120,8 +135,8 @@ struct TileChromeInkTests {
     @Test(arguments: [1.0, 1.15])
     func foldOnlyInputsDoNotMoveLowScaleText(_ scale: Double) throws {
         let reference = TileChromeLayout.frames(width: 352, trailing: 40, terminal: true, scale: scale)
-        let withAttention = TileChromeLayout.frames(width: 352, trailing: 40, terminal: true, scale: scale,
-                                                   state: false, typing: false, needsYouWidth: 160)
+        let withAttention = TileChromeLayout.frames(width: 352, trailing: 40, attentionTrailing: 114, terminal: true, scale: scale,
+                                                   state: false, typing: false, needsYou: .init(size: CGSize(width: 160, height: 28), bounds: .zero))
         for (text, role, before, after) in [
             ("AgjpQy title", ChromeRole.title, reference.title, withAttention.title),
             ("working", .state, reference.state, withAttention.state),
@@ -140,7 +155,8 @@ struct TileChromeInkTests {
             for zoom: CGFloat in [1, 0.5] {
                 for terminal in [false, true] {
                     let trailing: CGFloat = width == 800 ? 84 : 0
-                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale, needsYouWidth: 160 / zoom)
+                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale,
+                                                          needsYou: .init(size: CGSize(width: 160 / zoom, height: 28 / zoom)))
                     var labels: [(String, ChromeRole, CGRect)] = [("Tile", .title, frames.title), ("typing", .typing, frames.typing)]
                     if terminal { labels.append(("working", .working, frames.state)) }
                     var occupied: Set<Int> = []
@@ -163,7 +179,7 @@ struct TileChromeInkTests {
         for width: CGFloat in [352, 800] {
             for trailing: CGFloat in [0, 84] {
                 let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: true, scale: scale,
-                                                      needsYouWidth: width == 800 ? 160 : 0)
+                                                      needsYou: width == 800 ? .init(size: CGSize(width: 160, height: 28)) : nil)
                 var labels: [(String, ChromeRole, CGRect)] = [
                     ("AgjpQy · a long title with descenders", .title, frames.title),
                     ("working", .state, frames.state), ("typing", .typing, frames.typing),

@@ -40,12 +40,12 @@ final class TileFrameView: NSView {
             if titlePathToolTip != oldValue { updateTitleToolTip() }
         }
     }
-    private var needsYouWidth: CGFloat = 0
+    private var needsYou: TileChromeLayout.Pill?
     private(set) var needsYouFrame: NSRect = .zero
 
-    func placeNeedsYou(width: CGFloat) -> NSRect {
-        if needsYouWidth != width {
-            needsYouWidth = width
+    func placeNeedsYou(_ request: TileChromeLayout.Pill?) -> NSRect {
+        if needsYou != request {
+            needsYou = request
             layoutTitle()
         }
         return needsYouFrame
@@ -416,16 +416,26 @@ final class TileFrameView: NSView {
         // Controls keep their existing hover and content-zoom behavior on both tracks.
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
-        let zoomSpace = needsYouWidth > 0 && zoomable && TileChromeLayout.mode(scale: ChromeText.scale) == .folded
-            ? max(zoomWidth, TileZoomControl.percentWidth(scale: ChromeText.scale) + 2 * TileZoomControl.buttonWidth)
-            : zoomWidth
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
-        let machineSpace = width - 32 - 28 - TileChrome.metadataWidth(terminal: chromeObject.type == .terminal) - zoomSpace - 8
-        let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, machineSpace))
-        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomSpace, controlWidth: machineWidth) ?? .zero
-        let trailing = (zoomSpace > 0 ? zoomSpace + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
-        let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
-                                             state: chromeState.terminal != nil, typing: chromeState.typing, needsYouWidth: needsYouWidth)
+        let wantedMachine = machineControl.isHidden ? 0 : machineControl.fittedWidth
+        func machineWidth(_ zoomSpace: CGFloat) -> CGFloat {
+            let space = width - 32 - 28 - TileChrome.metadataWidth(terminal: chromeObject.type == .terminal) - zoomSpace - 8
+            return min(wantedMachine, max(0, space))
+        }
+        func trailing(_ zoomSpace: CGFloat) -> CGFloat {
+            let machine = machineWidth(zoomSpace)
+            return (zoomSpace > 0 ? zoomSpace + 4 : 0) + (machine > 0 ? machine + 4 : 0)
+        }
+        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth(zoomWidth)) ?? .zero
+        var attentionTrailing: CGFloat?
+        if needsYou != nil, zoomable, TileChromeLayout.mode(scale: ChromeText.scale) == .folded {
+            let percent = TileZoomControl.percentWidth(scale: ChromeText.scale)
+            let resting = abs(zoom - 1) < 0.001 ? 0 : percent
+            attentionTrailing = max(trailing(resting), trailing(percent + 2 * TileZoomControl.buttonWidth))
+        }
+        let frames = TileChromeLayout.frames(width: width, trailing: trailing(zoomWidth), attentionTrailing: attentionTrailing,
+                                             terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
+                                             state: chromeState.terminal != nil, typing: chromeState.typing, needsYou: needsYou)
         titleLabel.frame = frames.title
         statusLabel.frame = frames.state
         typingLabel.frame = frames.typing
