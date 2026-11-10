@@ -35,6 +35,25 @@ struct TileChromeLayoutTests {
         }
     }
 
+    @Test(arguments: [1.3, 1.5])
+    func attentionKeepsTitleAndWholePill(_ scale: Double) {
+        for width: CGFloat in [280, 352, 460, 800] {
+            for zoom: CGFloat in [1, 0.5] {
+                for terminal in [false, true] {
+                    let requested: CGFloat = 160 / zoom
+                    let trailing: CGFloat = width == 800 ? 84 : 0
+                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale, needsYouWidth: requested)
+                    #expect(frames.title.width >= 32)
+                    #expect(frames.needsYou.width == 0 || frames.needsYou.width == requested)
+                    #expect(frames.typing.maxX <= frames.needsYou.minX)
+                    #expect(frames.needsYou.maxX <= width - 32 - trailing)
+                    if width == 280 { #expect(frames.needsYou.width == 0) }
+                    if width == 800 { #expect(frames.needsYou.width == requested) }
+                }
+            }
+        }
+    }
+
     @Test(arguments: [1.0, 1.15, 1.3, 1.5])
     func fullAuthorAndPathSurviveTheFold(_ scale: Double) {
         let name = "A deliberately long creation-time author name"
@@ -103,6 +122,29 @@ struct TileChromeInkTests {
             let baseline = try ink(text, role: role, frame: before, scale: scale)
             #expect(!baseline.isEmpty)
             #expect(try ink(text, role: role, frame: after, scale: scale) == baseline)
+        }
+    }
+
+    @Test(arguments: [1.3, 1.5])
+    func foldedAttentionNeverTruncatesLiveStates(_ scale: Double) throws {
+        for width: CGFloat in [280, 352, 460, 800] {
+            for zoom: CGFloat in [1, 0.5] {
+                for terminal in [false, true] {
+                    let trailing: CGFloat = width == 800 ? 84 : 0
+                    let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale, needsYouWidth: 160 / zoom)
+                    var labels: [(String, ChromeRole, CGRect)] = [("Tile", .title, frames.title), ("typing", .typing, frames.typing)]
+                    if terminal { labels.append(("working", .working, frames.state)) }
+                    var occupied: Set<Int> = []
+                    for (text, role, frame) in labels {
+                        let full = try ink(text, role: role, frame: CGRect(x: frame.minX, y: frame.minY, width: 200, height: frame.height), scale: scale)
+                        let shown = try ink(text, role: role, frame: frame, scale: scale)
+                        #expect(!full.isEmpty)
+                        #expect(shown == full, "Attention must not truncate \(text) at \(scale), width \(width), zoom \(zoom)")
+                        #expect(occupied.isDisjoint(with: shown))
+                        occupied.formUnion(shown)
+                    }
+                }
+            }
         }
     }
 

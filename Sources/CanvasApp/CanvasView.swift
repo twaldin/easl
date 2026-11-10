@@ -2441,13 +2441,16 @@ final class CanvasView: NSScrollView {
             let header = headerOnScreen(view.objectID, zoom: zoom)
             if !chromeHidden, TileChromeLayout.mode(scale: ChromeText.scale) == .folded, let tile = tiles[view.objectID] {
                 let slot = tile.placeNeedsYou(width: min(view.naturalWidth, 160) / zoom)
-                let row = attention.convert(slot, from: tile)
-                foldedBubbles[view.objectID] = NSRect(x: row.minX, y: row.midY - AttentionMarker.bubbleHeight / 2,
-                                                     width: row.width, height: AttentionMarker.bubbleHeight)
-                shownRects[ObjectIdentifier(view)] = shown
-                continue
+                if slot.width > 0 {
+                    let row = attention.convert(slot, from: tile)
+                    foldedBubbles[view.objectID] = NSRect(x: row.minX, y: row.midY - AttentionMarker.bubbleHeight / 2,
+                                                         width: row.width, height: AttentionMarker.bubbleHeight)
+                    shownRects[ObjectIdentifier(view)] = shown
+                    continue
+                }
+            } else {
+                _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
             }
-            _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
             shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,

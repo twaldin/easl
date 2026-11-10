@@ -379,7 +379,7 @@ A composition is a module in a compositions directory. Functions whose first par
 
 ### Shared tile chrome
 
-Every tile uses a 34 pt bar with a type glyph, including custom titles. ChromeText 100% and 115% keep two tracks: title above state and a trailing, tail-truncated author. ChromeText 130% and 150% fold into one line ordered type glyph, title, state labels, and needs-you pill. The folded author moves to a hover tooltip and stays complete in accessibility. ChromeText changes text, not board geometry. `view.render`, including easld-delegated renders, always uses scale 1 and two tracks.
+Every tile uses a 34 pt bar with a type glyph, including custom titles. ChromeText 100% and 115% keep two tracks: title above state and a trailing, tail-truncated author. ChromeText 130% and 150% fold into one line ordered type glyph, title, and state labels. The needs-you pill follows inline only when its full requested screen-sized width fits beside the existing title minimum, full state slots, gaps, and controls. Otherwise that same attention marker uses the existing outside-bar `PillLayout` collision rules. The folded author moves to a hover tooltip and stays complete in accessibility. ChromeText changes text, not board geometry. `view.render`, including easld-delegated renders, always uses scale 1 and two tracks.
 
 `TileChromeState` shows typing only for the actual keyboard holder. Lifecycle and command states apply only to terminals; creating another tile never transfers those states to it. Typing and working can coexist. `NeedsYouItem.all` supplies needs-you reasons on any tile type. Its static, screen-sized pill retains readable text at 50% board zoom. Otherwise the bar is neutral. Chrome adds no animation, timer, or polling.
 
