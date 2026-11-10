@@ -2798,6 +2798,7 @@ private enum SelectionTyping {
             ChromeText.configure(scale)
             for zoom in [1.0, 0.5] {
                 show(narrow.frame, zoom: zoom)
+                try await f.ready(narrow.id)
                 try await enter(narrow, in: f)
                 guard let editor = f.window.firstResponder as? NSTextView,
                       editor.isEditable, let tile = f.canvas.tiles[narrow.id],
@@ -2835,6 +2836,7 @@ private enum SelectionTyping {
                 show(narrow.frame, zoom: zoom)
 
                 show(wide.frame, zoom: zoom)
+                try await f.ready(wide.id)
                 try await enter(wide, in: f)
                 try f.board.raiseAttention(wide.id, message: "Review this note before continuing", caller: nil)
                 let wideMarker = try marker(for: wide)
@@ -2875,6 +2877,7 @@ private enum SelectionTyping {
                 f.board.clearAttention(wide.id)
 
                 show(code.frame, zoom: zoom)
+                try await f.ready(code.id)
                 try await enter(code, in: f)
                 try f.board.raiseAttention(code.id, message: "Review the code header controls", caller: nil)
                 let codeMarker = try marker(for: code)
@@ -2883,6 +2886,7 @@ private enum SelectionTyping {
 
                 for object in [browser, changes] {
                     show(object.frame, zoom: zoom)
+                    try await f.ready(object.id)
                     try await enter(object, in: f)
                     guard let frame = f.canvas.tiles[object.id] else { throw Failure("header tile missing") }
                     if object.type == .changes {
@@ -2908,6 +2912,7 @@ private enum SelectionTyping {
                     f.board.clearAttention(object.id)
                 }
                 show(terminal.frame, zoom: zoom)
+                try await f.ready(terminal.id)
                 try await enter(terminal, in: f)
                 try await assertInput(terminal, in: f, marker: "x")
                 let terminalResponder = f.window.firstResponder
