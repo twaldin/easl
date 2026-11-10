@@ -7,7 +7,7 @@ description: Verify easl's native macOS windows, terminal and composer input, br
 
 This repo keeps project skills in `.agents/skills/`, not `.cursor/skills/`. Read [the feature map](features/README.md) before choosing a journey. Run only the journeys needed for the claim, and name every untested entry point.
 
-HTML state and native Submit changes require the [draft and Submit proof](features/html-send.md#draft-and-submit-proof), including paired performance checks.
+HTML state and native Submit changes require the [draft and Submit proof](features/html-send.md#draft-and-submit-proof), including remote record-only pending and paired performance checks.
 
 ## Hard rules
 

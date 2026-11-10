@@ -152,6 +152,28 @@ struct HtmlSendBudgetTests {
         }
     }
 
+    @Test func remoteSubmitRecordsWithoutQueueingAndStillRequiresAGesture() async throws {
+        let host = try terminal(3), source = page(host)
+        try board.update(source, props: .object(["state": .object(["draft": "saved", "notes": "retained"])]))
+        let remote = Board.measuring(try board.object(source), on: board)
+        let before = try remote.object(source)
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: remote)
+        }
+        #expect(try remote.object(source) == before)
+        let reply = try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: remote, mayStartTurn: true)
+        let state = try #require(remote.object(source).props["state"])
+        #expect(reply["id"] == state["submitted"]?["id"] && reply["terminal"] == nil && reply["message"] == nil)
+        #expect(state["submitted"]?["fields"] == .object(["draft": "saved"]) && state["draft"] == nil && state["notes"] == "retained")
+        #expect(remote.htmlMessages.isEmpty && board.htmlMessages.isEmpty)
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.setState(key: "submitted", value: .null), tile: source, board: remote)
+        }
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.send(payload: "still unsupported"), tile: source, board: remote, mayStartTurn: true)
+        }
+    }
+
     @Test func protocolOneStillQueuesAnOrdinaryMessageAndRefusesPageSend() async throws {
         let host = try terminal(1)
         try board.queueMessage(AgentMessage(text: "still queued", from: nil, label: "script", when: .now, mentions: []), to: host)

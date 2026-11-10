@@ -12,12 +12,13 @@ An agent-created local HTML tile can queue untrusted page data for its creating 
 - `html-send-framing` keeps hostile page bytes out of every custom-message argument and inside escaped, labelled explicit tool output.
 - `html-state-drafts` preserves page draft keys during agent content refreshes and reload, including per-key null deletion and whole-state clearing.
 - `html-state-submit` reads only selected saved fields, queues one local message, records `submitted`, and clears those drafts in one undo step. `state.set` cannot write `submitted`.
+- `html-state-remote` records a gesture-authorized remote Submit without queueing a message or waking a terminal. The manifest reports pending until `applied` matches.
 
 ## Draft and Submit proof
 
 Use the lane's retained kanban and driver with `cards` owned by the agent and `draft` owned by the page. Refresh cards each second. Native-drag cards across columns, then reload the page and require the draft moves to survive. Submit through a native click, read the labelled message, apply only its saved fields, and write content plus `applied`. Capture the waiting state and its clearance.
 
-Require one local wake, no draft or load/timer wake, and no second Submit using the same gesture. Undo Submit must restore the draft without recalling its message. Capture light and dark chips using the existing theme variables.
+Require one local wake, no draft or load/timer wake, and no second Submit using the same gesture. Undo Submit must restore the draft without recalling its message. Repeat on a scratch remote board; Submit must record pending without any message or wake. Capture light and dark chips using the existing theme variables.
 
 Run the same 200-card fixture for 60 seconds on v0.3.9 and the branch with refreshes, drags, and Submits. Require no new main-thread stretch at least 50 ms. Compare idle CPU and wakeups with `perf-loop.py` and `perf-board.py --objects 500`; require no increase.
 

@@ -19,8 +19,12 @@ public enum HtmlChannel {
             // A page's messages are queued on this mirror, whose queue the host's integrations
             // never drain: nothing here can hand one to a terminal on the board's host.
             if case .send = message { throw HtmlError.unavailable("canvasKit.send is unsupported on remote boards") }
-            if case .submit = message { throw HtmlError.unavailable("Submit is unsupported on remote boards") }
-            if files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
+            if files == nil {
+                switch message {
+                case .excerpt, .openCode: throw HtmlError.unavailable("host file reader is unavailable")
+                default: break
+                }
+            }
         }
         switch message {
         case .goTo:
@@ -107,7 +111,12 @@ public enum HtmlChannel {
             let size = (try? JSONEncoder().encode(state).count) ?? Int.max
             guard size <= maxStateBytes else { throw HtmlError.tooLarge(size, limit: maxStateBytes) }
             let payload: JSONValue = .object(["submit": .string(id), "fields": .object(fields)])
-            let reply = try send(payload, tile: tile, board: board, mayStartTurn: true, now: now)
+            var reply: JSONValue = .object([:])
+            if board.isRemote {
+                try HtmlMessage.checkPayload(payload)
+            } else {
+                reply = try send(payload, tile: tile, board: board, mayStartTurn: true, now: now)
+            }
             for key in keys { state[key] = .null }
             try board.update(tile, props: .object(["state": .object(state)]))
             return reply.merging(.object(["id": .string(id)]))
