@@ -1,7 +1,7 @@
 {
   "scenario": "remote-undo",
   "description": "A remote viewer's own board.undo and board.redo. Writes carry viewer and step. One step groups every write with that id. Undo reverts only fields still equal to what that step wrote: another actor's edit of a different field stays, and an edit of the same field is kept. Deleting and undoing restores the same id at a fresh revision unless its key was taken. A repeated undo or redo of a step already replayed changes nothing. A viewer's new accepted step clears that viewer's redo.",
-  "recordedOn": "scratch easld remote-edit integrated host",
+  "recordedOn": "Mac dev instance ab1265a0a80491a58688ed7d8a7b977931d6c0dc agent-gui",
   "steps": [
     {
       "step": "board.open",

@@ -1,7 +1,7 @@
 {
   "scenario": "placement",
   "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "Mac dev instance ab1265a0a80491a58688ed7d8a7b977931d6c0dc agent-gui",
   "steps": [
     {
       "step": "board.open",
@@ -391,6 +391,420 @@
           "event": "object.created"
         }
       ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "members": [],
+          "title": "Create placement"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r7",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [],
+              "title": "Create placement"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [],
+              "title": "Create placement"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:6>",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r8",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:7>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 7
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:7>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 7
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 208
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:7>"
+              ],
+              "title": "Create placement"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:6>"
+      },
+      "response": {
+        "id": "r9",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 208
+            },
+            "id": "<obj:6>",
+            "props": {
+              "members": [
+                "<obj:7>"
+              ],
+              "title": "Create placement"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          }
+        }
+      },
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "props": {
+          "members": [],
+          "title": "Upsert placement"
+        },
+        "type": "group"
+      },
+      "response": {
+        "id": "r10",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "members": [],
+              "title": "Upsert placement"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0
+            },
+            "id": "<obj:8>",
+            "props": {
+              "members": [],
+              "title": "Upsert placement"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 8
+          },
+          "event": "object.created"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:8>",
+        "key": "placed-group-member",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r11",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "placed-group-member",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "placed-group-member",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 9
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 208
+            },
+            "id": "<obj:8>",
+            "props": {
+              "members": [
+                "<obj:9>"
+              ],
+              "title": "Upsert placement"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 8
+          },
+          "event": "object.updated"
+        }
+      ],
+      "ignored": {
+        "events.*.data.frame.x": "placement inside the user's view (client viewport)",
+        "events.*.data.frame.y": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.x": "placement inside the user's view (client viewport)",
+        "response.result.object.frame.y": "placement inside the user's view (client viewport)"
+      }
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:8>"
+      },
+      "response": {
+        "id": "r12",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 208
+            },
+            "id": "<obj:8>",
+            "props": {
+              "members": [
+                "<obj:9>"
+              ],
+              "title": "Upsert placement"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 8
+          }
+        }
+      },
       "ignored": {
         "events.*.data.frame.x": "placement inside the user's view (client viewport)",
         "events.*.data.frame.y": "placement inside the user's view (client viewport)",

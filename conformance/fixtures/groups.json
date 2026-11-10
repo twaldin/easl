@@ -1,7 +1,7 @@
 {
   "scenario": "groups",
   "description": "Groups are regions fitted to their members plus padding and a title band: refit when members move, resize or go away, nested groups, a frame given for a group is ignored, translate moves members.",
-  "recordedOn": "scratch easld genui-contract, provisional; guest Mac recording required",
+  "recordedOn": "Mac dev instance ab1265a0a80491a58688ed7d8a7b977931d6c0dc agent-gui",
   "steps": [
     {
       "step": "board.open",
@@ -1377,6 +1377,12 @@
       "method": "object.create",
       "request": {
         "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 900,
+          "y": 600
+        },
         "group": "<obj:4>",
         "props": {
           "kind": "rect",
@@ -1396,8 +1402,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 752,
-              "y": 30
+              "x": 900,
+              "y": 600
             },
             "id": "<obj:8>",
             "props": {
@@ -1422,8 +1428,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 752,
-              "y": 30
+              "x": 900,
+              "y": 600
             },
             "id": "<obj:8>",
             "props": {
@@ -1445,10 +1451,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 418,
-              "w": 928,
+              "h": 678,
+              "w": 1076,
               "x": -8,
-              "y": -10
+              "y": 30
             },
             "id": "<obj:4>",
             "props": {
@@ -1479,10 +1485,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 530,
-              "w": 1008,
+              "h": 790,
+              "w": 1156,
               "x": -48,
-              "y": -82
+              "y": -42
             },
             "id": "<obj:5>",
             "props": {
@@ -1510,6 +1516,12 @@
       "method": "object.upsert",
       "request": {
         "board": "<board>",
+        "frame": {
+          "h": 100,
+          "w": 160,
+          "x": 1100,
+          "y": 600
+        },
         "group": "<obj:4>",
         "key": "group-join",
         "props": {
@@ -1530,8 +1542,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 984,
-              "y": -10
+              "x": 1100,
+              "y": 600
             },
             "id": "<obj:9>",
             "props": {
@@ -1556,8 +1568,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 984,
-              "y": -10
+              "x": 1100,
+              "y": 600
             },
             "id": "<obj:9>",
             "props": {
@@ -1579,10 +1591,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 458,
-              "w": 1160,
+              "h": 678,
+              "w": 1276,
               "x": -8,
-              "y": -50
+              "y": 30
             },
             "id": "<obj:4>",
             "props": {
@@ -1614,10 +1626,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 570,
-              "w": 1240,
+              "h": 790,
+              "w": 1356,
               "x": -48,
-              "y": -122
+              "y": -42
             },
             "id": "<obj:5>",
             "props": {
@@ -1665,8 +1677,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 984,
-              "y": -10
+              "x": 1100,
+              "y": 600
             },
             "id": "<obj:9>",
             "props": {
@@ -1695,8 +1707,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": 984,
-              "y": -10
+              "x": 1100,
+              "y": 600
             },
             "id": "<obj:9>",
             "props": {
@@ -1725,6 +1737,12 @@
           {
             "method": "object.create",
             "params": {
+              "frame": {
+                "h": 100,
+                "w": 100,
+                "x": 1800,
+                "y": 1800
+              },
               "props": {
                 "members": [],
                 "title": "Batch group"
@@ -1735,6 +1753,12 @@
           {
             "method": "object.create",
             "params": {
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 2000,
+                "y": 2000
+              },
               "group": "$0",
               "props": {
                 "kind": "rect"
@@ -1745,6 +1769,12 @@
           {
             "method": "object.upsert",
             "params": {
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 2200,
+                "y": 2000
+              },
               "group": "$0",
               "key": "batch-group-join",
               "props": {
@@ -1778,10 +1808,10 @@
                   "kind": "user"
                 },
                 "frame": {
-                  "h": 0,
-                  "w": 0,
-                  "x": -72,
-                  "y": 0
+                  "h": 100,
+                  "w": 100,
+                  "x": 1800,
+                  "y": 1800
                 },
                 "id": "<obj:10>",
                 "props": {
@@ -1803,8 +1833,8 @@
                 "frame": {
                   "h": 100,
                   "w": 160,
-                  "x": -232,
-                  "y": 0
+                  "x": 2000,
+                  "y": 2000
                 },
                 "id": "<obj:11>",
                 "props": {
@@ -1826,8 +1856,8 @@
                 "frame": {
                   "h": 100,
                   "w": 160,
-                  "x": -256,
-                  "y": 148
+                  "x": 2200,
+                  "y": 2000
                 },
                 "id": "<obj:12>",
                 "props": {
@@ -1850,8 +1880,8 @@
                 "frame": {
                   "h": 100,
                   "w": 160,
-                  "x": -256,
-                  "y": 148
+                  "x": 2200,
+                  "y": 2000
                 },
                 "id": "<obj:12>",
                 "props": {
@@ -1881,10 +1911,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 0,
-              "w": 0,
-              "x": -72,
-              "y": 0
+              "h": 100,
+              "w": 100,
+              "x": 1800,
+              "y": 1800
             },
             "id": "<obj:10>",
             "props": {
@@ -1908,8 +1938,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": -232,
-              "y": 0
+              "x": 2000,
+              "y": 2000
             },
             "id": "<obj:11>",
             "props": {
@@ -1932,8 +1962,8 @@
             "frame": {
               "h": 180,
               "w": 208,
-              "x": -256,
-              "y": -56
+              "x": 1976,
+              "y": 1944
             },
             "id": "<obj:10>",
             "props": {
@@ -1962,8 +1992,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": -256,
-              "y": 148
+              "x": 2200,
+              "y": 2000
             },
             "id": "<obj:12>",
             "props": {
@@ -1985,10 +2015,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 328,
-              "w": 232,
-              "x": -280,
-              "y": -56
+              "h": 180,
+              "w": 408,
+              "x": 1976,
+              "y": 1944
             },
             "id": "<obj:10>",
             "props": {
@@ -2018,8 +2048,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": -256,
-              "y": 148
+              "x": 2200,
+              "y": 2000
             },
             "id": "<obj:12>",
             "props": {
@@ -2068,6 +2098,12 @@
           {
             "method": "object.create",
             "params": {
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 2400,
+                "y": 2000
+              },
               "props": {
                 "kind": "rect"
               },
@@ -2105,8 +2141,8 @@
             "frame": {
               "h": 100,
               "w": 160,
-              "x": -80,
-              "y": -246
+              "x": 2400,
+              "y": 2000
             },
             "id": "<obj:13>",
             "props": {
@@ -2189,10 +2225,10 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 458,
-                "w": 1160,
+                "h": 678,
+                "w": 1276,
                 "x": -8,
-                "y": -50
+                "y": 30
               },
               "id": "<obj:4>",
               "props": {
@@ -2220,10 +2256,10 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 570,
-                "w": 1240,
+                "h": 790,
+                "w": 1356,
                 "x": -48,
-                "y": -122
+                "y": -42
               },
               "id": "<obj:5>",
               "props": {
@@ -2291,8 +2327,8 @@
               "frame": {
                 "h": 100,
                 "w": 160,
-                "x": 752,
-                "y": 30
+                "x": 900,
+                "y": 600
               },
               "id": "<obj:8>",
               "props": {
@@ -2312,8 +2348,8 @@
               "frame": {
                 "h": 100,
                 "w": 160,
-                "x": 984,
-                "y": -10
+                "x": 1100,
+                "y": 600
               },
               "id": "<obj:9>",
               "props": {
@@ -2335,10 +2371,10 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 328,
-                "w": 232,
-                "x": -280,
-                "y": -56
+                "h": 180,
+                "w": 408,
+                "x": 1976,
+                "y": 1944
               },
               "id": "<obj:10>",
               "props": {
@@ -2364,8 +2400,8 @@
               "frame": {
                 "h": 100,
                 "w": 160,
-                "x": -232,
-                "y": 0
+                "x": 2000,
+                "y": 2000
               },
               "id": "<obj:11>",
               "props": {
@@ -2384,8 +2420,8 @@
               "frame": {
                 "h": 100,
                 "w": 160,
-                "x": -256,
-                "y": 148
+                "x": 2200,
+                "y": 2000
               },
               "id": "<obj:12>",
               "props": {
@@ -2631,7 +2667,7 @@
               "kind": "created",
               "rev": "<board:20>",
               "seq": "<seq:21>",
-              "summary": "created shape rect \"Joined on create\" at (752, 30) 160×100",
+              "summary": "created shape rect \"Joined on create\" at (900, 600) 160×100",
               "type": "shape"
             },
             {
@@ -2641,7 +2677,7 @@
               "kind": "updated",
               "rev": "<board:20>",
               "seq": "<seq:22>",
-              "summary": "group (3 members): moved (-8, 30) → (-8, -10); resized 696×378 → 928×418; props members",
+              "summary": "group (3 members): resized 696×378 → 1076×678; props members",
               "type": "group"
             },
             {
@@ -2652,7 +2688,7 @@
               "kind": "updated",
               "rev": "<board:20>",
               "seq": "<seq:23>",
-              "summary": "group (2 members): moved (-48, -42) → (-48, -82); resized 776×490 → 1008×530",
+              "summary": "group (2 members): resized 776×490 → 1156×790",
               "type": "group"
             },
             {
@@ -2662,7 +2698,7 @@
               "kind": "created",
               "rev": "<board:21>",
               "seq": "<seq:24>",
-              "summary": "created shape rect at (984, -10) 160×100",
+              "summary": "created shape rect at (1100, 600) 160×100",
               "type": "shape"
             },
             {
@@ -2672,7 +2708,7 @@
               "kind": "updated",
               "rev": "<board:21>",
               "seq": "<seq:25>",
-              "summary": "group (4 members): moved (-8, -10) → (-8, -50); resized 928×418 → 1160×458; props members",
+              "summary": "group (4 members): resized 1076×678 → 1276×678; props members",
               "type": "group"
             },
             {
@@ -2683,7 +2719,7 @@
               "kind": "updated",
               "rev": "<board:21>",
               "seq": "<seq:26>",
-              "summary": "group (2 members): moved (-48, -82) → (-48, -122); resized 1008×530 → 1240×570",
+              "summary": "group (2 members): resized 1156×790 → 1356×790",
               "type": "group"
             },
             {
@@ -2703,7 +2739,7 @@
               "kind": "created",
               "rev": "<board:1>",
               "seq": "<seq:28>",
-              "summary": "created group (0 members) at (-72, 0) 0×0",
+              "summary": "created group (0 members) at (1800, 1800) 100×100",
               "type": "group"
             },
             {
@@ -2713,7 +2749,7 @@
               "kind": "created",
               "rev": "<board:1>",
               "seq": "<seq:29>",
-              "summary": "created shape rect at (-232, 0) 160×100",
+              "summary": "created shape rect at (2000, 2000) 160×100",
               "type": "shape"
             },
             {
@@ -2723,7 +2759,7 @@
               "kind": "updated",
               "rev": "<board:1>",
               "seq": "<seq:30>",
-              "summary": "group (1 members): moved (-72, 0) → (-256, -56); resized 0×0 → 208×180; props members",
+              "summary": "group (1 members): moved (1800, 1800) → (1976, 1944); resized 100×100 → 208×180; props members",
               "type": "group"
             },
             {
@@ -2733,7 +2769,7 @@
               "kind": "created",
               "rev": "<board:1>",
               "seq": "<seq:31>",
-              "summary": "created shape ellipse at (-256, 148) 160×100",
+              "summary": "created shape ellipse at (2200, 2000) 160×100",
               "type": "shape"
             },
             {
@@ -2743,7 +2779,7 @@
               "kind": "updated",
               "rev": "<board:1>",
               "seq": "<seq:32>",
-              "summary": "group (2 members): moved (-256, -56) → (-280, -56); resized 208×180 → 232×328; props members",
+              "summary": "group (2 members): resized 208×180 → 408×180; props members",
               "type": "group"
             },
             {
@@ -2763,7 +2799,7 @@
               "kind": "created",
               "rev": "<board:2>",
               "seq": "<seq:34>",
-              "summary": "created shape rect at (-80, -246) 160×100",
+              "summary": "created shape rect at (2400, 2000) 160×100",
               "type": "shape"
             },
             {

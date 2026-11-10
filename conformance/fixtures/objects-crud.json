@@ -1,7 +1,7 @@
 {
   "scenario": "objects-crud",
   "description": "Create, read, update and delete objects of the types that need no live surface; props merge, null deletes a prop, revisions, conflicts, warnings, and the errors of each.",
-  "recordedOn": "scratch easld genui-contract, provisional; guest Mac recording required",
+  "recordedOn": "Mac dev instance ab1265a0a80491a58688ed7d8a7b977931d6c0dc agent-gui",
   "steps": [
     {
       "step": "board.open",
@@ -1016,6 +1016,12 @@
       "method": "object.upsert",
       "request": {
         "board": "<board>",
+        "frame": {
+          "h": 300,
+          "w": 400,
+          "x": 1600,
+          "y": 900
+        },
         "key": "kanban",
         "props": {
           "html": "<p>kanban</p>",
@@ -1040,10 +1046,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 506,
-              "w": 640,
-              "x": -320,
-              "y": -530
+              "h": 300,
+              "w": 400,
+              "x": 1600,
+              "y": 900
             },
             "id": "<obj:6>",
             "props": {
@@ -1073,10 +1079,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 506,
-              "w": 640,
-              "x": -320,
-              "y": -530
+              "h": 300,
+              "w": 400,
+              "x": 1600,
+              "y": 900
             },
             "id": "<obj:6>",
             "props": {
@@ -1129,10 +1135,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 506,
-              "w": 640,
-              "x": -320,
-              "y": -530
+              "h": 300,
+              "w": 400,
+              "x": 1600,
+              "y": 900
             },
             "id": "<obj:6>",
             "props": {
@@ -1172,10 +1178,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 506,
-              "w": 640,
-              "x": -320,
-              "y": -530
+              "h": 300,
+              "w": 400,
+              "x": 1600,
+              "y": 900
             },
             "id": "<obj:6>",
             "props": {
@@ -1224,10 +1230,10 @@
               "kind": "user"
             },
             "frame": {
-              "h": 506,
-              "w": 640,
-              "x": -320,
-              "y": -530
+              "h": 300,
+              "w": 400,
+              "x": 1600,
+              "y": 900
             },
             "id": "<obj:6>",
             "props": {
@@ -1370,10 +1376,10 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 506,
-                "w": 640,
-                "x": -320,
-                "y": -530
+                "h": 300,
+                "w": 400,
+                "x": 1600,
+                "y": 900
               },
               "id": "<obj:6>",
               "props": {

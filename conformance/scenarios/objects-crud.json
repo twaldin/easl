@@ -250,6 +250,7 @@
     {
       "call": "object.upsert",
       "params": {"board": "{{board}}", "key": "kanban", "type": "html",
+        "frame": {"x": 1600, "y": 900, "w": 400, "h": 300},
         "props": {"html": "<p>kanban</p>", "state": {"cards": "old", "draft": {"move": "Doing"}, "removed": true}}},
       "save": "kanban"
     },
