@@ -123,7 +123,7 @@ private enum HtmlSend {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
         try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
         let object = board.create(type: .html, props: .object(["html": .string(pageHTML(marker: "GEN1", autoSend: true)),
-                                                             "state": .object(["draft": "saved", "notes": "retained"])]), frame: frame, caller: terminal.id)
+                                                             "state": .object(["draft": .string("saved"), "notes": .string("retained")])]), frame: frame, caller: terminal.id)
         let tile = try await htmlTile(canvas, object.id)
         let web = try await page(in: tile)
         try await loaded(web)
@@ -225,9 +225,9 @@ private enum HtmlSend {
                     "one native click must queue one Submit")
         let state = board.objects[object.id]?.props["state"]
         let payload = try JSONDecoder().decode(JSONValue.self, from: Data(queued.text.utf8))
-        try require(payload == .object(["submit": .string(id), "fields": .object(["draft": "saved"])]) && queued.mayStartTurn == true,
+        try require(payload == .object(["submit": .string(id), "fields": .object(["draft": .string("saved")])]) && queued.mayStartTurn == true,
                     "Submit must queue exactly the saved selected fields")
-        try require(state?["draft"] == nil && state?["notes"] == "retained" && state?["submitted"]?["id"]?.string == id,
+        try require(state?["draft"] == nil && state?["notes"] == .string("retained") && state?["submitted"]?["id"]?.string == id,
                     "Submit must record the instruction and clear only its draft")
         let repeated = try await submitRefused(web)
         try require(repeated && board.htmlMessages[terminal.id]?.count == count + 1,

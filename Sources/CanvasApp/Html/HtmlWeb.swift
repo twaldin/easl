@@ -422,7 +422,8 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
         if let type = body["type"] as? String, type == "send" || type == "state.submit" {
             do {
                 if type == "state.submit" {
-                    mayStartTurn = try tile.beginPageSubmit(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+                    try tile.beginPageSubmit(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+                    mayStartTurn = true
                 } else {
                     mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
                 }

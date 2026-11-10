@@ -393,11 +393,10 @@ final class HtmlTile: NSView, TileContent {
         return try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false)
     }
 
-    func beginPageSubmit(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) -> Bool {
+    func beginPageSubmit(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
         guard try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false) else {
             throw .unavailable("Submit requires a fresh native click or key")
         }
-        return true
     }
 
     func beginPageGoTo(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
