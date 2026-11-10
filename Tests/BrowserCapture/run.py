@@ -33,6 +33,12 @@ def main():
         parser.error('--max-main-ms must be finite and positive.')
     if not 0 <= args.max_channel_error <= 255:
         parser.error('--max-channel-error must be 0..255.')
+    comparison_fields = ('backingScale', 'colorSpace', 'viewport', 'scale', 'format')
+    if args.compare and not args.compile_only:
+        baseline = json.loads((args.compare / 'results.json').read_text())
+        for key in comparison_fields:
+            if baseline.get(key) is None:
+                parser.error(f'Comparison requires a known {key} in the baseline.')
     root = pathlib.Path(__file__).resolve().parents[2]
     build = args.bin_path.resolve()
     link = build / 'Easl.product' / 'Objects.LinkFileList'
@@ -81,11 +87,12 @@ def main():
                         args.format, str(0 if args.ci_timing_report_only else args.max_main_ms)], cwd=root, env=environment,
                        check=True, timeout=90 + args.frames * 35)
     if args.compare:
-        baseline = json.loads((args.compare / 'results.json').read_text())
         current = json.loads((output / 'results.json').read_text())
-        for key in ('backingScale', 'colorSpace', 'viewport', 'scale', 'format'):
-            if baseline.get(key) is None or baseline.get(key) != current.get(key):
-                parser.error(f'Comparison requires identical known {key} values.')
+        for key in comparison_fields:
+            if current.get(key) is None:
+                parser.error(f'Comparison requires a known {key} in the current run.')
+            if baseline[key] != current[key]:
+                parser.error(f'Comparison requires identical {key} values.')
         if [(f['phase'], f['width'], f['height']) for f in baseline['frames']] != [(f['phase'], f['width'], f['height']) for f in current['frames']]:
             parser.error('Comparison requires identical phase count and decoded dimensions.')
         comparisons = []

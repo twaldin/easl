@@ -134,10 +134,14 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 Use a queued macOS GUI guest for execution. Build the base (`80d4d0fc05b8f291163a907080d4a9fc2b9c1ee5`) and candidate separately with the same toolchain. Invoke the candidate checkout's runner for both builds, passing each build's bin path. The fixture uses existing production APIs and needs no base patch.
 
 ```sh
-	swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-	BIN="$(swift build --build-system native -c release --show-bin-path)"
+	BASE=/absolute/path/to/base-checkout
+	CANDIDATE="$PWD"
+	swift build --package-path "$BASE" --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	swift build --package-path "$CANDIDATE" --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	BASE_BIN="$(swift build --package-path "$BASE" --build-system native -c release --show-bin-path)"
+	FIX_BIN="$(swift build --package-path "$CANDIDATE" --build-system native -c release --show-bin-path)"
 	# Headless macOS: link only. Do not launch AppKit or WebKit.
-	python3 Tests/BrowserCapture/run.py --bin-path "$BIN" --output /absolute/scratch/capture-compile --compile-only
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-compile --compile-only
 	# CANDIDATE contains this runner; base must finish all phases, then fail the 15 ms gate.
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix --compare /absolute/scratch/capture-base
