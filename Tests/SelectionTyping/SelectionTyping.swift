@@ -137,6 +137,7 @@ private enum SelectionTyping {
         }
         cases.append(Scenario(name: "chrome-typing-rekey-focus", baseline: "keyboard chrome ownership regression"))
         cases.append(Scenario(name: "chrome-folded-attention-overflow", baseline: "native folded chrome overflow regression"))
+        cases.append(Scenario(name: "chrome-two-track-priority", baseline: "order532 native state-author pressure"))
         return cases
     }
 
@@ -2592,6 +2593,85 @@ private enum SelectionTyping {
         try requireTypingOwner(nil)
     }
 
+    private static func exerciseTwoTrackPriority(_ f: Fixture) async throws {
+        let originalScale = ChromeText.scale
+        defer { ChromeText.configure(originalScale) }
+        let creator = try await f.create(.terminal, x: 30, y: 430, width: 450, height: 240)
+        let author = "A complete stored author name beyond the trailing slot"
+        _ = try f.board.update(creator.id, props: .object(["name": .string(author)]))
+        let narrow = f.board.create(type: .note, props: .object(["markdown": "Narrow typing proof"]),
+                                    frame: Frame(x: 30, y: 100, w: 160, h: 250), caller: creator.id)
+        let wide = f.board.create(type: .note, props: .object(["markdown": "Wide unchanged proof"]),
+                                  frame: Frame(x: 350, y: 100, w: 600, h: 250), caller: creator.id)
+        try await f.ready(narrow.id)
+        try await f.ready(wide.id)
+        func pixels(_ label: NSTextField) throws -> Data {
+            guard let bitmap = label.bitmapImageRepForCachingDisplay(in: label.bounds),
+                  let bytes = bitmap.bitmapData else { throw Failure("native label bitmap unavailable") }
+            bytes.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+            label.cacheDisplay(in: label.bounds, to: bitmap)
+            return Data(bytes: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        }
+        func requireInk(_ label: NSTextField) throws {
+            let shown = try pixels(label)
+            let color = label.textColor
+            label.textColor = .clear
+            defer { label.textColor = color }
+            let blank = try pixels(label)
+            try require(shown != blank, "the real typing field must paint visible native ink")
+        }
+        for scale in [1.0, 1.15] {
+            ChromeText.configure(scale)
+            for object in [narrow, wide] {
+                f.canvas.show(Viewport(rect: Frame(x: object.frame.x - 60, y: object.frame.y - 160, w: 1200, h: 820), zoom: 1))
+                try require(f.window.makeFirstResponder(f.canvas.document), "the board must release typing before the control capture")
+                f.canvas.setSelection([object.id])
+                guard let tile = f.canvas.tiles[object.id] else { throw Failure("two-track native tile missing") }
+                tile.syncTitle()
+                guard let title = descendants(tile).compactMap({ $0 as? NSTextField }).first(where: {
+                    $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+                }), let bar = title.superview else { throw Failure("native two-track title missing") }
+                let labels = descendants(bar).compactMap { $0 as? NSTextField }
+                guard let typing = labels.first(where: { $0.stringValue == "typing" }),
+                      let authorLabel = labels.first(where: { $0.stringValue == author }) else {
+                    throw Failure("native typing and stored author fields missing")
+                }
+                let frames = labels.map(\.frame)
+                let fonts = labels.map(\.font)
+                let titleFrame = title.frame
+                let authorBefore = authorLabel.frame
+                let titlePixels = try pixels(title)
+                let authorPixels = try pixels(authorLabel)
+                try await enter(object, in: f)
+                try require(f.canvas.focusedTile == object.id && tile.chromeState.typing && tile.chromeState.terminal == nil,
+                            "a note must show only its real keyboard-owned typing state")
+                try require(!typing.isHiddenOrHasHiddenAncestor && typing.frame.width > 0 && bar.bounds.contains(typing.frame),
+                            "the minimum selected note must retain a visible typing slot")
+                try require(!typing.frame.intersects(authorLabel.frame), "typing must not overlap its trailing author")
+                try require(title.frame == titleFrame && bar.bounds.height == 34 && labels.map(\.font) == fonts,
+                            "the correction must leave the title track, fonts and bar height unchanged")
+                try require(tile.author == author && tile.accessibilityLabel()?.contains(author) == true,
+                            "the complete stored author must remain accessible under state pressure")
+                try requireInk(typing)
+                if object.id == narrow.id {
+                    try require(authorLabel.frame.width < authorBefore.width, "only the author must yield room to clipped typing")
+                    if authorLabel.frame.width == 0 {
+                        try require(title.toolTip?.contains(author) == true && bar.toolTip?.contains(author) == true,
+                                    "an exhausted author slot must retain full-name hover access")
+                    } else {
+                        try require(authorLabel.toolTip?.contains(author) == true, "a truncated author must retain its full-name tooltip")
+                    }
+                } else {
+                    let titleAfter = try pixels(title)
+                    let authorAfter = try pixels(authorLabel)
+                    try require(labels.map(\.frame) == frames && titleAfter == titlePixels && authorAfter == authorPixels,
+                                "already-fitting wide chrome must retain its exact native geometry and drawn title/author")
+                }
+                try require(f.board.objects[object.id]?.frame == object.frame, "typing pressure must not change stored geometry")
+            }
+        }
+    }
+
     private static func exerciseFoldedAttentionOverflow(_ f: Fixture) async throws {
         let originalScale = ChromeText.scale
         defer { ChromeText.configure(originalScale) }
@@ -2903,6 +2983,8 @@ private enum SelectionTyping {
             try await exerciseChromeTypingRekeyFocus(f)
         } else if name == "chrome-folded-attention-overflow" {
             try await exerciseFoldedAttentionOverflow(f)
+        } else if name == "chrome-two-track-priority" {
+            try await exerciseTwoTrackPriority(f)
         } else if name.hasPrefix("damage-") {
             try await exerciseTerminalDamage(name, f)
         } else if name.hasPrefix("shift-body-") {

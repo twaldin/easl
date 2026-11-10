@@ -30,13 +30,14 @@ public enum TileChromeLayout {
 
     public static func mode(scale: Double) -> Mode { scale >= 1.3 ? .folded : .twoTrack }
 
-    public static func titleToolTip(path: String?, author: String?, scale: Double) -> String? {
-        let parts = [path, mode(scale: scale) == .folded ? author.map { "Created by \($0)" } : nil].compactMap { $0 }
+    public static func titleToolTip(path: String?, author: String?, scale: Double, authorHidden: Bool = false) -> String? {
+        let parts = [path, mode(scale: scale) == .folded || authorHidden ? author.map { "Created by \($0)" } : nil].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     public static func frames(width: CGFloat, trailing: CGFloat = 0, attentionTrailing: CGFloat? = nil, terminal: Bool, scale: Double,
-                              state: Bool = true, typing: Bool = true, needsYou: Pill? = nil) -> Frames {
+                              state: Bool = true, typing: Bool = true, stateMinimum: CGFloat = 64, typingMinimum: CGFloat = 48,
+                              needsYou: Pill? = nil) -> Frames {
         let start: CGFloat = 28
         let end = max(start, width - 32 - trailing)
         func line(x: CGFloat, width: CGFloat, center: CGFloat, height: CGFloat) -> CGRect {
@@ -45,14 +46,26 @@ public enum TileChromeLayout {
         }
         let type = CGRect(x: 8, y: (CGFloat(RenderMath.tileTitleHeight) - 14) / 2, width: 14, height: 14)
         if mode(scale: scale) == .twoTrack {
-            let authorWidth = min(88, end - start)
-            let authorX = end - authorWidth
-            let stateWidth = terminal ? min(64, max(0, authorX - start - 6)) : 0
-            let typingX = start + (terminal ? stateWidth + 4 : 0)
+            var authorWidth = min(88, end - start)
+            var authorX = end - authorWidth
+            var stateWidth = terminal ? min(64, max(0, authorX - start - 6)) : 0
+            var typingX = start + (terminal ? stateWidth + 4 : 0)
+            var typingWidth = max(0, min(48, authorX - typingX - 6))
+            let stateNeed = terminal && state ? stateMinimum : 0
+            let typingNeed = typing ? typingMinimum : 0
+            if stateWidth < stateNeed || typingWidth < typingNeed {
+                let gap: CGFloat = stateNeed > 0 && typingNeed > 0 ? 4 : 0
+                let factor = min(1, max(0, end - start - gap) / max(1, stateNeed + typingNeed))
+                stateWidth = stateNeed * factor
+                typingWidth = typingNeed * factor
+                typingX = start + stateWidth + gap
+                authorX = min(end, max(end - 88, typingX + typingWidth + 6))
+                authorWidth = end - authorX
+            }
             return Frames(type: type,
                           title: line(x: start, width: end - start, center: 9, height: 16),
                           state: line(x: start, width: stateWidth, center: 25, height: 15),
-                          typing: line(x: typingX, width: min(48, authorX - typingX - 6), center: 25, height: 15),
+                          typing: line(x: typingX, width: typingWidth, center: 25, height: 15),
                           author: line(x: authorX, width: authorWidth, center: 25, height: 15), needsYou: .zero)
         }
         let inlineEnd = max(start, width - 32 - (attentionTrailing ?? trailing))

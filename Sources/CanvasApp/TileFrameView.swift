@@ -21,6 +21,8 @@ final class TileFrameView: NSView {
     private let authorLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let typingLabel = NSTextField(labelWithString: "typing")
+    private var stateMinimum: CGFloat = 0
+    private var typingMinimum: CGFloat = 0
     private let typeGlyph = NSImageView()
     private let closeButton = TileCloseButton()
     private let card = CardImageView()
@@ -128,6 +130,7 @@ final class TileFrameView: NSView {
         statusLabel.isHidden = true
         titleBar.addSubview(statusLabel)
         typingLabel.font = TileChrome.font(.typing)
+        typingMinimum = typingLabel.intrinsicContentSize.width
         typingLabel.textColor = TileChrome.color(.typing)
         typingLabel.isHidden = true
         typingLabel.setAccessibilityElement(false)
@@ -349,18 +352,19 @@ final class TileFrameView: NSView {
         guard state.terminal != chromeState.terminal else { return }
         chromeState = state
         statusLabel.stringValue = state.terminal?.text ?? ""
+        stateMinimum = statusLabel.intrinsicContentSize.width
         statusLabel.textColor = TileChrome.color(state.terminal?.role ?? .state)
         statusLabel.toolTip = state.terminal?.detail
         statusLabel.setAccessibilityLabel(state.terminal.map { [$0.text, $0.detail].compactMap { $0 }.joined(separator: ": ") })
         statusLabel.isHidden = state.terminal == nil
-        if TileChromeLayout.mode(scale: ChromeText.scale) == .folded { layoutTitle() }
+        layoutTitle()
     }
 
     func setTyping(_ typing: Bool) {
         guard chromeState.typing != typing else { return }
         chromeState.typing = typing
         typingLabel.isHidden = !typing
-        if TileChromeLayout.mode(scale: ChromeText.scale) == .folded { layoutTitle() }
+        layoutTitle()
     }
 
     func setDrawingMachines(_ machines: [DrawingMachine]?, canSwitch: Bool) {
@@ -387,6 +391,8 @@ final class TileFrameView: NSView {
         authorLabel.font = TileChrome.font(.author)
         statusLabel.font = TileChrome.font(.state)
         typingLabel.font = TileChrome.font(.typing)
+        stateMinimum = statusLabel.intrinsicContentSize.width
+        typingMinimum = typingLabel.intrinsicContentSize.width
         closeButton.font = ChromeText.font(closeBaseFont)
         zoomControl.applyScale()
         machineControl.applyScale()
@@ -408,8 +414,9 @@ final class TileFrameView: NSView {
     }
 
     private func updateTitleToolTip() {
-        titleLabel.toolTip = TileChromeLayout.titleToolTip(path: titlePathToolTip, author: author, scale: ChromeText.scale)
-        titleBar.toolTip = TileChromeLayout.mode(scale: ChromeText.scale) == .folded ? titleLabel.toolTip : nil
+        let authorHidden = authorLabel.frame.width == 0
+        titleLabel.toolTip = TileChromeLayout.titleToolTip(path: titlePathToolTip, author: author, scale: ChromeText.scale, authorHidden: authorHidden)
+        titleBar.toolTip = TileChromeLayout.mode(scale: ChromeText.scale) == .folded || authorHidden ? titleLabel.toolTip : nil
     }
 
     private func layoutTitle() {
@@ -435,12 +442,15 @@ final class TileFrameView: NSView {
         }
         let frames = TileChromeLayout.frames(width: width, trailing: trailing(zoomWidth), attentionTrailing: attentionTrailing,
                                              terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
-                                             state: chromeState.terminal != nil, typing: chromeState.typing, needsYou: needsYou)
+                                             state: chromeState.terminal != nil, typing: chromeState.typing,
+                                             stateMinimum: stateMinimum, typingMinimum: typingMinimum, needsYou: needsYou)
         titleLabel.frame = frames.title
         statusLabel.frame = frames.state
         typingLabel.frame = frames.typing
+        let authorWasHidden = authorLabel.frame.width == 0
         authorLabel.frame = frames.author
         authorLabel.isHidden = author == nil || TileChromeLayout.mode(scale: ChromeText.scale) == .folded
+        if authorWasHidden != (authorLabel.frame.width == 0) { updateTitleToolTip() }
         if needsYouFrame != frames.needsYou {
             needsYouFrame = frames.needsYou
             onChromeLayout?()

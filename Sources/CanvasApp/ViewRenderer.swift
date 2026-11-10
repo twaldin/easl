@@ -249,7 +249,12 @@ extension CanvasView {
         let state = tiles[object.id]?.chromeState ?? TileChromeState(object: object, focused: nil)
         // Renders, including easld-delegated renders, always use 100% two-track chrome.
         let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom), scale: 1)
-        let frames = TileChromeLayout.frames(width: rect.width, trailing: zoomLabel.map { $0.width + 4 } ?? 0, terminal: object.type == .terminal, scale: 1)
+        let stateMinimum = state.terminal.map {
+            ($0.text as NSString).size(withAttributes: [.font: TileChrome.font($0.role, scale: 1)]).width
+        } ?? 0
+        let frames = TileChromeLayout.frames(width: rect.width, trailing: zoomLabel.map { $0.width + 4 } ?? 0,
+                                             terminal: object.type == .terminal, scale: 1,
+                                             state: state.terminal != nil, typing: false, stateMinimum: stateMinimum)
         let symbol = NSImage(systemSymbolName: TileChromeState.typeSymbol(object.type), accessibilityDescription: object.type.rawValue)?
             .withSymbolConfiguration(.init(paletteColors: [TileChrome.color(.type)]))
         if let symbol {

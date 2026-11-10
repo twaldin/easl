@@ -13,6 +13,21 @@ struct TileChromeLayoutTests {
         #expect(TileChromeLayout.mode(scale: 1.5) == .folded)
     }
 
+    @Test(arguments: [1.0, 1.15])
+    func minimumNoteKeepsItsRealTypingSlot(_ scale: Double) {
+        let frames = TileChromeLayout.frames(width: 160, trailing: 80 * scale, terminal: false, scale: scale,
+                                             state: false, typing: true)
+        #expect(frames.state.width == 0)
+        #expect(frames.typing.width > 0)
+        #expect(frames.typing.maxX <= frames.author.minX)
+        #expect(frames.author.width == 0)
+        let name = "Complete creation-time author"
+        let path = "/board/note.md"
+        let tip = TileChromeLayout.titleToolTip(path: path, author: name, scale: scale, authorHidden: true)
+        #expect(tip?.contains(name) == true)
+        #expect(tip?.contains(path) == true)
+    }
+
 
     @Test(arguments: [1.3, 1.5])
     func foldedSlotsHaveOneRowAndNoAuthor(_ scale: Double) {
