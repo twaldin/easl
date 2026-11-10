@@ -26,12 +26,13 @@ public enum TileChromeLayout {
         public var typing: CGRect
         public var author: CGRect
         public var needsYou: CGRect
+        public var authorInTitle: Bool
     }
 
     public static func mode(scale: Double) -> Mode { scale >= 1.3 ? .folded : .twoTrack }
 
-    public static func titleToolTip(path: String?, author: String?, scale: Double, authorHidden: Bool = false) -> String? {
-        let parts = [path, mode(scale: scale) == .folded || authorHidden ? author.map { "Created by \($0)" } : nil].compactMap { $0 }
+    public static func titleToolTip(path: String?, author: String?, scale: Double, authorInTitle: Bool = false) -> String? {
+        let parts = [path, mode(scale: scale) == .folded || authorInTitle ? author.map { "Created by \($0)" } : nil].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
@@ -46,7 +47,8 @@ public enum TileChromeLayout {
         }
         let type = CGRect(x: 8, y: (CGFloat(RenderMath.tileTitleHeight) - 14) / 2, width: 14, height: 14)
         if mode(scale: scale) == .twoTrack {
-            var authorWidth = min(88, end - start)
+            let reservedAuthorWidth = min(88, end - start)
+            var authorWidth = reservedAuthorWidth
             var authorX = end - authorWidth
             var stateWidth = terminal ? min(64, max(0, authorX - start - 6)) : 0
             var typingX = start + (terminal ? stateWidth + 4 : 0)
@@ -66,7 +68,8 @@ public enum TileChromeLayout {
                           title: line(x: start, width: end - start, center: 9, height: 16),
                           state: line(x: start, width: stateWidth, center: 25, height: 15),
                           typing: line(x: typingX, width: typingWidth, center: 25, height: 15),
-                          author: line(x: authorX, width: authorWidth, center: 25, height: 15), needsYou: .zero)
+                          author: line(x: authorX, width: authorWidth, center: 25, height: 15), needsYou: .zero,
+                          authorInTitle: authorWidth == 0 || authorWidth < reservedAuthorWidth)
         }
         let inlineEnd = max(start, width - 32 - (attentionTrailing ?? trailing))
         let available = inlineEnd - start
@@ -93,7 +96,7 @@ public enum TileChromeLayout {
         return Frames(type: type, title: line(x: start, width: titleEnd - start, center: 17, height: 16),
                       state: line(x: stateX, width: stateW, center: 17, height: 15),
                       typing: line(x: typingX, width: typingW, center: 17, height: 15), author: .zero,
-                      needsYou: pill)
+                      needsYou: pill, authorInTitle: true)
     }
 }
 public enum ChromeRole: String, CaseIterable, Sendable {

@@ -2601,9 +2601,12 @@ private enum SelectionTyping {
         _ = try f.board.update(creator.id, props: .object(["name": .string(author)]))
         let narrow = f.board.create(type: .note, props: .object(["markdown": "Narrow typing proof"]),
                                     frame: Frame(x: 30, y: 100, w: 160, h: 250), caller: creator.id)
+        let inBand = f.board.create(type: .note, props: .object(["markdown": "Partial author hover proof"]),
+                                    frame: Frame(x: 30, y: 400, w: 190, h: 250), caller: creator.id)
         let wide = f.board.create(type: .note, props: .object(["markdown": "Wide unchanged proof"]),
                                   frame: Frame(x: 350, y: 100, w: 600, h: 250), caller: creator.id)
         try await f.ready(narrow.id)
+        try await f.ready(inBand.id)
         try await f.ready(wide.id)
         func pixels(_ label: NSTextField) throws -> Data {
             guard let bitmap = label.bitmapImageRepForCachingDisplay(in: label.bounds),
@@ -2622,7 +2625,7 @@ private enum SelectionTyping {
         }
         for scale in [1.0, 1.15] {
             ChromeText.configure(scale)
-            for object in [narrow, wide] {
+            for object in [narrow, inBand, wide] {
                 f.canvas.show(Viewport(rect: Frame(x: object.frame.x - 60, y: object.frame.y - 160, w: 1200, h: 820), zoom: 1))
                 try require(f.window.makeFirstResponder(f.canvas.document), "the board must release typing before the control capture")
                 f.canvas.setSelection([object.id])
@@ -2653,13 +2656,12 @@ private enum SelectionTyping {
                 try require(tile.author == author && tile.accessibilityLabel()?.contains(author) == true,
                             "the complete stored author must remain accessible under state pressure")
                 try requireInk(typing)
-                if object.id == narrow.id {
+                if object.id != wide.id {
                     try require(authorLabel.frame.width < authorBefore.width, "only the author must yield room to clipped typing")
-                    if authorLabel.frame.width == 0 {
-                        try require(title.toolTip?.contains(author) == true && bar.toolTip?.contains(author) == true,
-                                    "an exhausted author slot must retain full-name hover access")
-                    } else {
-                        try require(authorLabel.toolTip?.contains(author) == true, "a truncated author must retain its full-name tooltip")
+                    try require(title.toolTip?.contains(author) == true && bar.toolTip?.contains(author) == true,
+                                "reclaimed author space must retain full-name title and bar hover access")
+                    if object.id == inBand.id && scale == 1 {
+                        try require(authorLabel.frame.width > 0, "the in-band case must exercise a tiny positive author slot")
                     }
                 } else {
                     let titleAfter = try pixels(title)

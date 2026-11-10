@@ -23,6 +23,7 @@ final class TileFrameView: NSView {
     private let typingLabel = NSTextField(labelWithString: "typing")
     private var stateMinimum: CGFloat = 0
     private var typingMinimum: CGFloat = 0
+    private var authorInTitle = false
     private let typeGlyph = NSImageView()
     private let closeButton = TileCloseButton()
     private let card = CardImageView()
@@ -414,9 +415,8 @@ final class TileFrameView: NSView {
     }
 
     private func updateTitleToolTip() {
-        let authorHidden = authorLabel.frame.width == 0
-        titleLabel.toolTip = TileChromeLayout.titleToolTip(path: titlePathToolTip, author: author, scale: ChromeText.scale, authorHidden: authorHidden)
-        titleBar.toolTip = TileChromeLayout.mode(scale: ChromeText.scale) == .folded || authorHidden ? titleLabel.toolTip : nil
+        titleLabel.toolTip = TileChromeLayout.titleToolTip(path: titlePathToolTip, author: author, scale: ChromeText.scale, authorInTitle: authorInTitle)
+        titleBar.toolTip = authorInTitle ? titleLabel.toolTip : nil
     }
 
     private func layoutTitle() {
@@ -447,10 +447,12 @@ final class TileFrameView: NSView {
         titleLabel.frame = frames.title
         statusLabel.frame = frames.state
         typingLabel.frame = frames.typing
-        let authorWasHidden = authorLabel.frame.width == 0
         authorLabel.frame = frames.author
         authorLabel.isHidden = author == nil || TileChromeLayout.mode(scale: ChromeText.scale) == .folded
-        if authorWasHidden != (authorLabel.frame.width == 0) { updateTitleToolTip() }
+        if authorInTitle != frames.authorInTitle {
+            authorInTitle = frames.authorInTitle
+            updateTitleToolTip()
+        }
         if needsYouFrame != frames.needsYou {
             needsYouFrame = frames.needsYou
             onChromeLayout?()

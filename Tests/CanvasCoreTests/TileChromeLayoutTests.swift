@@ -23,9 +23,21 @@ struct TileChromeLayoutTests {
         #expect(frames.author.width == 0)
         let name = "Complete creation-time author"
         let path = "/board/note.md"
-        let tip = TileChromeLayout.titleToolTip(path: path, author: name, scale: scale, authorHidden: true)
+        let tip = TileChromeLayout.titleToolTip(path: path, author: name, scale: scale, authorInTitle: frames.authorInTitle)
         #expect(tip?.contains(name) == true)
         #expect(tip?.contains(path) == true)
+    }
+
+    @Test(arguments: [1.0, 1.15])
+    func longReportedStateKeepsItsSlotAndTypingClear(_ scale: Double) {
+        let frames = TileChromeLayout.frames(width: 300, trailing: 80, terminal: true, scale: scale,
+                                             stateMinimum: 90, typingMinimum: 40)
+        #expect(frames.state.width >= 90)
+        #expect(frames.typing.width >= 40)
+        #expect(frames.typing.minX >= frames.state.maxX)
+        #expect(frames.author.minX >= frames.typing.maxX)
+        #expect(frames.author.maxX <= 300 - 32 - 80)
+        #expect(frames.authorInTitle)
     }
 
 
