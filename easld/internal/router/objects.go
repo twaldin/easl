@@ -15,7 +15,6 @@ import (
 	"github.com/twaldin/easl/easld/internal/measure"
 	"github.com/twaldin/easl/easld/internal/mention"
 	"github.com/twaldin/easl/easld/internal/model"
-	"github.com/twaldin/easl/easld/internal/question"
 	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/store"
 )
@@ -286,13 +285,7 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 		}
 	}
 	if frame == nil && group != "" {
-		w, h := board.DefaultSize(typ)
-		if typ == model.Code {
-			w, h = b.NewCodeSize(props)
-		} else if typ == model.Question {
-			w, h = question.Size(props)
-		}
-		f := b.Place(w, h, group, nil, false)
+		f := b.PlaceNew(typ, props, group, false)
 		frame = &f
 	}
 	if typ == model.Browser {
@@ -982,7 +975,7 @@ func (r *Router) reusableChanges(p map[string]any) (map[string]any, error) {
 	if s, ok := p["size"]; ok {
 		update["size"] = s
 	}
-	for _, k := range []string{"viewer", "step", "expires"} {
+	for _, k := range []string{"viewer", "step", "expires", "group"} {
 		if v, ok := p[k]; ok {
 			update[k] = v
 		}
@@ -1379,8 +1372,8 @@ func (r *Router) fitSize(method string, p map[string]any, state *batchState, gua
 		w := o.Frame.W
 		baseWidth = &w
 	}
-	if patch, ok := p["props"]; ok {
-		props, _ = model.Merge(props, patch).(map[string]any)
+	if patch, ok := p["props"].(map[string]any); ok {
+		props = model.MergeProps(typ, props, patch)
 	}
 	if width == nil && typ != model.Code && typ != model.Image && typ != model.Video {
 		width = baseWidth

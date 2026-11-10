@@ -103,6 +103,9 @@ struct HtmlSendBudgetTests {
         #expect(board.undo())
         #expect(try board.object(source).props["state"] == saved)
         #expect(board.htmlMessages[host]?.map(\.id) == [queued.id], "undo cannot recall the instruction")
+        #expect(board.redo())
+        #expect(try board.object(source).props["state"] == state)
+        #expect(board.htmlMessages[host]?.map(\.id) == [queued.id])
     }
 
     @Test func refusedSubmitKeepsDraftAndQueueUnchanged() async throws {

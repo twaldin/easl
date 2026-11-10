@@ -2327,7 +2327,7 @@ public final class ApiRouter {
         if !given.isEmpty { update["props"] = .object(given) }
         if let frame = p["frame"] { update["frame"] = frame }
         if let size = p["size"] { update["size"] = size }
-        for key in ["viewer", "step", "expires", "expiresIn"] { update[key] = p[key] }
+        for key in ["viewer", "step", "expires", "expiresIn", "group"] { update[key] = p[key] }
         return .object(update)
     }
 
@@ -2461,12 +2461,12 @@ public final class ApiRouter {
             guard let created = pending[index], let type = ObjectType(rawValue: try string(created, "type")) else {
                 throw Failure("invalid_params", "\(id) must name an earlier create op")
             }
-            let props = p["props"].map { (created["props"] ?? .object([:])).merging($0) } ?? created["props"] ?? .object([:])
+            let props = p["props"].map { (created["props"] ?? .object([:])).mergingProps($0, type: type) } ?? created["props"] ?? .object([:])
             base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props))
         } else {
             let board = try board(forObject: id)
             let object = try board.object(id)
-            let props = p["props"].map { object.props.merging($0) } ?? object.props
+            let props = p["props"].map { object.props.mergingProps($0, type: object.type) } ?? object.props
             base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props))
         }
         return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image, .video].contains(base.type) ? nil : base.width), root: base.root)

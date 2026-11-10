@@ -144,7 +144,7 @@ Check overlaps, arrow crossings, label collisions, overflow, scrolls and truncat
 Inspect a render before pointing the user at a visual. Headless easld checks geometry approximately, but does not prove Mac rendering.
 `easl render <id>` writes to a temp file. Never put scratch renders in the repo. [Rendering details](references/rendering.md).
 
-Update props with `object.update`; they shallow-merge. Pass the last `rev` when another actor may edit. On `conflict`, re-read.
+Update props with `object.update`; they shallow-merge except HTML `state`, which merges per top-level key. Pass the last `rev` when another actor may edit. On `conflict`, re-read.
 While you own layout, refit changed note markdown or HTML with `size: "fit"` in the same call. After hand-back, preserve dimensions.
 Do not rewrite a note the user is typing in. If content no longer fits, shorten it or hand the layout issue back.
 Never pan or zoom the user's view unless asked. Point with `view.attention --id <id> --message "The finding"`.

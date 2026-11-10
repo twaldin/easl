@@ -3,6 +3,53 @@ import Testing
 @testable import CanvasCore
 
 extension BoardMirrorTests {
+    @Test func htmlViewerStateInverseRestoresMergeDeleteClearAndMissingState() throws {
+        let cases: [(JSONValue?, JSONValue)] = [
+            (.object(["draft": "saved", "cards": "keep"]), .object(["draft": "edited", "new": "added"])),
+            (.object(["draft": "saved"]), .object(["draft": .null])),
+            (.object(["draft": "saved"]), .object(["draft": .null, "submitted": "sub_test", "pending": true])),
+            (.object(["draft": "saved"]), .null),
+            (.object([:]), .null),
+            (nil, .object(["draft": "added"])),
+            (nil, .object([:]))
+        ]
+        for (index, entry) in cases.enumerated() {
+            var props: [String: JSONValue] = ["html": "<p>draft</p>"]
+            props["state"] = entry.0
+            let page = host.create(type: .html, props: .object(props))
+            let edit = try #require(ViewerEdit(.object(["viewer": "vw_stateTest", "step": .number(Double(index + 1))])))
+            try host.asViewerEdit(edit) {
+                _ = try host.update(page.id, props: .object(["state": entry.1]))
+            }
+            let after = try host.object(page.id).props
+            _ = try host.replayViewer(edit.viewer, step: edit.step, redo: false)
+            #expect(try host.object(page.id).props == page.props)
+            _ = try host.replayViewer(edit.viewer, step: edit.step, redo: true)
+            #expect(try host.object(page.id).props == after)
+        }
+    }
+
+    @Test func htmlStateUndoAndRedoUseTombstonesAndKeepStateConflicts() async throws {
+        let saved: JSONValue = .object(["draft": "saved", "cards": "retained"])
+        let page = host.create(type: .html, props: .object(["html": "<p>draft</p>", "state": saved]))
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        let reply = try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: page.id, board: view, mayStartTurn: true)
+        try await eventually { self.host.objects[page.id]?.props["state"]?["submitted"]?["id"] == reply["id"] }
+        let submitted = try #require(host.objects[page.id]?.props["state"])
+        #expect(view.htmlMessages.isEmpty && host.htmlMessages.isEmpty)
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[page.id]?.props["state"] == saved)
+        try await eventually { shows(view.objects[page.id], self.host.objects[page.id]) }
+        _ = await mirror.undo(redo: true).value
+        #expect(host.objects[page.id]?.props["state"] == submitted)
+        try await eventually { shows(view.objects[page.id], self.host.objects[page.id]) }
+        _ = try host.update(page.id, props: .object(["state": .object(["later": "host"])]))
+        let concurrent = host.objects[page.id]?.props["state"]
+        _ = await mirror.undo(redo: false).value
+        #expect(host.objects[page.id]?.props["state"] == concurrent)
+    }
+
     @Test func undoAndRedoGoThroughTheHostAndAnotherViewerSeesThem() async throws {
         let moved = note("drag me")
         let (mirror, board) = try await mirror()

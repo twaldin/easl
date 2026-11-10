@@ -60,6 +60,60 @@ func replayOf(t *testing.T, b *Board, viewer string, step int, redo bool) replay
 	return out
 }
 
+func TestViewerHTMLStateUndoRedo(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		before map[string]any
+		patch  any
+	}{
+		{"merge", map[string]any{"draft": "saved", "cards": "keep"}, map[string]any{"draft": "edited", "new": "added"}},
+		{"delete", map[string]any{"draft": "saved", "cards": "keep"}, map[string]any{"draft": nil}},
+		{"submit", map[string]any{"draft": "saved", "cards": "keep"}, map[string]any{"draft": nil, "submitted": map[string]any{"id": "sub_test"}, "pending": true}},
+		{"clear", map[string]any{"draft": "saved"}, nil},
+		{"clear empty", map[string]any{}, nil},
+		{"missing", nil, map[string]any{"draft": "added"}},
+		{"missing to empty", nil, map[string]any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := New("brd", "/r")
+			props := map[string]any{"html": "<p>draft</p>"}
+			if tc.before != nil {
+				props["state"] = tc.before
+			}
+			page := b.Create(model.HTML, props, frame(0, 0, 200, 100), "", "")
+			before := page.Clone().Props
+			viewerWrite(t, b, viewerA, 1, func() error {
+				_, err := b.Update(page.ID, nil, nil, nil, map[string]any{"state": tc.patch}, "", "")
+				return err
+			})
+			after := b.Objects()[page.ID].Clone().Props
+			replayOf(t, b, viewerA, 1, false)
+			if got := b.Objects()[page.ID].Props; !reflect.DeepEqual(got, before) {
+				t.Fatalf("undo: %v, want %v", got, before)
+			}
+			replayOf(t, b, viewerA, 1, true)
+			if got := b.Objects()[page.ID].Props; !reflect.DeepEqual(got, after) {
+				t.Fatalf("redo: %v, want %v", got, after)
+			}
+		})
+	}
+}
+
+func TestViewerHTMLStateUndoKeepsConcurrentStateChanges(t *testing.T) {
+	b := New("brd", "/r")
+	page := b.Create(model.HTML, map[string]any{"state": map[string]any{"draft": "saved"}}, frame(0, 0, 200, 100), "", "")
+	viewerWrite(t, b, viewerA, 1, func() error {
+		_, err := b.Update(page.ID, nil, nil, nil, map[string]any{"state": map[string]any{"draft": nil, "submitted": "sub_test"}}, "", "")
+		return err
+	})
+	agentWrite(t, b, page.ID, nil, map[string]any{"state": map[string]any{"later": "host"}})
+	before := b.Objects()[page.ID].Clone()
+	reply := replayOf(t, b, viewerA, 1, false)
+	if !reflect.DeepEqual(reply.kept, []string{page.ID}) || reply.pushed || !reflect.DeepEqual(b.Objects()[page.ID], before) {
+		t.Fatalf("concurrent state changed: %+v", reply)
+	}
+}
+
 func TestViewerUndoRevertsItsMoveAndKeepsAnAgentsLaterEdit(t *testing.T) {
 	b := New("brd", "/r")
 	n := b.Create(model.Note, map[string]any{"markdown": "plan"}, frame(0, 0, 200, 100), "", "")

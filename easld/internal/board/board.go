@@ -498,6 +498,17 @@ func (b *Board) changed() {
 // DefaultSize is the frame size a new object gets without one (Board.defaultSize).
 func DefaultSize(t model.ObjectType) (float64, float64) { return model.DefaultSize(t) }
 
+// PlaceNew sizes and places an unframed object beside its placement anchor.
+func (b *Board) PlaceNew(typ model.ObjectType, props map[string]any, near string, stacking bool) model.Frame {
+	w, h := DefaultSize(typ)
+	if typ == model.Question {
+		w, h = question.Size(props)
+	} else if typ == model.Code {
+		w, h = b.NewCodeSize(props)
+	}
+	return b.Place(w, h, near, nil, stacking)
+}
+
 // --- objects ---
 // Expiry changes a deadline when supplied. At nil clears it; omission keeps it.
 type Expiry struct {
@@ -524,13 +535,6 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 		delete(props, "urlIntent")
 	}
 	w, h := DefaultSize(typ)
-	if typ == model.Question {
-		w, h = question.Size(props)
-	}
-	// A code tile without a frame is as wide as its file's lines need.
-	if typ == model.Code && frame == nil {
-		w, h = b.NewCodeSize(props)
-	}
 	if typ == model.Terminal {
 		props = b.stampingWorktree(props)
 	}
@@ -548,7 +552,7 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	if fitted, ok := b.fittedFrame(o); ok {
 		o.Frame = fitted
 	} else if frame == nil {
-		o.Frame = b.Place(w, h, caller, nil, true)
+		o.Frame = b.PlaceNew(typ, props, caller, true)
 	}
 	b.commit(o)
 	b.countWrite(caller, "")

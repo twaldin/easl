@@ -71,13 +71,22 @@ public enum JSONValue: Codable, Equatable, Sendable {
         return nil
     }
 
-    /// Shallow merge used by object.update: keys in `patch` replace keys in self; `null` deletes.
+    /// Shallow merge: keys in `patch` replace keys in self; `null` deletes.
     public func merging(_ patch: JSONValue) -> JSONValue {
         guard case .object(var base) = self, case .object(let changes) = patch else { return patch }
         for (key, value) in changes {
             if value == .null { base.removeValue(forKey: key) } else { base[key] = value }
         }
         return .object(base)
+    }
+
+    func mergingProps(_ patch: JSONValue, type: ObjectType) -> JSONValue {
+        var result = merging(patch)
+        if type == .html, let state = patch["state"]?.object {
+            let merged = (self["state"] ?? .object([:])).merging(.object(state))
+            result = result.merging(.object(["state": merged]))
+        }
+        return result
     }
 
     /// Round-trips any Encodable through JSON. Hot paths build their values directly instead

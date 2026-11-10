@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import Testing
 import CanvasCore
+import WebKit
 
 private typealias G = DrawingGeometry
 
@@ -14,6 +15,26 @@ extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
     public init(stringLiteral value: String) { self = .string(value) }
     public init(integerLiteral value: Int) { self = .number(Double(value)) }
     public init(arrayLiteral elements: JSONValue...) { self = .array(elements) }
+}
+
+@MainActor
+private final class LayoutPage: NSObject, WKNavigationDelegate {
+    var loaded: CheckedContinuation<Void, Error>?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loaded?.resume()
+        loaded = nil
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loaded?.resume(throwing: error)
+        loaded = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loaded?.resume(throwing: error)
+        loaded = nil
+    }
 }
 
 /// Layout over the socket, as agents drive it: measure, fit, place/stack, batch, check.
@@ -74,6 +95,74 @@ final class LayoutApiTests {
     }
 
     // MARK: Measure and fit
+
+    @Test func htmlFitRetainsDraftLayoutWhenContentStateChangesLiveAndInBatch() async throws {
+        if ProcessInfo.processInfo.environment["EASL_HTML_FIT_CHILD"] != "1" {
+            let executable = CommandLine.arguments[0]
+            let result = try await Task.detached {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: executable)
+                process.arguments = ["--filter", "LayoutApiTests/htmlFitRetainsDraftLayoutWhenContentStateChangesLiveAndInBatch"]
+                process.environment = ProcessInfo.processInfo.environment.merging(["EASL_HTML_FIT_CHILD": "1"]) { _, value in value }
+                let output = Pipe()
+                process.standardOutput = output
+                process.standardError = output
+                try process.run()
+                let bytes = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                return (process.terminationStatus, String(decoding: bytes, as: UTF8.self))
+            }.value
+            #expect(result.1.contains("HTML_FIT_PROVED"))
+            #expect(result.0 == 0, "\(result.1)")
+            return
+        }
+        ObjectMeasure.html = { props, width, _ in
+            let configuration = WKWebViewConfiguration()
+            let state = String(decoding: try JSONEncoder().encode(props["state"] ?? .object([:])), as: UTF8.self)
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: "window.savedState = \(state);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            let page = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: 1), configuration: configuration)
+            let navigation = LayoutPage()
+            page.navigationDelegate = navigation
+            defer { navigation.loaded = nil }
+            try await withCheckedThrowingContinuation { (loaded: CheckedContinuation<Void, Error>) in
+                navigation.loaded = loaded
+                page.loadHTMLString(props["html"]?.string ?? "", baseURL: nil)
+            }
+            let height = try #require(try await page.evaluateJavaScript("document.documentElement.scrollHeight") as? Double)
+            return CGSize(width: width, height: height)
+        }
+        defer { ObjectMeasure.html = nil }
+        let props: JSONValue = .object([
+            "html": """
+                <style>html,body{margin:0;padding:0}</style><div id="draft"></div><script>
+                document.getElementById('draft').style.height = (window.savedState.draft ? 720 : 40) + 'px';
+                </script>
+                """,
+            "state": .object(["draft": "saved", "cards": "old"])
+        ])
+        let patch: JSONValue = .object(["state": .object(["cards": "new"])])
+        let created = try await result("object.create", .object(["type": "html", "props": props,
+            "frame": .object(["x": 0, "y": 0, "w": 400, "h": 100])]))
+        let id = try #require(created["object"]?["id"])
+        let live = try await result("object.update", .object(["id": id, "props": patch, "size": "fit"]))
+        let expectedHeight = 720 + Double(RenderMath.tileTitleHeight)
+        #expect(live["object"]?["frame"]?["h"]?.number == expectedHeight)
+        #expect(live["object"]?["props"]?["state"]?["draft"] == "saved")
+        let batch = try await result("object.batch", .object(["ops": .array([
+            .object(["method": "object.create", "params": .object(["type": "html", "props": props,
+                "frame": .object(["x": 1000, "y": 0, "w": 400, "h": 100])])]),
+            .object(["method": "object.update", "params": .object(["id": "$0", "props": patch, "size": "fit"])])
+        ])]))
+        let pending = try #require(batch["results"]?.array?.last?["object"])
+        #expect(pending["frame"]?["h"]?.number == expectedHeight)
+        #expect(pending["props"]?["state"]?["draft"] == "saved")
+        #expect(pending["props"]?["state"]?["cards"] == "new")
+        let cleared = try await result("object.update", .object(["id": id,
+            "props": .object(["state": .object(["draft": .null])]), "size": "fit"]))
+        #expect(cleared["object"]?["frame"]?["h"]?.number == 40 + Double(RenderMath.tileTitleHeight))
+        print("HTML_FIT_PROVED")
+    }
 
     @Test func codeMeasuresExactlyItsRangeWithTabsExpanded() async throws {
         let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))

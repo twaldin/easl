@@ -108,6 +108,32 @@ final class ApiRouterTests {
         }
     }
 
+    @Test func reusedChangesCreateJoinsGroupOnceAndRefusesInvalidGroups() async throws {
+        let client = try connect()
+        let caller = terminal()
+        let created = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+            "props": .object(["title": "review"])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let group = board.create(type: .group, props: .object(["members": .array([])]))
+        for _ in 0..<2 {
+            let reused = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+                "props": .object(["title": "joined"]), "group": .string(group.id)])
+            #expect(reused["result"]?["reused"] == .bool(true))
+            #expect(reused["result"]?["object"]?["id"] == .string(id))
+        }
+        #expect(board.objects[group.id]?.props["members"] == .array([.string(id)]))
+        for invalid in [JSONValue.string(id), "obj_missing", 12, .null] {
+            let before = board.objects[id]
+            let revision = board.revision
+            let refused = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+                "props": .object(["title": "must not change"]), "group": invalid])
+            #expect(refused["error"]?["code"] == "invalid_params")
+            #expect(board.objects[id] == before)
+            #expect(board.revision == revision)
+            #expect(board.objects[group.id]?.props["members"] == .array([.string(id)]))
+        }
+    }
+
     @Test func seenReturnsCanonicalTerminalOnlyForAcceptedRevision() async throws {
         let tile = terminal()
         let client = try connect()

@@ -403,6 +403,30 @@ func TestGroupMustBelongToTheTargetBoard(t *testing.T) {
 	}
 }
 
+func TestReusedChangesCreateJoinsGroupOnceAndRefusesInvalidGroups(t *testing.T) {
+	f := newFixture(t)
+	caller := idOf(f.result("object.create", map[string]any{"type": "terminal", "props": map[string]any{}}))
+	id := idOf(f.result("object.create", map[string]any{"type": "changes", "caller": caller, "props": map[string]any{"title": "review"}}))
+	group := idOf(f.result("object.create", map[string]any{"type": "group", "props": map[string]any{"members": []any{}}}))
+	for range 2 {
+		reused := f.result("object.create", map[string]any{"type": "changes", "caller": caller, "group": group, "props": map[string]any{"title": "joined"}})
+		if reused["reused"] != true || idOf(reused) != id {
+			t.Fatalf("not reused: %v", reused)
+		}
+	}
+	for _, invalidGroup := range []any{id, "obj_missing", 12.0, nil} {
+		before := f.board.Objects()[id]
+		revision := f.board.Revision()
+		code, _ := errorOf(f.call("object.create", map[string]any{"type": "changes", "caller": caller, "group": invalidGroup, "props": map[string]any{"title": "must not change"}}))
+		if code != "invalid_params" || !reflect.DeepEqual(f.board.Objects()[id], before) || f.board.Revision() != revision {
+			t.Fatalf("invalid group %v changed reused tile: %s", invalidGroup, code)
+		}
+		if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{id}) {
+			t.Fatalf("members = %v", got)
+		}
+	}
+}
+
 func TestUpsertingAgainKeepsTheIdAndChangesOnlyProps(t *testing.T) {
 	f := newFixture(t)
 	created := f.result("object.upsert", map[string]any{"key": "REL-7", "type": "note", "props": map[string]any{"markdown": "open"}, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 200.0, "h": 100.0}})
