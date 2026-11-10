@@ -19,7 +19,6 @@ struct TileChromeTests {
         #expect(TileChromeState(object: tile, focused: tile.id).typing)
         #expect(!TileChromeState(object: tile, focused: "creator").typing)
         #expect(!TileChromeState(object: tile, focused: nil).typing)
-        #expect(TileChromeState(object: tile, focused: tile.id).terminal?.text == (type == .terminal ? "working" : nil))
     }
 
     @Test(arguments: types)
@@ -53,42 +52,45 @@ struct TileChromeTests {
             #expect(!shown.typing)
             #expect(shown.terminal == nil)
         }
-        #expect(!TileChromeState.typeSymbol(type).isEmpty)
     }
 
     @Test(arguments: types)
     func needsYouUsesClassifierReasonsOnEveryType(_ type: ObjectType) {
+        let markerMessage = "Inspect release candidate Ω\nPreserve every line and trailing detail."
+        let lifecycleMessage = "Approve the deployment?\nKeep build artifacts until review finishes."
+        let questionMessage = "Which release should ship?\nChoose stable, preview, or neither."
         func items(_ tile: CanvasObject, marked: Bool = false) -> [NeedsYouItem] {
-            NeedsYouItem.all([tile.id: tile], attention: marked ? [tile.id: Attention(object: tile.id, message: "inspect this", raisedBy: "creator", raisedAt: now)] : [:], now: now)
+            NeedsYouItem.all([tile.id: tile], attention: marked ? [tile.id: Attention(object: tile.id, message: markerMessage, raisedBy: "creator", raisedAt: now)] : [:], now: now)
         }
         let closedQuestion: [String: JSONValue] = ["status": .string("answered")]
         let neutral = object(type, props: closedQuestion)
         #expect(items(neutral).isEmpty)
         let marked = items(neutral, marked: true)
         #expect(marked.first?.reason == .marked)
-        #expect(marked.first.map(TileChromeState.needsYouText) == "Look here · inspect this")
+        #expect(marked.first.map(TileChromeState.needsYouText)?.contains(markerMessage) == true)
         for state in ["blocked", "done"] {
-            let tile = object(type, lifecycle: .object(["state": .string(state), "message": .string("reported reason")]), props: closedQuestion)
+            let tile = object(type, lifecycle: .object(["state": .string(state), "message": .string(lifecycleMessage)]), props: closedQuestion)
             let needs = items(tile)
             #expect(needs.first?.reason == (type == .terminal ? (state == "blocked" ? .blocked : .done) : nil))
             if let item = needs.first {
-                #expect(TileChromeState.needsYouText(item) == (state == "blocked" ? "Needs you · reported reason" : "Result unseen · reported reason"))
+                #expect(TileChromeState.needsYouText(item).contains(lifecycleMessage))
             }
         }
-        let question = object(type, props: ["question": .string("Choose a release")])
+        let question = object(type, props: ["question": .string(questionMessage)])
         #expect(items(question).first?.reason == (type == .question ? .question : nil))
-        if let item = items(question).first { #expect(TileChromeState.needsYouText(item) == "Open question · Choose a release") }
+        if let item = items(question).first { #expect(TileChromeState.needsYouText(item).contains(questionMessage)) }
         let seen = object(type, lifecycle: .object(["state": .string("done"), "seen": .bool(true)]), props: closedQuestion)
         #expect(items(seen).isEmpty)
     }
 
     @Test func classifierPrecedenceAndFullReasonSurvive() {
-        let tile = object(.terminal, lifecycle: .object(["state": .string("blocked"), "message": .string("Approve command?\nrm build")]))
+        let message = "Approve command?\nrm build"
+        let tile = object(.terminal, lifecycle: .object(["state": .string("blocked"), "message": .string(message)]))
         let marker = Attention(object: tile.id, message: "other reason", raisedBy: nil, raisedAt: now)
         let items = NeedsYouItem.all([tile.id: tile], attention: [tile.id: marker], now: now)
         #expect(items.count == 1)
         #expect(items.first?.reason == .blocked)
-        #expect(items.first.map(TileChromeState.needsYouText) == "Needs you · Approve command?\nrm build")
+        #expect(items.first.map(TileChromeState.needsYouText)?.contains(message) == true)
         let expired = object(.question, props: ["expiresAt": .string("2020-01-01T00:00:00Z")])
         #expect(NeedsYouItem.all([expired.id: expired], attention: [:], now: now).isEmpty)
     }

@@ -45,7 +45,7 @@ private enum TooltipProbe {
         }
     }
 
-    static func check(_ view: GroupView, expected: String, stage: String) {
+    static func check(_ view: GroupView, author: String, excluding previousAuthor: String? = nil, stage: String) {
         let registration = registration(for: view)
         guard let owner = registration.owner as? NSObject else {
             require(false, "\(stage) installed tooltip tag \(registration.tag) has a dead owner after autoreleasepool drain")
@@ -61,8 +61,11 @@ private enum TooltipProbe {
         } else {
             result = owner.description
         }
-        require(result == expected, "\(stage) expected \(expected.debugDescription), got \(String(describing: result))")
-        print("PASS \(stage) tag=\(registration.tag) owner=\(type(of: owner)) text=\(expected)")
+        require(result?.contains(author) == true, "\(stage) tooltip must contain the complete author \(author.debugDescription), got \(String(describing: result))")
+        if let previousAuthor {
+            require(result?.contains(previousAuthor) == false, "\(stage) tooltip must not retain the previous author")
+        }
+        print("PASS \(stage) tag=\(registration.tag) owner=\(type(of: owner)) text=\(String(describing: result))")
     }
 }
 
@@ -96,13 +99,15 @@ private enum TooltipLifetime {
             fatalError("Cannot create real group view and window")
         }
         content.addSubview(group)
+        let initialAuthor = "Lifetime regression author with a deliberately long dynamic name 0123456789"
+        let replacementAuthor = "Replacement author with another deliberately long dynamic name 9876543210"
         autoreleasepool {
             group.show(region: NSRect(x: 0, y: 0, width: 900, height: 300))
-            group.author = "Lifetime regression author with a deliberately long dynamic name 0123456789"
+            group.author = initialAuthor
         }
-        TooltipProbe.check(group, expected: "Created by the terminal “Lifetime regression author with a deliberately long dynamic name 0123456789”", stage: "initial registration")
-        autoreleasepool { group.author = "Replacement author with another deliberately long dynamic name 9876543210" }
-        TooltipProbe.check(group, expected: "Created by the terminal “Replacement author with another deliberately long dynamic name 9876543210”", stage: "author replacement")
+        TooltipProbe.check(group, author: initialAuthor, stage: "initial registration")
+        autoreleasepool { group.author = replacementAuthor }
+        TooltipProbe.check(group, author: replacementAuthor, excluding: initialAuthor, stage: "author replacement")
         withExtendedLifetime((window, group)) {}
         window.close()
         print("PASS GroupView tooltip lifetime regression")

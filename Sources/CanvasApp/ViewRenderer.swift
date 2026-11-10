@@ -98,7 +98,7 @@ extension CanvasView {
             if request.chrome {
                 CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale, pixelsPerPoint: 1)
             } else {
-                NSColor.underPageBackgroundColor.setFill()
+                TileChrome.color(.canvas).setFill()
                 docRegion.fill()
             }
 
@@ -229,10 +229,9 @@ extension CanvasView {
         }
     }
 
-    /// Tile chrome as `TileFrameView` draws it live (rounded card, title bar, lifecycle badge,
-    /// content zoom percentage, close glyph, border) around the content image drawn at `zoom`,
-    /// or a labelled stand-in without one. Without `chrome`, as Hide Board Chrome shows it: no
-    /// author mark or close glyph.
+    /// Shared tile chrome around content drawn at `zoom`, or a labelled stand-in without it.
+    /// Exported chrome omits local keyboard ownership, like selection rings and attention markers.
+    /// Without `chrome`, no author mark or close glyph.
     private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect, zoom: CGFloat, chrome: Bool) {
         let title = TileFrameView.titleHeight
         let card = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
@@ -247,23 +246,24 @@ extension CanvasView {
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
         let author = chrome ? (tiles[object.id]?.author ?? authorName(of: object)) : nil
-        let state = tiles[object.id]?.chromeState ?? TileChromeState(object: object, focused: focusedTile)
+        let state = tiles[object.id]?.chromeState ?? TileChromeState(object: object, focused: nil)
         // Renders, including easld-delegated renders, always use 100% two-track chrome.
         let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom), scale: 1)
-        let frames = TileChrome.frames(width: rect.width, trailing: zoomLabel.map { $0.width + 4 } ?? 0, terminal: object.type == .terminal, scale: 1)
+        let frames = TileChromeLayout.frames(width: rect.width, trailing: zoomLabel.map { $0.width + 4 } ?? 0, terminal: object.type == .terminal, scale: 1)
         let symbol = NSImage(systemSymbolName: TileChromeState.typeSymbol(object.type), accessibilityDescription: object.type.rawValue)?
             .withSymbolConfiguration(.init(paletteColors: [TileChrome.color(.type)]))
-        symbol?.draw(in: frames.type.offsetBy(dx: rect.minX, dy: rect.minY), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        if let symbol {
+            let scale = min(frames.type.width / symbol.size.width, frames.type.height / symbol.size.height, 1)
+            let size = NSSize(width: symbol.size.width * scale, height: symbol.size.height * scale)
+            let glyph = NSRect(x: rect.minX + frames.type.midX - size.width / 2, y: rect.minY + frames.type.midY - size.height / 2,
+                               width: size.width, height: size.height)
+            symbol.draw(in: glyph, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
         let stateStyle = NSMutableParagraphStyle()
         stateStyle.lineBreakMode = .byTruncatingTail
         if let status = state.terminal {
             (status.text as NSString).draw(in: frames.state.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
                 .font: TileChrome.font(status.role, scale: 1), .foregroundColor: TileChrome.color(status.role), .paragraphStyle: stateStyle,
-            ])
-        }
-        if state.typing {
-            ("typing" as NSString).draw(in: frames.typing.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
-                .font: TileChrome.font(.typing, scale: 1), .foregroundColor: TileChrome.color(.typing), .paragraphStyle: stateStyle,
             ])
         }
         (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [

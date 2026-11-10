@@ -135,6 +135,7 @@ private enum SelectionTyping {
                      "damage-terminal-resign-navigator", "damage-ring-pure-move"] {
             cases.append(Scenario(name: name, baseline: "terminal focus damage regression"))
         }
+        cases.append(Scenario(name: "chrome-typing-rekey-focus", baseline: "keyboard chrome ownership regression"))
         return cases
     }
 
@@ -825,6 +826,8 @@ private enum SelectionTyping {
         case "group-selection":
             let group = f.board.create(type: .group, props: .object(["members": .array([.string(terminal.id), .string(other.id)]), "title": "Group selection"]))
             try await f.ready(group.id)
+            try require(f.canvas.groups[group.id]?.author == nil,
+                        "user-made group bands must not gain a redundant or migration-invented author")
             try await click(try f.point(group.id), in: f.window)
             try f.boardOwns([group.id])
         case "move-terminal":
@@ -2536,6 +2539,58 @@ private enum SelectionTyping {
             f.board.objects[note.id]?.props["markdown"]?.string == "After panel"
         }
     }
+    private static func exerciseChromeTypingRekeyFocus(_ f: Fixture) async throws {
+        let browser = try await f.create(.browser, x: 20, y: 110, width: 450, height: 290)
+        let note = try await f.create(.note, x: 530, y: 110, width: 450, height: 290)
+        guard let browserFrame = f.canvas.tiles[browser.id],
+              let noteFrame = f.canvas.tiles[note.id],
+              let root = f.window.contentView,
+              let composer = descendants(root).compactMap({ $0 as? ComposerBar }).first else {
+            throw Failure("chrome fixture requires real browser, note and composer views")
+        }
+
+        func requireTypingOwner(_ expected: ObjectID?) throws {
+            let expectedIDs: Set<ObjectID> = Set(expected.map { [$0] } ?? [])
+            let chromeIDs = Set(f.canvas.tiles.values.filter { $0.chromeState.typing }.map(\.objectID))
+            let accessibleIDs = Set(f.canvas.tiles.values.filter {
+                ($0.accessibilityLabel() ?? "").components(separatedBy: ", ").contains("typing")
+            }.map(\.objectID))
+            try require(f.canvas.focusedTile == expected, "actual keyboard owner must be \(String(describing: expected)); \(f.diagnostic())")
+            try require(chromeIDs == expectedIDs, "chrome must show exactly the keyboard owner, got \(chromeIDs)")
+            try require(accessibleIDs == expectedIDs, "accessibility must announce typing only for the keyboard owner, got \(accessibleIDs)")
+        }
+
+        try await click(try await f.pagePoint(browser.id, selector: "#field"), in: f.window)
+        try await wait("browser field must really own the first responder") {
+            (f.window.firstResponder as? NSView)?.isDescendant(of: browserFrame) == true
+                && f.canvas.focusedTile == browser.id
+        }
+        try requireTypingOwner(browser.id)
+        let browserResponder = f.window.firstResponder
+        var canonical = browser
+        canonical.id = "canonical-chrome-browser"
+        f.board.rekeyHost(browser.id, as: canonical)
+        try require(f.board.objects[browser.id] == nil && f.board.objects[canonical.id] != nil,
+                    "host canonicalization must replace the provisional board identity")
+        try require(f.canvas.tiles[browser.id] == nil && f.canvas.tiles[canonical.id] === browserFrame,
+                    "host canonicalization must preserve the live browser frame")
+        try require(f.window.firstResponder === browserResponder,
+                    "canonicalization must preserve the actual browser responder")
+        try requireTypingOwner(canonical.id)
+
+        try await click(try f.point(note.id), in: f.window)
+        try await wait("note must take actual editing focus from the canonical browser") {
+            guard let editor = f.window.firstResponder as? NSTextView else { return false }
+            return editor.isEditable && editor.isDescendant(of: noteFrame) && f.canvas.focusedTile == note.id
+        }
+        try requireTypingOwner(note.id)
+        try await post([key(34, "i", flags: .command, in: f.window)])
+        try await wait("Command-I must transfer the real first responder to the composer") {
+            f.window.firstResponder === composer.text && f.canvas.focusedTile == nil
+        }
+        try requireTypingOwner(nil)
+    }
+
 
 
     private static func exerciseQuestionHeldReturn(_ f: Fixture) async throws {
@@ -2564,7 +2619,9 @@ private enum SelectionTyping {
                 return
             }
         }
-        if name.hasPrefix("damage-") {
+        if name == "chrome-typing-rekey-focus" {
+            try await exerciseChromeTypingRekeyFocus(f)
+        } else if name.hasPrefix("damage-") {
             try await exerciseTerminalDamage(name, f)
         } else if name.hasPrefix("shift-body-") {
             let single = name.hasSuffix("-single")

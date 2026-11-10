@@ -42,9 +42,4 @@ enum TileChrome {
 
     static func metadataWidth(terminal: Bool) -> CGFloat { terminal ? 210 : 142 }
 
-    static func frames(width: CGFloat, trailing: CGFloat = 0, terminal: Bool, scale: Double = ChromeText.scale,
-                       state: Bool = true, typing: Bool = true, needsYouWidth: CGFloat = 0) -> TileChromeLayout.Frames {
-        TileChromeLayout.frames(width: width, trailing: trailing, terminal: terminal, scale: scale,
-                                state: state, typing: typing, needsYouWidth: needsYouWidth)
-    }
 }

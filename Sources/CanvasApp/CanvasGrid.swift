@@ -29,7 +29,7 @@ final class CanvasGrid: NSView {
 
     /// Appearance changes: the fill and dot colors are dynamic.
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
+        layer?.backgroundColor = TileChrome.color(.canvas).cgColor
         tile = nil
         apply()
     }

@@ -104,8 +104,7 @@ public final class BoardRegistry {
         board.creationAuthor = { [weak self] caller in
             guard let creatorBoard = self?.boards.values.first(where: { $0.objects[caller]?.type == .terminal }),
                   let terminal = creatorBoard.objects[caller] else { return nil }
-            let named = terminal.props["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AuthorMark.name(of: terminal, program: named?.isEmpty == false ? nil : creatorBoard.authorProgram?(caller))
+            return AuthorMark.name(of: terminal, program: creatorBoard.authorProgram?(caller))
         }
         board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter
         boards[id] = board

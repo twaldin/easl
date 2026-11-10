@@ -24,9 +24,12 @@ struct TileChromeLayoutTests {
                 #expect(frames.title.maxX <= frames.state.minX)
                 #expect(frames.state.maxX <= frames.typing.minX)
                 #expect(frames.typing.maxX <= frames.needsYou.minX)
-                #expect(abs(frames.title.midY - 17) <= 0.5)
-                #expect(abs(frames.state.midY - 17) <= 0.5)
-                #expect(abs(frames.typing.midY - 17) <= 0.5)
+                #expect(abs(frames.title.midY - frames.state.midY) <= 0.5)
+                #expect(abs(frames.title.midY - frames.typing.midY) <= 0.5)
+                for slot in [frames.type, frames.title, frames.state, frames.typing, frames.needsYou] {
+                    #expect(slot.minY >= 0)
+                    #expect(slot.maxY <= RenderMath.tileTitleHeight)
+                }
                 #expect(frames.needsYou.maxX <= width - 32 - trailing)
             }
         }

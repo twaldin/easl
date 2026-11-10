@@ -1,8 +1,8 @@
 import AppKit
 import CanvasCore
 
-/// Shared chrome around every tile: title bar (drag moves the selection), lifecycle badge, content
-/// zoom control, close button, resize grip, and the zoomed-out card (tinted by agent lifecycle).
+/// Shared chrome around every tile: title, type, named state and author, content zoom, close,
+/// resize grip, and the zoomed-out card (tinted by agent lifecycle).
 /// Selection rings are drawn by the canvas overlay.
 @MainActor
 final class TileFrameView: NSView {
@@ -34,9 +34,12 @@ final class TileFrameView: NSView {
     private var chromeObject: CanvasObject
     private var commandStatus = TileChromeState.Command()
     private(set) var chromeState: TileChromeState
-    private(set) var authorRole: ChromeRole = .authorAgent
     var onChromeLayout: (() -> Void)?
-    private var titlePathToolTip: String?
+    private var titlePathToolTip: String? {
+        didSet {
+            if titlePathToolTip != oldValue { updateTitleToolTip() }
+        }
+    }
     private var needsYouWidth: CGFloat = 0
     private(set) var needsYouFrame: NSRect = .zero
 
@@ -113,7 +116,7 @@ final class TileFrameView: NSView {
         closeButton.action = #selector(closeClicked)
         closeButton.contentTintColor = TileChrome.color(.control)
         authorLabel.font = TileChrome.font(.author)
-        authorLabel.textColor = TileChrome.color(.author)
+        authorLabel.textColor = TileChrome.color(object.createdBy == .user ? .authorYou : .authorAgent)
         authorLabel.lineBreakMode = .byTruncatingTail
         authorLabel.alignment = .right
         authorLabel.isHidden = true
@@ -215,7 +218,7 @@ final class TileFrameView: NSView {
     }
 
     /// Layer colors resolve once, so again when the appearance changes (dark, light, Increase
-    /// Contrast). Under Increase Contrast the border is thicker and the lifecycle dot ringed.
+    /// Contrast). Under Increase Contrast the border is thicker.
     private func applyLayerColors() {
         let increased = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -265,7 +268,7 @@ final class TileFrameView: NSView {
     private func layoutParts() {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
-        typeGlyph.frame = TileChrome.frames(width: width, terminal: chromeObject.type == .terminal).type
+        typeGlyph.frame = TileChromeLayout.frames(width: width, terminal: chromeObject.type == .terminal, scale: ChromeText.scale).type
         closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
@@ -285,8 +288,6 @@ final class TileFrameView: NSView {
 
     func update(_ object: CanvasObject) {
         chromeObject = object
-        authorRole = object.createdBy == .user ? .authorYou : .authorAgent
-        authorLabel.textColor = TileChrome.color(authorRole)
         if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object, branch: branch)) }
         // A file outside the board root shows a short label, an image its file name; the
         // tooltip has the path.
@@ -295,7 +296,6 @@ final class TileFrameView: NSView {
         case .image, .video: titlePathToolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
         default: titlePathToolTip = nil
         }
-        updateTitleToolTip()
         z = object.z
         if object.type == .browser {
             machineControl.show(DrawingMachine(object.props))
@@ -395,7 +395,7 @@ final class TileFrameView: NSView {
     }
 
 
-    /// The name of the agent terminal that made the object (`AuthorMark`), nil for none.
+    /// The creation-time author, or legacy live name for an object without a snapshot.
     private(set) var author: String?
 
     func setAuthor(_ author: String?) {
@@ -421,8 +421,8 @@ final class TileFrameView: NSView {
         let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, machineSpace))
         machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth) ?? .zero
         let trailing = (zoomWidth > 0 ? zoomWidth + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
-        let frames = TileChrome.frames(width: width, trailing: trailing, terminal: chromeObject.type == .terminal,
-                                       state: chromeState.terminal != nil, typing: chromeState.typing, needsYouWidth: needsYouWidth)
+        let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
+                                             state: chromeState.terminal != nil, typing: chromeState.typing, needsYouWidth: needsYouWidth)
         titleLabel.frame = frames.title
         statusLabel.frame = frames.state
         typingLabel.frame = frames.typing

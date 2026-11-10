@@ -41,7 +41,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
   While a browser page holds the keyboard, these keys navigate its page history. Its Back/Forward buttons, context menu and browser automation still navigate history.
   Browser tiles disable two- and three-finger history swipes so unused sideways scrolls pan the board. Swipe previews are not shown, and WebKit does not record their snapshots.
-- **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+- **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' look-here markers. Blocked agents, open questions and unseen results keep their needs-you rings and pills.
   Esc on the board or the item again brings them back.
 
 ## Agents
@@ -57,7 +57,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 
 ## Needs you
 
-- **Attention ring and bubble**: an attention marker (`view.attention`, or a terminal's bell or notification): "look here".
+- **Attention ring and reason pill**: a static orange ring and pill use the shared semantic needs-you role. The pill names the reason and includes its message when present. An attention marker (`view.attention`, or a terminal's bell or notification) says "Look here".
   It clears when the user selects the tile, types in it, or looks at it for a few seconds; View › Clear Attention Markers clears them all.
   Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.

@@ -5,7 +5,7 @@ import CanvasCore
 extension CanvasView {
     /// The name `object`'s author mark shows, nil for none (and while the chrome is hidden).
     func authorName(of object: CanvasObject) -> String? {
-        guard !chromeHidden else { return nil }
+        guard !chromeHidden, object.type != .group || object.createdBy != .user else { return nil }
         return AuthorMark.name(of: object, in: board.objects) { [tiles] in (tiles[$0]?.content as? TerminalTile)?.program }
     }
 

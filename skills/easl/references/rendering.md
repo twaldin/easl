@@ -7,7 +7,7 @@ Python: `canvas.view.render(target="obj_…", full=True)["path"]`
 The app writes a new file under `$TMPDIR/easl-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
 The result maps pixels to the board: pixel `(px, py)` is board `(canvasRect.x + px / scale, canvasRect.y + py / scale)`,
 and `objects` lists every object drawn with its `pixelRect`
-(a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 26 pt title bar included), `state`, and `overflow`:
+(a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 34 pt title bar included), `state`, and `overflow`:
 
 - `state: rendered` means the content painted.
   `placeholder` means it didn't in time or can't be rendered here (`reason` says why; the image shows an orange "not rendered" tag instead of a silent blank).
@@ -20,7 +20,7 @@ and `objects` lists every object drawn with its `pixelRect`
   For code it is the range (its rows, wrapped at the tile's width, and longest line under the header), not the whole file: what `size: "fit"` shows.
 
 Terminals are drawn from their session text in the terminal's font and colors.
-App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn.
+App chrome (toolbar, tray, hints, selection rings, attention markers and local keyboard ownership) is never drawn.
 `exclude` leaves objects out: types (`["terminal"]`), ids (`["obj_…"]`, e.g. a tile to see what lies under it; a group's id takes its members with it), or both mixed. Targets are always drawn.
 
 **`view.snapshot`** is the window as the user sees it now, toolbar and all.

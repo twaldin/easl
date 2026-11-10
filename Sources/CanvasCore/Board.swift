@@ -457,8 +457,7 @@ public final class Board {
                                   props: stamped)
         if let caller {
             object.authorName = creationAuthor?(caller) ?? objects[caller].map { terminal in
-                let named = terminal.props["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
-                return AuthorMark.name(of: terminal, program: named?.isEmpty == false ? nil : authorProgram?(caller))
+                AuthorMark.name(of: terminal, program: authorProgram?(caller))
             } ?? "Terminal"
         } else {
             object.authorName = "you"

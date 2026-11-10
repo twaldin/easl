@@ -23,7 +23,7 @@ final class CanvasDocumentView: NSView {
     /// a rect fill per dot left ~100k display-list entries at 10% zoom, and one path of all dots
     /// made Core Animation union every rect on each frame of a pan.
     static func drawBackground(in dirtyRect: NSRect, pointsPerUnit scale: CGFloat, pixelsPerPoint backing: CGFloat) {
-        NSColor.underPageBackgroundColor.setFill()
+        TileChrome.color(.canvas).setFill()
         dirtyRect.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let (spacing, fade) = RenderMath.gridLevel(scale: Double(scale))
@@ -141,7 +141,7 @@ final class CanvasView: NSScrollView {
     /// Each terminal's name as the author marks of its agent's objects show it (`AuthorMarks`).
     var authorNames: [ObjectID: String] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
-    private var chromeFocusedTile: ObjectID?
+    private weak var chromeFocusedTile: TileFrameView?
     private var placingPills = false
     private(set) var selection: Set<ObjectID> = []
     private(set) var selectionSerial: UInt64 = 0
@@ -445,8 +445,10 @@ final class CanvasView: NSScrollView {
             removeTile(id)
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
-            markers.removeValue(forKey: id)?.removeFromSuperview()
-            layoutPills()
+            if let marker = markers.removeValue(forKey: id) {
+                marker.removeFromSuperview()
+                layoutPills()
+            }
             seenLocally.remove(id)
             syncAuthors(of: id)
             scheduleGeometry()
@@ -1387,10 +1389,10 @@ final class CanvasView: NSScrollView {
     }
 
     private func syncTypingFocus() {
-        let next = focusedTile
-        guard next != chromeFocusedTile else { return }
-        if let previous = chromeFocusedTile { tiles[previous]?.setTyping(false) }
-        if let next { tiles[next]?.setTyping(true) }
+        let next = focusedTile.flatMap { tiles[$0] }
+        guard next !== chromeFocusedTile else { return }
+        chromeFocusedTile?.setTyping(false)
+        next?.setTyping(true)
         chromeFocusedTile = next
     }
 
@@ -1805,8 +1807,8 @@ final class CanvasView: NSScrollView {
 
     /// View › Hide Board Chrome, for presenting: the window hides the drawing toolbar and the
     /// tray (`onChromeHiddenChange`), the canvas its selection rings and handles, author marks,
-    /// code tiles' header rows and agents' attention markers (a blocked agent's ring, bubble and
-    /// edge pill stay: it needs the user). Esc on the canvas or the menu item again shows them.
+    /// code tiles' headers and explicit look-here markers. Blocked agents, open questions and
+    /// unseen results keep their needs-you rings and pills. Esc or the menu shows chrome again.
     var chromeHidden = false {
         didSet {
             guard chromeHidden != oldValue else { return }
@@ -2368,8 +2370,16 @@ final class CanvasView: NSScrollView {
         case .question, .done: .needsYou
         }
         let message = TileChromeState.needsYouText(item)
+        var attachedTile = false
+        if let tile = tiles[id], tile.onChromeLayout == nil {
+            tile.onChromeLayout = { [weak self] in self?.layoutPills() }
+            attachedTile = true
+        }
         if let marker = markers[id], marker.style == style {
-            guard marker.message != message else { return }
+            if marker.message == message {
+                if attachedTile { layoutPills() }
+                return
+            }
             marker.message = message
         } else {
             markers.removeValue(forKey: id)?.removeFromSuperview()
@@ -2382,7 +2392,6 @@ final class CanvasView: NSScrollView {
             attention.addSubview(marker)
             markers[id] = marker
         }
-        tiles[id]?.onChromeLayout = { [weak self] in self?.layoutPills() }
         layoutPills()
         scheduleLiveness()
     }
@@ -2407,7 +2416,11 @@ final class CanvasView: NSScrollView {
         func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
         // Presenting hides explicit look-here markers, not requests for the user's action.
         let views = markers.values.filter { view in
-            if chromeHidden && view.style == .marker { view.isHidden = true; return false }
+            if chromeHidden && view.style == .marker {
+                view.isHidden = true
+                _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
+                return false
+            }
             return true
         }
         var shownRects: [ObjectIdentifier: NSRect] = [:]
@@ -2434,6 +2447,7 @@ final class CanvasView: NSScrollView {
                 shownRects[ObjectIdentifier(view)] = shown
                 continue
             }
+            _ = tiles[view.objectID]?.placeNeedsYou(width: 0)
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
             shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,
