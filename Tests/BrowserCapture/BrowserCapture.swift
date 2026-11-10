@@ -77,21 +77,39 @@ private enum BrowserCapture {
         <!doctype html><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:rgb(240,20,20)}
         #pictures{position:absolute;top:15%;height:70%;width:100%;display:grid;grid-template-columns:repeat(12,1fr)}
         img{width:100%;height:100%;min-height:0;object-fit:fill}</style><div id=pictures></div><script>
+        window.ready=false;window.onerror=(message,source,line,column,error)=>{window.ready='script error: '+(error?.stack||message)};
         let c=document.createElement('canvas');c.width=512;c.height=512;
         let x=c.getContext('2d'),p=x.createImageData(512,512),s=12345;
         for(let i=0;i<p.data.length;i+=4){s=(Math.imul(s,1664525)+1013904223)>>>0;
         p.data[i]=s&255;p.data[i+1]=(s>>>8)&255;p.data[i+2]=(s>>>16)&255;p.data[i+3]=255}x.putImageData(p,0,0);
-        let src=c.toDataURL('image/png');window.ready=false;
-        Promise.all(Array.from({length:96},()=>{let i=new Image;i.src=src;document.querySelector('#pictures').append(i);return i.decode()})).then(()=>window.ready=true);
+        let src=c.toDataURL('image/png');
+        Promise.all(Array.from({length:96},()=>{let i=new Image;i.src=src;document.querySelector('#pictures').append(i);return i.decode()})).then(()=>window.ready=true,e=>{window.ready='rejected: '+e;throw e});
         window.paint=n=>{document.body.style.background=n%2?'rgb(20,20,240)':'rgb(240,20,20)';return n};
         </script>
         """
         web.loadHTMLString(page, baseURL: nil)
         let deadline = ContinuousClock.now + .seconds(30)
+        var lastEvaluationError = "none"
         while true {
-            let ready = try? await web.evaluateJavaScript("window.ready === true")
-            if ready as? Bool == true { break }
-            try need(ContinuousClock.now < deadline, "page images did not load")
+            do {
+                if try await web.evaluateJavaScript("window.ready === true") as? Bool == true { break }
+            } catch {
+                lastEvaluationError = String(describing: error)
+            }
+            if ContinuousClock.now >= deadline {
+                let state: String
+                do {
+                    state = String(describing: try await web.evaluateJavaScript("""
+                    JSON.stringify({ready:String(window.ready),state:document.readyState,url:location.href,
+                    images:document.images.length,complete:[...document.images].filter(i=>i.complete).length,
+                    failed:[...document.images].filter(i=>i.complete&&!i.naturalWidth).length})
+                    """))
+                } catch {
+                    state = "probe error: \(error)"
+                }
+                let pageLog = await tile.readPageLog()
+                throw Failure(message: "page images did not load; state=\(state); last evaluation error=\(lastEvaluationError); native URL=\(web.url?.absoluteString ?? "nil"); loading=\(web.isLoading); page log=\(String(describing: pageLog))")
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
         try need(abs(web.bounds.width - width) < 1 && abs(web.bounds.height - height) < 1, "page viewport changed")
