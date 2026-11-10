@@ -97,25 +97,8 @@ final class LayoutApiTests {
     // MARK: Measure and fit
 
     @Test func htmlFitRetainsDraftLayoutWhenContentStateChangesLiveAndInBatch() async throws {
-        if ProcessInfo.processInfo.environment["EASL_HTML_FIT_CHILD"] != "1" {
-            let executable = CommandLine.arguments[0]
-            let result = try await Task.detached {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = ["--filter", "LayoutApiTests/htmlFitRetainsDraftLayoutWhenContentStateChangesLiveAndInBatch"]
-                process.environment = ProcessInfo.processInfo.environment.merging(["EASL_HTML_FIT_CHILD": "1"]) { _, value in value }
-                let output = Pipe()
-                process.standardOutput = output
-                process.standardError = output
-                try process.run()
-                let bytes = output.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                return (process.terminationStatus, String(decoding: bytes, as: UTF8.self))
-            }.value
-            #expect(result.1.contains("HTML_FIT_PROVED"))
-            #expect(result.0 == 0, "\(result.1)")
-            return
-        }
+        let isolated = try await runIsolatedTestIfParallel("htmlFitRetainsDraftLayoutWhenContentStateChangesLiveAndInBatch")
+        if isolated { return }
         ObjectMeasure.html = { props, width, _ in
             let configuration = WKWebViewConfiguration()
             let state = String(decoding: try JSONEncoder().encode(props["state"] ?? .object([:])), as: UTF8.self)
@@ -161,7 +144,6 @@ final class LayoutApiTests {
         let cleared = try await result("object.update", .object(["id": id,
             "props": .object(["state": .object(["draft": .null])]), "size": "fit"]))
         #expect(cleared["object"]?["frame"]?["h"]?.number == 40 + Double(RenderMath.tileTitleHeight))
-        print("HTML_FIT_PROVED")
     }
 
     @Test func codeMeasuresExactlyItsRangeWithTabsExpanded() async throws {

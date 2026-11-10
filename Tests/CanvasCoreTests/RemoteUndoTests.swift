@@ -7,7 +7,7 @@ extension BoardMirrorTests {
         let cases: [(JSONValue?, JSONValue)] = [
             (.object(["draft": "saved", "cards": "keep"]), .object(["draft": "edited", "new": "added"])),
             (.object(["draft": "saved"]), .object(["draft": .null])),
-            (.object(["draft": "saved"]), .object(["draft": .null, "submitted": "sub_test", "pending": true])),
+            (.object(["draft": "saved"]), .object(["draft": .null, "submitted": "sub_test", "pending": .bool(true)])),
             (.object(["draft": "saved"]), .null),
             (.object([:]), .null),
             (nil, .object(["draft": "added"])),

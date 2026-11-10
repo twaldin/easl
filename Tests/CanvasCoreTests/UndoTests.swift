@@ -20,7 +20,7 @@ struct UndoTests {
         for patch in [
             JSONValue.object(["draft": "edited", "new": "added"]),
             .object(["draft": .null]),
-            .object(["draft": .null, "submitted": .object(["id": "sub_test"]), "pending": true]),
+            .object(["draft": .null, "submitted": .object(["id": "sub_test"]), "pending": .bool(true)]),
             .null,
             .object([:])
         ] {

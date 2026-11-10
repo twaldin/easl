@@ -492,8 +492,8 @@ func Clone(v any) any {
 	}
 }
 
-// Merge is the shallow merge object.update uses (JSONValue.merging): keys in patch replace
-// keys in base, a null deletes; a non-object on either side yields patch.
+// Merge is shallow (JSONValue.merging): keys in patch replace keys in base, a null deletes;
+// a non-object on either side yields patch. object.update uses MergeProps.
 func Merge(base, patch any) any {
 	b, ok1 := base.(map[string]any)
 	p, ok2 := patch.(map[string]any)
