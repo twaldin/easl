@@ -55,8 +55,8 @@ public enum TileChromeLayout {
         let pillGap: CGFloat = pillWidth > 0 ? 6 : 0
         let labelEnd = end - pillWidth - pillGap
         let gap = min(6, (labelEnd - start) / CGFloat(labelCount + 1))
-        let labelsWidth = max(0, labelEnd - start - gap * CGFloat(labelCount))
-        let factor = min(1, labelsWidth / max(1, stateWidth + typingWidth + minimumTitle))
+        let labelsWidth = max(0, labelEnd - start - minimumTitle - gap * CGFloat(labelCount))
+        let factor = min(1, labelsWidth / max(1, stateWidth + typingWidth))
         let stateW = stateWidth * factor
         let typingW = typingWidth * factor
         let typingX = labelEnd - typingW

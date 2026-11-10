@@ -54,6 +54,15 @@ struct TileChromeLayoutTests {
         }
     }
 
+    @Test(arguments: [1.3, 1.5])
+    func expandedControlsKeepTheTitleMinimum(_ scale: Double) {
+        let frames = TileChromeLayout.frames(width: 280, trailing: 114, terminal: false, scale: scale, needsYouWidth: 320)
+        #expect(frames.title.width >= 32)
+        #expect(frames.title.maxX <= frames.typing.minX)
+        #expect(frames.typing.maxX <= 280 - 32 - 114)
+        #expect(frames.needsYou.width == 0)
+    }
+
     @Test(arguments: [1.0, 1.15, 1.3, 1.5])
     func fullAuthorAndPathSurviveTheFold(_ scale: Double) {
         let name = "A deliberately long creation-time author name"

@@ -35,7 +35,7 @@ struct KeyboardFocusTests {
         #expect(part(100, 13) == .handle, "the title")
         #expect(part(100, 2) == .handle, "the bar above the title")
         #expect(part(100, 24) == .handle, "and below it")
-        #expect(part(15, 13) == .handle, "the lifecycle dot")
+        #expect(part(15, 13) == .handle)
         #expect(part(930, 13) == .handle, "past the title, where a command's status sits")
         #expect(part(984, 13) == .close)
         #expect(part(996, 13) == .handle, "beside the ✕")

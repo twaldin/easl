@@ -416,11 +416,14 @@ final class TileFrameView: NSView {
         // Controls keep their existing hover and content-zoom behavior on both tracks.
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
+        let zoomSpace = needsYouWidth > 0 && zoomable && TileChromeLayout.mode(scale: ChromeText.scale) == .folded
+            ? max(zoomWidth, TileZoomControl.percentWidth(scale: ChromeText.scale) + 2 * TileZoomControl.buttonWidth)
+            : zoomWidth
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
-        let machineSpace = width - 32 - 28 - TileChrome.metadataWidth(terminal: chromeObject.type == .terminal) - zoomWidth - 8
+        let machineSpace = width - 32 - 28 - TileChrome.metadataWidth(terminal: chromeObject.type == .terminal) - zoomSpace - 8
         let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, machineSpace))
-        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth) ?? .zero
-        let trailing = (zoomWidth > 0 ? zoomWidth + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
+        machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomSpace, controlWidth: machineWidth) ?? .zero
+        let trailing = (zoomSpace > 0 ? zoomSpace + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
         let frames = TileChromeLayout.frames(width: width, trailing: trailing, terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
                                              state: chromeState.terminal != nil, typing: chromeState.typing, needsYouWidth: needsYouWidth)
         titleLabel.frame = frames.title

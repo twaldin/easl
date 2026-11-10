@@ -2440,7 +2440,8 @@ final class CanvasView: NSScrollView {
             let shown = attention.convert(rect, from: document)
             let header = headerOnScreen(view.objectID, zoom: zoom)
             if !chromeHidden, TileChromeLayout.mode(scale: ChromeText.scale) == .folded, let tile = tiles[view.objectID] {
-                let slot = tile.placeNeedsYou(width: min(view.naturalWidth, 160) / zoom)
+                let clearsHeader = TileFrameView.titleHeight * zoom >= AttentionMarker.bubbleHeight || tile.content.headerHeight == 0
+                let slot = tile.placeNeedsYou(width: clearsHeader ? min(view.naturalWidth, 160) / zoom : 0)
                 if slot.width > 0 {
                     let row = attention.convert(slot, from: tile)
                     foldedBubbles[view.objectID] = NSRect(x: row.minX, y: row.midY - AttentionMarker.bubbleHeight / 2,

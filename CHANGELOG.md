@@ -10,7 +10,7 @@ Each version's section is its GitHub release's notes.
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
 - Every tile shares a 34 pt title bar with a type glyph even for custom titles, named states, and a trailing creation-time author. Typing follows keyboard ownership; lifecycle and command states stay on terminals. Needs-you reasons use a static screen-sized pill.
-- ChromeText 100% and 115% retain two tracks. At 130% and 150%, title and state fold onto one line; the author moves to a hover tooltip and remains complete in accessibility. A needs-you pill stays inline only when its full screen-sized width fits beside title and states; otherwise the same marker uses existing outside-bar placement. API renders always use scale 1 and two tracks.
+- ChromeText 100% and 115% retain two tracks. At 130% and 150%, title and state fold onto one line; the author moves to a hover tooltip and remains complete in accessibility. A needs-you pill stays inline only when its full screen-sized width fits beside title, states and reserved hover controls without covering a content header. Otherwise the same marker uses existing outside-bar placement. API renders always use scale 1 and two tracks.
 - Both hosts store immutable `authorName` snapshots. User-made tiles say `you`; legacy tiles retain live author resolution without backfill. Stored frames stay unchanged with bodies 8 pt shorter; measurement, fit, and newly counted question geometry use 34 pt. The historical format-1 migration still adds 26 pt.
 
 ### Compatibility
