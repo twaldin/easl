@@ -1,0 +1,19 @@
+{
+  "description": "Both hosts capture immutable author names at creation. A remote viewer reads and creates through the host contract; rename, removal and save/reopen retain the captured name. Legacy absence is covered by board-file unit tests, never synthesized into a recording.",
+  "steps": [
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "terminal", "props": { "name": "Captured author", "command": ["/bin/cat"] }, "frame": { "x": 50000, "y": 50000, "w": 600, "h": 400 } }, "save": "creator", "expect": { "response.ok": true, "response.result.object.authorName": "you" } },
+    { "call": "object.create", "params": { "board": "{{board}}", "type": "note", "caller": "{{creator.object.id}}", "props": { "markdown": "captured output" }, "frame": { "x": 0, "y": 0, "w": 280, "h": 120 } }, "save": "output", "expect": { "response.ok": true, "response.result.object.authorName": "Captured author" } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{output.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Captured author" } },
+    { "call": "object.update", "params": { "id": "{{creator.object.id}}", "props": { "name": "Renamed author" } }, "expect": { "response.ok": true, "response.result.object.authorName": "you" } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{output.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Captured author" } },
+    { "call": "object.create", "conn": "viewer", "params": { "board": "{{board}}", "type": "note", "caller": "{{creator.object.id}}", "viewer": "vw_author01", "step": 1, "props": { "markdown": "remote output" }, "frame": { "x": 400, "y": 0, "w": 280, "h": 120 } }, "save": "remote", "expect": { "response.ok": true, "response.result.object.authorName": "Renamed author" } },
+    { "call": "object.get", "params": { "id": "{{remote.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Renamed author" } },
+    { "call": "object.delete", "params": { "id": "{{creator.object.id}}" }, "expect": { "response.ok": true } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{output.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Captured author" } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{remote.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Renamed author" } },
+    { "call": "board.close", "params": { "board": "{{board}}" }, "expect": { "response.ok": true } },
+    { "call": "board.open", "params": { "root": "{{root}}" }, "expect": { "response.ok": true } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{output.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Captured author" } },
+    { "call": "object.get", "conn": "viewer", "params": { "id": "{{remote.object.id}}" }, "expect": { "response.ok": true, "response.result.object.authorName": "Renamed author" } }
+  ]
+}

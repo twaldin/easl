@@ -275,6 +275,7 @@ final class CanvasView: NSScrollView {
         // Mentions name a terminal as its header does, one of a whole terminal carries its screen,
         // and one of a command's block says which `agent.read` block it is.
         board.terminalLabel = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.label }
+        board.authorProgram = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.program }
         board.terminalScreen = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.shownText() }
         board.terminalBlockIndex = { [weak self] id, command in (self?.tiles[id]?.content as? TerminalTile)?.blockIndex(of: command) }
         // A canonical id must not replace a popup's WKWebView and window.opener.

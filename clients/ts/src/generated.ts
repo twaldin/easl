@@ -767,6 +767,8 @@ export type CanvasObject = {
   rev: number;
   parent?: Id;
   createdBy: Actor;
+  /** Immutable creation-time author name, captured by the host (user: you). Preserved after creator rename or removal. Absent on legacy objects; never backfilled. */
+  authorName?: string;
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;

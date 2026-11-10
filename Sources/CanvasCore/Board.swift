@@ -93,7 +93,7 @@ public struct BoardSnapshot: Codable, Sendable {
         guard previous < Board.format else { return }
         if previous < 2 {
             for index in objects.indices where RenderMath.isTile(objects[index].type) {
-                objects[index].frame.h += RenderMath.tileTitleHeight
+                objects[index].frame.h += 26 // Format 2 added the original title bar to stored frames.
             }
         }
         if previous < 3 {
@@ -298,6 +298,9 @@ public final class Board {
     /// A terminal tile's name as its header shows it (its `props.name`, else the program running
     /// in it and the title that program set), for mentions; nil without a window. Set by the app.
     public var terminalLabel: (@MainActor (ObjectID) -> String?)?
+    /// Foreground program only, never the terminal's live OSC title; used at creation.
+    public var authorProgram: (@MainActor (ObjectID) -> String?)?
+    var creationAuthor: ((ObjectID) -> String?)?
     /// What a mention of the whole terminal quotes: the rows its view shows (soft-wrapped rows
     /// joined), `scrolledBack` rows above its live screen while the user scrolled back, else its
     /// current screen (0); nil when its session isn't running. Set by the app.
@@ -452,6 +455,14 @@ public final class Board {
         if type == .browser, !isRemote, let hostMachine { stamped = props.merging(.object(["drawingMachine": hostMachine.json])) }
         var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
                                   props: stamped)
+        if let caller {
+            object.authorName = creationAuthor?(caller) ?? objects[caller].map { terminal in
+                let named = terminal.props["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AuthorMark.name(of: terminal, program: named?.isEmpty == false ? nil : authorProgram?(caller))
+            } ?? "Terminal"
+        } else {
+            object.authorName = "you"
+        }
         object.expires = expires
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted

@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "c714651de35bbe3e"
+const SchemaHash = "252eaf2b64de1071"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -1041,9 +1041,11 @@ type CanvasObject struct {
 	Rev       int     `json:"rev"`
 	Parent    *Id     `json:"parent,omitempty"`
 	CreatedBy Actor   `json:"createdBy"`
-	UpdatedBy Actor   `json:"updatedBy,omitempty"`
-	CreatedAt string  `json:"createdAt"`
-	UpdatedAt string  `json:"updatedAt"`
+	// Immutable creation-time author name, captured by the host (user: you). Preserved after creator rename or removal. Absent on legacy objects; never backfilled.
+	AuthorName *string `json:"authorName,omitempty"`
+	UpdatedBy  Actor   `json:"updatedBy,omitempty"`
+	CreatedAt  string  `json:"createdAt"`
+	UpdatedAt  string  `json:"updatedAt"`
 	// absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled
 	Expires *string `json:"expires,omitempty"`
 	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)

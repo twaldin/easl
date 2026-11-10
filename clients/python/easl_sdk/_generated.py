@@ -381,6 +381,7 @@ class CanvasObject(TypedDict):
     rev: Required[int]
     parent: NotRequired["Id"]
     createdBy: Required["Actor"]
+    authorName: NotRequired[str]
     updatedBy: NotRequired["Actor"]
     createdAt: Required[str]
     updatedAt: Required[str]

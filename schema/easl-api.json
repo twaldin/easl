@@ -852,6 +852,7 @@
         "rev": { "type": "integer", "minimum": 1 },
         "parent": { "$ref": "#/definitions/Id" },
         "createdBy": { "$ref": "#/definitions/Actor" },
+        "authorName": { "type": "string", "description": "Immutable creation-time author name, captured by the host (user: you). Preserved after creator rename or removal. Absent on legacy objects; never backfilled." },
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
