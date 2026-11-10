@@ -131,28 +131,27 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 
 ### Measure browser capture main-thread work
 
-Use a queued macOS GUI guest for execution. Build the base (`9a1affa1fc79dbf1886d66cac4c76770577298f7`) and candidate separately with the same toolchain. Invoke the candidate checkout's runner for both builds, passing each build's bin path. The fixture uses existing production APIs and needs no base patch.
+Use a queued macOS GUI guest for execution. Build the base (`80d4d0fc05b8f291163a907080d4a9fc2b9c1ee5`) and candidate separately with the same toolchain. Invoke the candidate checkout's runner for both builds, passing each build's bin path. The fixture uses existing production APIs and needs no base patch.
 
 ```sh
 	swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
 	BIN="$(swift build --build-system native -c release --show-bin-path)"
 	# Headless macOS: link only. Do not launch AppKit or WebKit.
 	python3 Tests/BrowserCapture/run.py --bin-path "$BIN" --output /absolute/scratch/capture-compile --compile-only
-	# Queued GUI guest: CANDIDATE is the checkout containing this runner.
+	# CANDIDATE contains this runner; base must finish all phases, then fail the 15 ms gate.
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base
 	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix --compare /absolute/scratch/capture-base
-	# After calibrating LIMIT, base must fail the timing gate and candidate must pass.
-	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base-gated --max-main-ms "$LIMIT"
-	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix-gated --max-main-ms "$LIMIT"
 ```
 
 `BrowserCapture` streams a deterministic local image-rich page through the real socket, `BrowserSurfaceHost`, and `SurfaceStream`. It acknowledges frames, checks decoded dimensions, the 4MP budget, viewport, scale and requested PNG or JPEG format, and requires alternating red and blue markers with image content. Each retained phase must cover a sequenced focus input in its input fence. It awaits frame events rather than polling during measurement. Exact raster-size preservation is checked against base with `--compare`, not an assumed WebKit rounding rule. This does not prove native click presentation.
 
 The default page viewport is 4800 × 3142 points. Use identical `--width`, `--height`, `--frames`, and `--format` on both builds. PNG is the default. `results.json` includes `surface.capture`, `main.stretch50`, and `main.stretch250` under the metrics counters (absent counters mean zero), frame records, and `maxMainMs`. The latter observes real busy run-loop turns with the same activity boundaries as Metrics, including turns below 50 ms. It is not snapshot wall time. The interval includes the streaming fixture's own socket and page-update work. Decoding, pixel scans, and image artifact writes run off main.
 
-Results also record the window's backing scale and display color-space name. Pixel comparison refuses missing or different display conditions. CI runs the frame and fence checks without a timing threshold; the measured base-failure/candidate-success gate remains guest-only.
+Results also record the window's backing scale and display-color-space name. Pixel comparison refuses missing or different display conditions. The default 15 ms busy-turn limit comes from five interleaved release runs per arm at the fitted 4MP cap on a Swift 6.4 guest, backing scale 1 and Apple Virtual color space: base maxima 20.04–22.85 ms, candidate 5.82–6.34 ms. Separate profiles place snapshot conversion on main before the fix and on a worker afterward. This is a regression threshold for this fixture, not a universal latency SLA.
 
-Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format, and phase count. No timing threshold is invented: without `--max-main-ms`, the runner reports measurements and makes no timing pass claim. Calibration must demonstrate base failure and candidate success before claiming the regression is fixed. Each output directory retains its own linked executable through cleanup; repeated runs never overwrite the compared builds or an earlier run's binary.
+CI explicitly uses `--ci-timing-report-only`: frame, focus-fence and pixel assertions remain strict, but shared-runner timing is reported rather than enforced. Normal guest runs enforce 15 ms; `--max-main-ms` overrides that limit when qualifying another measured environment. A timing failure counts as baseline proof only when `results.json` contains every requested phase and an exceeded limit. A timeout or page/frame failure does not count.
+
+Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format and phase count. Each output directory retains its own linked executable through cleanup; repeated runs never overwrite compared builds or an earlier run's binary.
 
 ### Browser response and sharp-settle gates
 

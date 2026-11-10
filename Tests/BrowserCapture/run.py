@@ -20,7 +20,8 @@ def main():
     parser.add_argument('--height', type=int, default=3142)
     parser.add_argument('--frames', type=int, default=12)
     parser.add_argument('--format', choices=('png', 'jpeg'), default='png')
-    parser.add_argument('--max-main-ms', type=float)
+    parser.add_argument('--max-main-ms', type=float, default=15, help='Maximum main busy turn; default 15 ms from paired guest calibration')
+    parser.add_argument('--ci-timing-report-only', action='store_true', help='Report timing without enforcing the calibrated limit; keep frame, fence and pixel checks strict')
     parser.add_argument('--compare', type=pathlib.Path, help='Prior run output directory; compare decoded fixed-phase RGBA bytes')
     parser.add_argument('--max-channel-error', type=int, default=0)
     args = parser.parse_args()
@@ -28,7 +29,7 @@ def main():
         parser.error('Compilation and execution require macOS; --compile-only never runs AppKit.')
     if not (64 <= args.width <= 16384 and 64 <= args.height <= 16384 and args.frames >= 2):
         parser.error('Viewport axes must be 64..16384 and --frames at least 2.')
-    if args.max_main_ms is not None and (not math.isfinite(args.max_main_ms) or args.max_main_ms <= 0):
+    if not math.isfinite(args.max_main_ms) or args.max_main_ms <= 0:
         parser.error('--max-main-ms must be finite and positive.')
     if not 0 <= args.max_channel_error <= 255:
         parser.error('--max-channel-error must be 0..255.')
@@ -77,7 +78,7 @@ def main():
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary, XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE='1')
         environment.pop('EASL_ROOT', None)
         subprocess.run([str(executable), str(output), str(args.width), str(args.height), str(args.frames),
-                        args.format, str(args.max_main_ms or 0)], cwd=root, env=environment,
+                        args.format, str(0 if args.ci_timing_report_only else args.max_main_ms)], cwd=root, env=environment,
                        check=True, timeout=90 + args.frames * 35)
     if args.compare:
         baseline = json.loads((args.compare / 'results.json').read_text())
@@ -98,8 +99,8 @@ def main():
         (output / 'comparison.json').write_text(json.dumps(comparisons, indent=2) + '\n')
         if any(c['maxChannelError'] > args.max_channel_error for c in comparisons):
             parser.error('Decoded pixels exceeded --max-channel-error; see comparison.json.')
-    if args.max_main_ms is None:
-        print('Measurements only: no main-thread timing pass claim (no --max-main-ms supplied).')
+    if args.ci_timing_report_only:
+        print('Measurements only: no main-thread timing pass claim (--ci-timing-report-only).')
 
 
 if __name__ == '__main__':
