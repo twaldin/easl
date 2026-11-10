@@ -681,7 +681,7 @@ func (b *Board) write(id string, rev *int, frame *model.Frame, z *float64, props
 	}
 	if props != nil {
 		intent, hasIntent := o.Props["urlIntent"]
-		o.Props, _ = model.Merge(o.Props, props).(map[string]any)
+		o.Props = model.MergeProps(o.Type, o.Props, props)
 		if o.Type == model.Browser {
 			if hasIntent {
 				o.Props["urlIntent"] = intent

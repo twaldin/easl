@@ -428,7 +428,7 @@ export type HtmlProps = {
   /** the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root */
   root?: string;
   allowNetwork?: string[];
-  /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
+  /** Saved HTML tile state, at most 256 KiB. On update/upsert/batch, top-level state keys merge: null deletes a key; state: null clears all state. The page owns draft keys; agents own content keys and applied. submitted is reserved to native canvasKit.submit. Drafts are not instructions until Submit. */
   state?: Record<string, unknown>;
   zoom?: Zoom;
   key?: ObjectKey;
@@ -2481,7 +2481,7 @@ export interface CanvasApi {
     update(params: AppUpdateParams): Promise<AppUpdateResult>;
   };
   board: {
-    /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
+    /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` includes its byte count, state key count, and pending submission id; HTML `state` is omitted. A follow tile's `history` becomes a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
     /** Undo this remote viewer's latest host-accepted step at or before step. Only fields still equal to the values that step wrote are reverted; concurrent edits remain and their objects appear in kept. The host retains up to 200 steps per viewer in memory. Nothing from another viewer or agent enters this viewer's history. */
     undo(params: BoardUndoParams): Promise<BoardUndoResult>;

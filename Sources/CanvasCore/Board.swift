@@ -573,6 +573,10 @@ public final class Board {
         if let z { object.z = z }
         if let props {
             object.props = object.props.merging(props)
+            if object.type == .html, let state = props["state"]?.object {
+                let merged = (before.props["state"] ?? .object([:])).merging(.object(state))
+                object.props = object.props.merging(.object(["state": merged]))
+            }
             // A code tile aimed elsewhere without an anchor drops its old one, which named the
             // first line of the range it showed before.
             if object.type == .code, props["anchor"] == nil,

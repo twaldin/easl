@@ -27,10 +27,15 @@ private enum HtmlSend {
         window.marker = "\(marker)";
         document.getElementById("go").addEventListener("click", () => {
           window.domSent = window.canvasKit.send({tag: "dom"});
+          window.domSubmit = window.canvasKit.submit(["draft"]).then(() => false, () => true);
         });
         if (\(autoSend)) {
           window.canvasKit.send({tag: "load"});
-          setTimeout(() => window.canvasKit.send({tag: "timer"}), 250);
+          window.loadSubmit = window.canvasKit.submit(["draft"]).then(() => false, () => true);
+          setTimeout(() => {
+            window.canvasKit.send({tag: "timer"});
+            window.timerSubmit = window.canvasKit.submit(["draft"]).then(() => false, () => true);
+          }, 250);
         }
         </script>
         """
@@ -42,6 +47,11 @@ private enum HtmlSend {
 
     private static func pageSend(_ web: WKWebView, _ tag: String) async throws {
         _ = try await web.callAsyncJavaScript("await window.canvasKit.send({tag: tag})", arguments: ["tag": tag], contentWorld: .page)
+    }
+
+    private static func submitRefused(_ web: WKWebView) async throws -> Bool {
+        try await web.callAsyncJavaScript("try { await canvasKit.submit(['draft']); return false; } catch { return true; }",
+                                        arguments: [:], contentWorld: .page) as? Bool == true
     }
 
     private static func wait(until condition: @MainActor () -> Bool, _ message: String, limit: Duration = .seconds(8)) async throws {
@@ -112,7 +122,8 @@ private enum HtmlSend {
         canvas.show(Viewport(rect: Frame(x: -410, y: -310, w: 820, h: 620), zoom: 1))
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
         try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp", protocol: 3)
-        let object = board.create(type: .html, props: .object(["html": .string(pageHTML(marker: "GEN1", autoSend: true))]), frame: frame, caller: terminal.id)
+        let object = board.create(type: .html, props: .object(["html": .string(pageHTML(marker: "GEN1", autoSend: true)),
+                                                             "state": .object(["draft": "saved", "notes": "retained"])]), frame: frame, caller: terminal.id)
         let tile = try await htmlTile(canvas, object.id)
         let web = try await page(in: tile)
         try await loaded(web)
@@ -121,6 +132,10 @@ private enum HtmlSend {
         let automatic = board.htmlMessages[terminal.id] ?? []
         try require(automatic.allSatisfy { $0.mayStartTurn == false }, "a load or timer send must not start a turn: \(automatic.map(\.mayStartTurn))")
         check("load and timer sends stayed inert")
+        let automaticSubmits = try await web.callAsyncJavaScript("return await Promise.all([window.loadSubmit, window.timerSubmit])", arguments: [:], contentWorld: .page) as? [Bool]
+        try require(automaticSubmits == [true, true] && board.objects[object.id]?.props["state"]?["submitted"] == nil,
+                    "load and timer Submit must refuse without recording an instruction")
+        check("load and timer Submit stayed inert")
 
         let inside = web.convert(NSPoint(x: web.bounds.width - 30, y: web.bounds.height / 2), to: nil)
         NSApp.sendEvent(mouse(.leftMouseDown, at: inside, in: window))
@@ -144,6 +159,9 @@ private enum HtmlSend {
         try await wait(until: { board.htmlMessages[terminal.id]?.last?.text == "{\"tag\":\"dom\"}" }, "the DOM click handler must send")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "a DOM click must not arm a permit")
         check("DOM click did not authorize")
+        let domSubmit = try await web.callAsyncJavaScript("return await window.domSubmit", arguments: [:], contentWorld: .page) as? Bool
+        try require(domSubmit == true && board.objects[object.id]?.props["state"]?["submitted"] == nil,
+                    "a DOM click must not authorize Submit")
 
         NSApp.sendEvent(mouse(.leftMouseDown, at: inside, in: window))
         try await Task.sleep(for: .milliseconds(1600))
@@ -192,9 +210,38 @@ private enum HtmlSend {
         NSApp.sendEvent(key(in: window))
         try await pageSend(web, "tile-key")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == true, "a native key while the tile owns the keyboard must authorize one send")
+        let submitAfterSend = try await submitRefused(web)
+        try require(submitAfterSend, "Submit must not reuse the permit consumed by send")
         try await pageSend(web, "same-key")
         try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "one native key must not authorize a second send")
         check("keyboard ownership restricted the key gesture")
+        let count = board.htmlMessages[terminal.id]?.count ?? 0
+        NSApp.sendEvent(mouse(.leftMouseDown, at: replacementPoint, in: window))
+        let submission = try await web.callAsyncJavaScript("return await canvasKit.submit(['draft'])", arguments: [:], contentWorld: .page) as? [String: Any]
+        guard let id = submission?["id"] as? String, let queued = board.htmlMessages[terminal.id]?.last else {
+            throw Failure(message: "native Submit returned no instruction or queued message")
+        }
+        try require(id.hasPrefix("sub_") && board.htmlMessages[terminal.id]?.count == count + 1,
+                    "one native click must queue one Submit")
+        let state = board.objects[object.id]?.props["state"]
+        let payload = try JSONDecoder().decode(JSONValue.self, from: Data(queued.text.utf8))
+        try require(payload == .object(["submit": .string(id), "fields": .object(["draft": "saved"])]) && queued.mayStartTurn == true,
+                    "Submit must queue exactly the saved selected fields")
+        try require(state?["draft"] == nil && state?["notes"] == "retained" && state?["submitted"]?["id"]?.string == id,
+                    "Submit must record the instruction and clear only its draft")
+        let repeated = try await submitRefused(web)
+        try require(repeated && board.htmlMessages[terminal.id]?.count == count + 1,
+                    "one native click must not authorize a second Submit")
+        try await pageSend(web, "after-submit")
+        try require(board.htmlMessages[terminal.id]?.last?.mayStartTurn == false, "send must not reuse Submit's permit")
+        check("native Submit consumed the shared permit once")
+        let submittedState = board.objects[object.id]?.props["state"]
+        do {
+            _ = try await tile.handle(.submit(keys: ["notes"]), rendering: true, mayStartTurn: true)
+            throw Failure(message: "offscreen Submit must refuse")
+        } catch is HtmlError {}
+        try require(board.objects[object.id]?.props["state"] == submittedState && board.htmlMessages[terminal.id]?.count == count + 2,
+                    "offscreen Submit must leave state and queue unchanged")
         check("native send gate held")
     }
 

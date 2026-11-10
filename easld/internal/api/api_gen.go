@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "8b6bda8201bbc5a3"
+const SchemaHash = "07e028ce25c31f17"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -673,7 +673,7 @@ type HtmlProps struct {
 	// the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root
 	Root         *string  `json:"root,omitempty"`
 	AllowNetwork []string `json:"allowNetwork,omitempty"`
-	// tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB
+	// Saved HTML tile state, at most 256 KiB. On update/upsert/batch, top-level state keys merge: null deletes a key; state: null clears all state. The page owns draft keys; agents own content keys and applied. submitted is reserved to native canvasKit.submit. Drafts are not instructions until Submit.
 	State map[string]any `json:"state,omitempty"`
 	Zoom  *Zoom          `json:"zoom,omitempty"`
 	Key   *ObjectKey     `json:"key,omitempty"`

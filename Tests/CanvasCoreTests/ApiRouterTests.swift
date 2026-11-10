@@ -41,6 +41,37 @@ final class ApiRouterTests {
         board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
     }
 
+    @Test func htmlRefreshMergesKeysAndManifestsHideState() async throws {
+        let client = try connect()
+        let created = try await call(client, "object.upsert", ["key": "kanban", "type": "html", "props": .object([
+            "html": "<p>x</p>", "state": .object(["draft": "move", "cards": "old"])
+        ])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .object(["cards": "new"])])])
+        #expect(board.objects[id]?.props["state"] == .object(["draft": "move", "cards": "new"]))
+        _ = try await call(client, "object.upsert", ["key": "kanban", "type": "html", "props": .object(["state": .object(["cards": "newer"])])])
+        #expect(board.objects[id]?.props["state"]?["draft"] == "move")
+        _ = try await call(client, "object.batch", ["ops": .array([.object(["method": "object.update", "params": .object([
+            "id": .string(id), "props": .object(["state": .object(["cards": "latest", "draft": .null,
+                "submitted": .object(["id": "sub_proof", "fields": .object(["draft": "move"])])])])
+        ])])])])
+        #expect(board.objects[id]?.props["state"]?["cards"] == "latest")
+        #expect(board.objects[id]?.props["state"]?["draft"] == nil)
+        for method in ["board.get", "object.find"] {
+            let manifest = try await call(client, method, [:])
+            let object = try #require(manifest["result"]?["objects"]?.array?.first { $0["id"]?.string == id })
+            #expect(object["props"]?["state"] == nil)
+            #expect(object["props"]?["html"] == "(8 bytes, state 2 keys, submission sub_proof pending, use object.get)")
+        }
+        let full = try await call(client, "object.get", ["id": .string(id)])
+        #expect(full["result"]?["object"]?["props"]?["state"]?["submitted"]?["fields"]?["draft"] == "move")
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .object(["applied": "sub_proof"])])])
+        let applied = try await call(client, "object.find", ["key": "kanban"])
+        #expect(applied["result"]?["objects"]?.array?.first?["props"]?["html"] == "(8 bytes, state 3 keys, submission sub_proof, use object.get)")
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .null])])
+        #expect(board.objects[id]?.props["state"] == nil)
+    }
+
     @Test func seenReturnsCanonicalTerminalOnlyForAcceptedRevision() async throws {
         let tile = terminal()
         let client = try connect()

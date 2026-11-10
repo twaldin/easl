@@ -28,6 +28,7 @@ struct HtmlMessageTests {
         #expect(try message(#"{"type":"view.rendered","scrollY":120}"#) == .rendered(scrollY: 120))
         #expect(try message(#"{"type":"send","payload":{"choice":"b"}}"#) == .send(payload: .object(["choice": .string("b")])))
         #expect(try message(#"{"type":"send","payload":null}"#) == .send(payload: .null))
+        #expect(try message(#"{"type":"state.submit","keys":["draft","notes"]}"#) == .submit(keys: ["draft", "notes"]))
     }
 
     @Test func rejectsUnknownTypesAndFields() {
@@ -59,6 +60,22 @@ struct HtmlMessageTests {
         #expect(rejection(#"{"type":"state.set","key":"../x","value":1}"#) != nil)
         #expect(rejection(#"{"type":"state.set","key":"k"}"#) == .invalidField("value", "required"))
         #expect(rejection(#"{"type":"view.rendered","scrollY":-1}"#) != nil)
+    }
+
+    @Test func submitAcceptsOnlyBoundedUnreservedStateKeys() throws {
+        for keys in ["null", #""draft""#, "[]", "[1]", #"["draft","draft"]"#,
+                     #"["submitted"]"#, #"["applied"]"#, #"["../draft"]"#, #"[""]"#, #"["é"]"#] {
+            #expect(rejection(#"{"type":"state.submit","keys":\#(keys)}"#) != nil)
+        }
+        #expect(rejection(#"{"type":"state.submit"}"#) != nil)
+        #expect(rejection(#"{"type":"state.submit","keys":["draft"],"mayStartTurn":true}"#) == .unexpectedField("mayStartTurn"))
+        #expect(rejection(#"{"type":"state.set","key":"submitted","value":null}"#) != nil)
+        let keys = (0..<16).map { JSONValue.string("draft.\($0):a-b_c") }
+        #expect(try HtmlMessage.parse(.object(["type": "state.submit", "keys": .array(keys)])) == .submit(keys: keys.compactMap(\.string)))
+        #expect(throws: HtmlError.self) {
+            try HtmlMessage.parse(.object(["type": "state.submit", "keys": .array(keys + ["extra"])]))
+        }
+        #expect(rejection(#"{"type":"state.submit","keys":["\#(String(repeating: "a", count: 129))"]}"#) != nil)
     }
 
     @Test func rejectsOversizeMessagesAndValues() {
@@ -439,6 +456,11 @@ struct HtmlChannelTests {
         _ = try await HtmlChannel.handle(.setState(key: "plan", value: .null), tile: html.id, board: board)
         let got = try await HtmlChannel.handle(.getState(key: "plan"), tile: html.id, board: board)
         #expect(got == .object(["value": .null]))
+        #expect(try board.object(html.id).props["state"]?["plan"] == nil, "the merge applies the deletion tombstone")
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.setState(key: "submitted", value: .object(["id": "forged"])), tile: html.id, board: board)
+        }
+        #expect(try board.object(html.id).props["state"]?["submitted"] == nil)
 
         let chunk = JSONValue.string(String(repeating: "z", count: 15_000))
         await #expect(throws: HtmlError.self, "total state is capped") {

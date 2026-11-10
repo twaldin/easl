@@ -19,6 +19,7 @@ public enum HtmlChannel {
             // A page's messages are queued on this mirror, whose queue the host's integrations
             // never drain: nothing here can hand one to a terminal on the board's host.
             if case .send = message { throw HtmlError.unavailable("canvasKit.send is unsupported on remote boards") }
+            if case .submit = message { throw HtmlError.unavailable("Submit is unsupported on remote boards") }
             if files == nil { throw HtmlError.unavailable("host file reader is unavailable") }
         }
         switch message {
@@ -76,10 +77,12 @@ public enum HtmlChannel {
             return state(try board.object(tile).props, key: key)
 
         case .setState(let key, let value):
+            guard key != "submitted" else { throw HtmlError.invalidField("key", "submitted is reserved for Submit") }
             var state = try board.object(tile).props["state"]?.object ?? [:]
             if value == .null { state.removeValue(forKey: key) } else { state[key] = value }
             let size = (try? JSONEncoder().encode(state).count) ?? Int.max
             guard size <= maxStateBytes else { throw HtmlError.tooLarge(size, limit: maxStateBytes) }
+            state[key] = value
             try board.update(tile, props: .object(["state": .object(state)]))
             return .object([:])
 
@@ -88,6 +91,26 @@ public enum HtmlChannel {
 
         case .send(let payload):
             return try send(payload, tile: tile, board: board, mayStartTurn: mayStartTurn, now: now)
+
+        case .submit(let keys):
+            try HtmlMessage.checkSubmitKeys(keys)
+            guard mayStartTurn else { throw HtmlError.unavailable("Submit requires a fresh native click or key") }
+            let object = try board.object(tile)
+            guard object.type == .html else { throw HtmlError.unavailable("Submit is only available to HTML tiles") }
+            var state = object.props["state"]?.object ?? [:]
+            var fields: [String: JSONValue] = [:]
+            for key in keys {
+                fields[key] = state.removeValue(forKey: key) ?? .null
+            }
+            let id = IDs.make("sub")
+            state["submitted"] = .object(["id": .string(id), "at": .string(now.formatted(.iso8601)), "fields": .object(fields)])
+            let size = (try? JSONEncoder().encode(state).count) ?? Int.max
+            guard size <= maxStateBytes else { throw HtmlError.tooLarge(size, limit: maxStateBytes) }
+            let payload: JSONValue = .object(["submit": .string(id), "fields": .object(fields)])
+            let reply = try send(payload, tile: tile, board: board, mayStartTurn: true, now: now)
+            for key in keys { state[key] = .null }
+            try board.update(tile, props: .object(["state": .object(state)]))
+            return reply.merging(.object(["id": .string(id)]))
         }
     }
 

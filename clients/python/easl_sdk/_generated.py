@@ -684,7 +684,7 @@ class BoardApi:
         self._call = call
 
     def get(self, *, board: "Id" | None = None, viewer: "ViewerId" | None = None, since: int | None = None, branch: str | None = None) -> dict[str, Any]:
-        """Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged."""
+        """Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` includes its byte count, state key count, and pending submission id; HTML `state` is omitted. A follow tile's `history` becomes a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged."""
         params = {"board": board, "viewer": viewer, "since": since, "branch": branch}
         return self._call("board.get", params, ["board"])
 

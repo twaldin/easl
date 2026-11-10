@@ -42,6 +42,7 @@ A tile shows code, changes, a note, a diagram, an image, a video, a browser, HTM
 A `group` is a titled region with explicit `members`. Update your own group's list when adding tiles. Arrows carry a machine-readable `relation`.
 Use stable keys: `props.key` on create, top-level `key` on `object.upsert`. Keys are unique per board.
 Upsert updates in place. Find by `object.find --key <key>` or `--keyPrefix <prefix>`. A key/type conflict means inspect, not overwrite.
+HTML state merges per key, so agent content refreshes preserve page drafts. Drafts are saved, not instructions. `canvasKit.submit(keys)` records the saved fields; local boards wake the creating agent; remote boards refuse Submit. Validate submitted data, apply it, and write `applied` with the refreshed content. See [HTML explainers](references/html-explainers.md#drafts-and-submit).
 Caption code tiles with what to notice and name new terminals. Go to, ⌘P, searches titles, captions, terminal names, files and `@symbols`.
 Write repo-relative `path:line` links. From a worktree, paths are relative to that worktree, not `../worktree/…`.
 Use `ref` for branch-lived evidence and `pinnedCommit` for a historical code snapshot. Live ranges and note fences follow their code.

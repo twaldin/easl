@@ -1,7 +1,7 @@
 {
   "scenario": "objects-crud",
   "description": "Create, read, update and delete objects of the types that need no live surface; props merge, null deletes a prop, revisions, conflicts, warnings, and the errors of each.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "scratch easld genui-contract, provisional; guest Mac recording required",
   "steps": [
     {
       "step": "board.open",
@@ -1012,13 +1012,261 @@
       }
     },
     {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "key": "kanban",
+        "props": {
+          "html": "<p>kanban</p>",
+          "state": {
+            "cards": "old",
+            "draft": {
+              "move": "Doing"
+            },
+            "removed": true
+          }
+        },
+        "type": "html"
+      },
+      "response": {
+        "id": "r25",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 506,
+              "w": 640,
+              "x": -320,
+              "y": -530
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>kanban</p>",
+              "key": "kanban",
+              "state": {
+                "cards": "old",
+                "draft": {
+                  "move": "Doing"
+                },
+                "removed": true
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 506,
+              "w": 640,
+              "x": -320,
+              "y": -530
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>kanban</p>",
+              "key": "kanban",
+              "state": {
+                "cards": "old",
+                "draft": {
+                  "move": "Doing"
+                },
+                "removed": true
+              }
+            },
+            "rev": "<rev:1>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "z": 6
+          },
+          "event": "object.created"
+        }
+      ]
+    },
+    {
+      "step": "object.update",
+      "method": "object.update",
+      "request": {
+        "id": "<obj:6>",
+        "props": {
+          "state": {
+            "cards": "fresh",
+            "removed": null,
+            "submitted": {
+              "fields": {
+                "draft": {
+                  "move": "Done"
+                }
+              },
+              "id": "sub_proof"
+            }
+          }
+        }
+      },
+      "response": {
+        "id": "r26",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 506,
+              "w": 640,
+              "x": -320,
+              "y": -530
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>kanban</p>",
+              "key": "kanban",
+              "state": {
+                "cards": "fresh",
+                "draft": {
+                  "move": "Doing"
+                },
+                "submitted": {
+                  "fields": {
+                    "draft": {
+                      "move": "Done"
+                    }
+                  },
+                  "id": "sub_proof"
+                }
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 506,
+              "w": 640,
+              "x": -320,
+              "y": -530
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>kanban</p>",
+              "key": "kanban",
+              "state": {
+                "cards": "fresh",
+                "draft": {
+                  "move": "Doing"
+                },
+                "submitted": {
+                  "fields": {
+                    "draft": {
+                      "move": "Done"
+                    }
+                  },
+                  "id": "sub_proof"
+                }
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.get",
+      "method": "object.get",
+      "request": {
+        "id": "<obj:6>"
+      },
+      "response": {
+        "id": "r27",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 506,
+              "w": 640,
+              "x": -320,
+              "y": -530
+            },
+            "id": "<obj:6>",
+            "props": {
+              "html": "<p>kanban</p>",
+              "key": "kanban",
+              "state": {
+                "cards": "fresh",
+                "draft": {
+                  "move": "Doing"
+                },
+                "submitted": {
+                  "fields": {
+                    "draft": {
+                      "move": "Done"
+                    }
+                  },
+                  "id": "sub_proof"
+                }
+              }
+            },
+            "rev": "<rev:2>",
+            "type": "html",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 6
+          }
+        }
+      }
+    },
+    {
       "step": "board.get",
       "method": "board.get",
       "request": {
         "board": "<board>"
       },
       "response": {
-        "id": "r25",
+        "id": "r28",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -1115,6 +1363,30 @@
               "type": "shape",
               "updatedAt": "<time:number>",
               "z": 5
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 506,
+                "w": 640,
+                "x": -320,
+                "y": -530
+              },
+              "id": "<obj:6>",
+              "props": {
+                "html": "(13 bytes, state 3 keys, submission sub_proof pending, use object.get)",
+                "key": "kanban"
+              },
+              "rev": "<rev:2>",
+              "type": "html",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 6
             }
           ],
           "revision": "<board:1>",

@@ -12,6 +12,8 @@ public enum HtmlMessage: Equatable, Sendable {
     case getState(key: String?)
     /// Persist one state key; `null` removes it.
     case setState(key: String, value: JSONValue)
+    /// Submit saved fields as one gesture-authorized instruction.
+    case submit(keys: [String])
     /// The page finished (re)rendering or scrolling; the tile refreshes its snapshot.
     case rendered(scrollY: Double?)
     /// `canvasKit.send(payload)`: hand a JSON value to the agent terminal that created the tile.
@@ -29,6 +31,7 @@ public enum HtmlMessage: Equatable, Sendable {
         "code.open": ["path", "lines", "symbol"],
         "state.get": ["key"],
         "state.set": ["key", "value"],
+        "state.submit": ["keys"],
         "view.rendered": ["scrollY"],
         "send": ["payload"],
         "object.goTo": ["id", "key"],
@@ -56,12 +59,21 @@ public enum HtmlMessage: Equatable, Sendable {
         case "code.open":
             return .openCode(path: try path(object), lines: try lines(object), symbol: try symbol(object))
         case "state.get":
-            return .getState(key: object["key"] == nil ? nil : try key(object))
+            return .getState(key: object["key"] == nil ? nil : try key(object["key"]))
         case "state.set":
+            let key = try key(object["key"])
+            guard key != "submitted" else { throw HtmlError.invalidField("key", "submitted is reserved for Submit") }
             guard let value = object["value"] else { throw HtmlError.invalidField("value", "required") }
             let size = (try? JSONEncoder().encode(value).count) ?? Int.max
             guard size <= maxStateValueBytes else { throw HtmlError.tooLarge(size, limit: maxStateValueBytes) }
-            return .setState(key: try key(object), value: value)
+            return .setState(key: key, value: value)
+        case "state.submit":
+            guard let values = object["keys"]?.array, values.allSatisfy({ $0.string != nil }) else {
+                throw HtmlError.invalidField("keys", "must be an array of state keys")
+            }
+            let keys = values.compactMap(\.string)
+            try checkSubmitKeys(keys)
+            return .submit(keys: keys)
         case "send":
             guard let payload = object["payload"] else { throw HtmlError.invalidField("payload", "required") }
             try checkPayload(payload)
@@ -106,12 +118,24 @@ public enum HtmlMessage: Equatable, Sendable {
         return symbol
     }
 
-    private static func key(_ object: [String: JSONValue]) throws -> String {
-        guard let key = object["key"]?.string, (1...128).contains(key.count),
+    private static func key(_ value: JSONValue?) throws -> String {
+        guard let key = value?.string, (1...128).contains(key.count),
               key.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0)) }) else {
             throw HtmlError.invalidField("key", "must be 1-128 characters of [A-Za-z0-9_.:-]")
         }
         return key
+    }
+
+    static func checkSubmitKeys(_ keys: [String]) throws {
+        guard (1...16).contains(keys.count), Set(keys).count == keys.count else {
+            throw HtmlError.invalidField("keys", "must contain 1-16 distinct state keys")
+        }
+        for name in keys {
+            _ = try key(.string(name))
+            guard name != "submitted", name != "applied" else {
+                throw HtmlError.invalidField("keys", "submitted and applied cannot be submitted")
+            }
+        }
     }
 
     static func checkPayload(_ payload: JSONValue) throws {

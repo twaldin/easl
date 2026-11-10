@@ -449,7 +449,7 @@
         "refSha": { "type": "string", "description": "written by easl: the SHA `ref` last resolved to (as CodeProps.refSha)" },
         "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
-        "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
+        "state": { "type": "object", "description": "Saved HTML tile state, at most 256 KiB. On update/upsert/batch, top-level state keys merge: null deletes a key; state: null clears all state. The page owns draft keys; agents own content keys and applied. submitted is reserved to native canvasKit.submit. Drafts are not instructions until Submit." },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
@@ -1367,7 +1367,7 @@
       }
     },
     "board.get": {
-      "description": "Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged.",
+      "description": "Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` includes its byte count, state key count, and pending submission id; HTML `state` is omitted. A follow tile's `history` becomes a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged.",
       "params": {
         "type": "object",
         "properties": {

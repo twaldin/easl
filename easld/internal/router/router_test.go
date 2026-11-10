@@ -265,6 +265,82 @@ func TestAKeyAnotherObjectHoldsIsAConflictNamingIt(t *testing.T) {
 	}
 }
 
+func TestHTMLStateMergesAcrossUpdateUpsertAndBatch(t *testing.T) {
+	f := newFixture(t)
+	id := idOf(f.result("object.upsert", map[string]any{"key": "kanban", "type": "html", "props": map[string]any{
+		"html": "<p>x</p>", "state": map[string]any{"draft": "saved", "cards": "old"},
+	}}))
+	assertState := func(want map[string]any) {
+		t.Helper()
+		got := asMap(asMap(f.result("object.get", map[string]any{"id": id})["object"])["props"])["state"]
+		if want == nil && got == nil {
+			return
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("state = %v, want %v", got, want)
+		}
+	}
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"cards": "new"}}})
+	assertState(map[string]any{"draft": "saved", "cards": "new"})
+	f.result("object.upsert", map[string]any{"key": "kanban", "type": "html", "props": map[string]any{"state": map[string]any{"cards": nil, "applied": "sub_1"}}})
+	assertState(map[string]any{"draft": "saved", "applied": "sub_1"})
+	f.result("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"cards": "batch"}}}},
+		upsertOp("kanban", "html", map[string]any{"state": map[string]any{"applied": nil}}),
+	}})
+	assertState(map[string]any{"draft": "saved", "cards": "batch"})
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": nil}})
+	assertState(nil)
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"missing": nil, "draft": "again"}}})
+	assertState(map[string]any{"draft": "again"})
+}
+
+func TestHTMLManifestStateSummary(t *testing.T) {
+	for _, applied := range []string{"", "sub_1"} {
+		f := newFixture(t)
+		state := map[string]any{"draft": "private", "submitted": map[string]any{"id": "sub_1"}, "applied": applied}
+		id := idOf(f.result("object.create", map[string]any{"type": "html", "props": map[string]any{"html": "hello", "state": state}}))
+		want := "(5 bytes, state 3 keys, submission sub_1"
+		if applied == "" {
+			want += " pending"
+		}
+		want += ", use object.get)"
+		for _, result := range []map[string]any{
+			f.result("board.get", map[string]any{}),
+			f.result("object.find", map[string]any{"type": "html"}),
+		} {
+			objects := result["objects"].([]any)
+			props := asMap(asMap(objects[0])["props"])
+			if _, present := props["state"]; present || props["html"] != want {
+				t.Fatalf("manifest props = %v", props)
+			}
+		}
+		props := asMap(asMap(f.result("object.get", map[string]any{"id": id})["object"])["props"])
+		if !reflect.DeepEqual(props["state"], state) || props["html"] != "hello" {
+			t.Fatalf("full props = %v", props)
+		}
+	}
+}
+
+func TestBatchSimulationMergesHTMLState(t *testing.T) {
+	f := newFixture(t)
+	o := f.board.Create(model.HTML, map[string]any{"state": map[string]any{"draft": "keep", "cards": "old"}}, nil, "", "")
+	state := batchState{live: f.board, inputs: map[string]batchInput{}}
+	if err := state.advance("object.update", map[string]any{"id": o.ID, "props": map[string]any{"state": map[string]any{"cards": "new", "missing": nil}}}, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.inputs[o.ID].object.Props["state"]; !reflect.DeepEqual(got, map[string]any{"draft": "keep", "cards": "new"}) {
+		t.Fatalf("planned state = %v", got)
+	}
+}
+
+func TestHTMLSummaryWithoutStateKeepsExistingFormat(t *testing.T) {
+	o := summarized(model.Object{Type: model.HTML, Props: map[string]any{"html": "hello"}})
+	if o.Props["html"] != "(5 bytes, use object.get)" {
+		t.Fatalf("stateless summary = %v", o.Props)
+	}
+}
+
 func TestUpsertingAgainKeepsTheIdAndChangesOnlyProps(t *testing.T) {
 	f := newFixture(t)
 	created := f.result("object.upsert", map[string]any{"key": "REL-7", "type": "note", "props": map[string]any{"markdown": "open"}, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 200.0, "h": 100.0}})

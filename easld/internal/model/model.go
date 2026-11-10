@@ -511,6 +511,33 @@ func Merge(base, patch any) any {
 	return out
 }
 
+// MergeProps preserves independently authored HTML state keys; other props stay shallow.
+func MergeProps(typ ObjectType, base, patch map[string]any) map[string]any {
+	state, mergingState := patch["state"].(map[string]any)
+	if typ != HTML || !mergingState {
+		out, _ := Merge(base, patch).(map[string]any)
+		return out
+	}
+	out := make(map[string]any, len(base)+len(patch))
+	for key, value := range base {
+		if _, replaced := patch[key]; !replaced {
+			out[key] = Clone(value)
+		}
+	}
+	for key, value := range patch {
+		if key == "state" {
+			stored, _ := base["state"].(map[string]any)
+			if stored == nil {
+				stored = map[string]any{}
+			}
+			out[key] = Merge(stored, state)
+		} else if value != nil {
+			out[key] = Clone(value)
+		}
+	}
+	return out
+}
+
 // DiagramGraphValue selects authored knowledge independently of the old calls cache.
 func DiagramGraphValue(props map[string]any) any {
 	if props["kind"] == "graph" {

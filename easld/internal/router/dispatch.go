@@ -285,8 +285,22 @@ func localizedDescription(err error) string {
 func summarized(o model.Object) model.Object {
 	c := o
 	if o.Type == model.HTML {
+		c.Props = copyParams(o.Props)
+		delete(c.Props, "state")
 		if html, ok := o.Props["html"].(string); ok {
-			c.Props = model.Merge(o.Props, map[string]any{"html": "(" + itoa(len(html)) + " bytes, use object.get)"}).(map[string]any)
+			summary := "(" + itoa(len(html)) + " bytes"
+			if state, ok := o.Props["state"].(map[string]any); ok {
+				summary += ", state " + itoa(len(state)) + " keys"
+				if submitted, ok := state["submitted"].(map[string]any); ok {
+					if id, ok := submitted["id"].(string); ok {
+						summary += ", submission " + id
+						if state["applied"] != id {
+							summary += " pending"
+						}
+					}
+				}
+			}
+			c.Props["html"] = summary + ", use object.get)"
 		}
 	}
 	if o.Type == model.Note {

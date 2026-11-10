@@ -301,6 +301,24 @@ func TestGroupsFollowMembersWithOneCascadeEntryPerRevision(t *testing.T) {
 	}
 }
 
+func TestOnlyHTMLUpdatesMergeStateKeys(t *testing.T) {
+	for _, typ := range []model.ObjectType{model.HTML, model.Shape} {
+		b := New("brd", "/r")
+		o := b.Create(typ, map[string]any{"state": map[string]any{"draft": "saved", "cards": "old"}}, nil, "", "")
+		updated, err := b.Update(o.ID, nil, nil, nil, map[string]any{"state": map[string]any{"cards": "new"}}, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]any{"cards": "new"}
+		if typ == model.HTML {
+			want["draft"] = "saved"
+		}
+		if !reflect.DeepEqual(updated.Props["state"], want) || o.Props["state"].(map[string]any)["cards"] != "old" {
+			t.Fatalf("%s state = %v, original = %v", typ, updated.Props["state"], o.Props["state"])
+		}
+	}
+}
+
 func TestDeletingABoundObjectFreesArrowEndsWhereTheyWere(t *testing.T) {
 	b := New("brd", "/r")
 	a := b.Create(model.Shape, map[string]any{"kind": "rect"}, frame(0, 0, 160, 100), "", "")

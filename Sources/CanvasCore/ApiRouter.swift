@@ -3009,8 +3009,21 @@ public final class ApiRouter {
     /// the manifest; object.get returns them whole.
     func summarized(_ object: CanvasObject) -> CanvasObject {
         var copy = object
-        if object.type == .html, let html = object.props["html"]?.string {
-            copy.props = object.props.merging(.object(["html": .string("(\(html.utf8.count) bytes, use object.get)")]))
+        if object.type == .html {
+            var fields = object.props.object ?? [:]
+            let state = fields.removeValue(forKey: "state")?.object
+            if let html = fields["html"]?.string {
+                var summary = "(\(html.utf8.count) bytes"
+                if let state {
+                    summary += ", state \(state.count) keys"
+                    if let id = state["submitted"]?["id"]?.string {
+                        summary += ", submission \(id)"
+                        if state["applied"] != .string(id) { summary += " pending" }
+                    }
+                }
+                fields["html"] = .string(summary + ", use object.get)")
+            }
+            copy.props = .object(fields)
         }
         if object.type == .note, let markdown = object.props["markdown"]?.string, markdown.count > 400 {
             copy.props = object.props.merging(.object(["markdown": .string(String(markdown.prefix(400)) + "…")]))

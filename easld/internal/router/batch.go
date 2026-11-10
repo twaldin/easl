@@ -72,7 +72,7 @@ func (s *batchState) advance(method string, p map[string]any, size *fit, index i
 			return nil
 		}
 		if props, present := p["props"]; present {
-			o.Props, _ = model.Merge(o.Props, props).(map[string]any)
+			o.Props = model.MergeProps(o.Type, o.Props, asMap(props))
 		}
 	default:
 		return nil
