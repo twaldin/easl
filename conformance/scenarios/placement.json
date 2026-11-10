@@ -1,5 +1,5 @@
 {
-  "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
+  "description": "Frameless creates, or creates with only w and h, choose a free spot beside group, otherwise beside the caller's terminal, otherwise near the view. Positions depend on the viewport and are excluded. The group cases start empty and compare sizes and membership, not relative placement.",
   "ignore": {
     "response.result.object.frame.x": "placement inside the user's view (client viewport)",
     "response.result.object.frame.y": "placement inside the user's view (client viewport)",
