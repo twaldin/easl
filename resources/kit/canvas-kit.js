@@ -111,6 +111,10 @@
     send(payload) {
       return post({ type: 'send', payload: payload === undefined ? null : payload });
     },
+    // Submits exactly the saved fields, then clears those drafts. Requires one native gesture.
+    submit(keys) {
+      return post({ type: 'state.submit', keys });
+    },
     async getState(key) {
       const all = await loadState();
       return key === undefined ? all : all[key];

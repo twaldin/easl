@@ -492,7 +492,23 @@ func fieldsBack(before, after, current model.Object, b *Board) (fieldPatch, bool
 		if patch.props == nil {
 			patch.props = map[string]any{}
 		}
-		patch.props[k] = wasValue
+		if previous, ok := wasValue.(map[string]any); k == "state" && current.Type == model.HTML && ok {
+			next, _ := nowValue.(map[string]any)
+			state := map[string]any{}
+			for field, value := range previous {
+				if nextValue, set := next[field]; !set || !model.Equal(value, nextValue) {
+					state[field] = value
+				}
+			}
+			for field := range next {
+				if _, set := previous[field]; !set {
+					state[field] = nil
+				}
+			}
+			patch.props[k] = state
+		} else {
+			patch.props[k] = wasValue
+		}
 	}
 	if b.keyHeldByAnother(patch.props, current.ID) {
 		delete(patch.props, "key")

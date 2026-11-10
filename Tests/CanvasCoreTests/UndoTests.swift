@@ -13,6 +13,28 @@ struct UndoTests {
     func terminal(on board: Board) -> CanvasObject {
         board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]), frame: Frame(x: 0, y: 0, w: 800, h: 500))
     }
+    @Test func htmlStateTransactionsUndoAndRedoExactSnapshots() throws {
+        let board = makeBoard()
+        let initial: JSONValue = .object(["draft": "saved", "cards": "keep"])
+        let page = board.create(type: .html, props: .object(["state": initial]))
+        for patch in [
+            JSONValue.object(["draft": "edited", "new": "added"]),
+            .object(["draft": .null]),
+            .object(["draft": .null, "submitted": .object(["id": "sub_test"]), "pending": .bool(true)]),
+            .null,
+            .object([:])
+        ] {
+            let before = try board.object(page.id).props
+            _ = try board.update(page.id, props: .object(["state": patch]))
+            let after = try board.object(page.id).props
+            if before == after { continue }
+            #expect(board.undo())
+            #expect(try board.object(page.id).props == before)
+            #expect(board.redo())
+            #expect(try board.object(page.id).props == after)
+        }
+    }
+
 
     @Test func userUndoesAnAgentsEdit() throws {
         let board = makeBoard()

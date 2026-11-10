@@ -411,8 +411,6 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
                   let proxy = handler.networkURL(original, from: origin.host) else { return (nil, "not allowed") }
             return (["url": proxy.absoluteString], nil)
         }
-        // Consume before any await. The work queue can sit behind other page work, and a second
-        // send must not see the same arm.
         var mayStartTurn = false
         if body["type"] as? String == "object.goTo" {
             do {
@@ -421,9 +419,14 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
                 return (nil, error.description)
             }
         }
-        if body["type"] as? String == "send" {
+        if let type = body["type"] as? String, type == "send" || type == "state.submit" {
             do {
-                mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+                if type == "state.submit" {
+                    try tile.beginPageSubmit(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+                    mayStartTurn = true
+                } else {
+                    mayStartTurn = try tile.beginPageSend(from: source, frame: message.frameInfo, at: ProcessInfo.processInfo.systemUptime)
+                }
             } catch {
                 return (nil, error.description)
             }

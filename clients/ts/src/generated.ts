@@ -428,7 +428,7 @@ export type HtmlProps = {
   /** the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root */
   root?: string;
   allowNetwork?: string[];
-  /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
+  /** Saved HTML tile state, at most 256 KiB. On update/upsert/batch, top-level state keys merge: null deletes a key; state: null clears all state. The page owns draft keys; agents own content keys and applied. submitted is reserved to native canvasKit.submit. Drafts are not instructions until Submit. */
   state?: Record<string, unknown>;
   zoom?: Zoom;
   key?: ObjectKey;
@@ -1592,6 +1592,8 @@ export type ObjectCreateParams = {
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
   size?: "fit";
   parent?: Id;
+  /** Add the object to this group's members in the same revision and undo step. Must name a group on this board. Without frame, place beside the group. In object.batch, an earlier group can be named as $n. Membership is explicit, never inferred from position. */
+  group?: Id;
   /** RFC3339 timestamp with timezone, or null to clear; mutually exclusive with expiresIn */
   expires?: string | null;
   /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
@@ -1657,6 +1659,8 @@ export type ObjectUpsertParams = {
   frame?: Frame | FitFrame | SizeFrame;
   /** as for object.create and object.update */
   size?: "fit";
+  /** Add the created or existing object to this group's members once, in the same revision and undo step. Must name a group on this board; an earlier batch group may be $n. New objects without frame are placed beside it; existing objects keep their position. */
+  group?: Id;
   /** RFC3339 timestamp with timezone, or null to clear; omission preserves an existing deadline; mutually exclusive with expiresIn */
   expires?: string | null;
   /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
@@ -2481,7 +2485,7 @@ export interface CanvasApi {
     update(params: AppUpdateParams): Promise<AppUpdateResult>;
   };
   board: {
-    /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
+    /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` includes its byte count, state key count, and pending submission id; HTML `state` is omitted. A follow tile's `history` becomes a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
     /** Undo this remote viewer's latest host-accepted step at or before step. Only fields still equal to the values that step wrote are reverted; concurrent edits remain and their objects appear in kept. The host retains up to 200 steps per viewer in memory. Nothing from another viewer or agent enters this viewer's history. */
     undo(params: BoardUndoParams): Promise<BoardUndoResult>;
@@ -2509,9 +2513,9 @@ export interface CanvasApi {
     find(params?: ObjectFindParams): Promise<ObjectFindResult>;
     /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). A code tile without a frame is as wide as its file's longest line needs at its `zoom`, from 640 up to 200 columns (1546 at zoom 1; the working-tree file, up to 1 MiB; a follow tile and one shown from git, `ref` or `pinnedCommit`, stay 640), and 446 tall. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 1546 (200 columns), and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: kind graph reads `props.knowledge`; a calls diagram without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame, stacking order z, and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
+    /** Patch an object's frame, stacking order z, and/or props (shallow merge, except HTML state merges per top-level key: null deletes a state key; state: null clears all state). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 1546; image: at most `frame.w`, default 960; never their current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
-    /** Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as "$n" either way, and an upsert of a key an earlier op of the batch creates updates that one. */
+    /** Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged except HTML state, which merges per top-level key; `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as "$n" either way, and an upsert of a key an earlier op of the batch creates updates that one. */
     upsert(params: ObjectUpsertParams): Promise<ObjectUpsertResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;

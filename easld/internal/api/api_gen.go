@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "8b6bda8201bbc5a3"
+const SchemaHash = "c714651de35bbe3e"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -137,7 +137,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"object.create": {
-		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "expires", "expiresIn", "viewer", "step", "caller"},
+		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "group", "expires", "expiresIn", "viewer", "step", "caller"},
 		Required: []string{"type", "props"},
 	},
 	"object.update": {
@@ -145,7 +145,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"id"},
 	},
 	"object.upsert": {
-		Accepted: []string{"board", "key", "type", "props", "frame", "size", "expires", "expiresIn", "caller"},
+		Accepted: []string{"board", "key", "type", "props", "frame", "size", "group", "expires", "expiresIn", "caller"},
 		Required: []string{"key", "type", "props"},
 	},
 	"object.delete": {
@@ -673,7 +673,7 @@ type HtmlProps struct {
 	// the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root
 	Root         *string  `json:"root,omitempty"`
 	AllowNetwork []string `json:"allowNetwork,omitempty"`
-	// tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB
+	// Saved HTML tile state, at most 256 KiB. On update/upsert/batch, top-level state keys merge: null deletes a key; state: null clears all state. The page owns draft keys; agents own content keys and applied. submitted is reserved to native canvasKit.submit. Drafts are not instructions until Submit.
 	State map[string]any `json:"state,omitempty"`
 	Zoom  *Zoom          `json:"zoom,omitempty"`
 	Key   *ObjectKey     `json:"key,omitempty"`

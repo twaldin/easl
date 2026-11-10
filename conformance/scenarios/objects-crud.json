@@ -248,6 +248,22 @@
       }
     },
     {
+      "call": "object.upsert",
+      "params": {"board": "{{board}}", "key": "kanban", "type": "html",
+        "frame": {"x": 1600, "y": 900, "w": 400, "h": 300},
+        "props": {"html": "<p>kanban</p>", "state": {"cards": "old", "draft": {"move": "Doing"}, "removed": true}}},
+      "save": "kanban"
+    },
+    {
+      "call": "object.update",
+      "params": {"id": "{{kanban.object.id}}", "props": {"state": {"cards": "fresh", "removed": null,
+        "submitted": {"id": "sub_proof", "fields": {"draft": {"move": "Done"}}}}}}
+    },
+    {
+      "call": "object.get",
+      "params": {"id": "{{kanban.object.id}}"}
+    },
+    {
       "call": "board.get",
       "params": {
         "board": "{{board}}"

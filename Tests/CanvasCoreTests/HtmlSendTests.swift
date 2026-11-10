@@ -81,6 +81,102 @@ struct HtmlSendBudgetTests {
         return try #require(board.htmlMessages[terminal]?.first { $0.id == id })
     }
 
+    @Test func submitQueuesOnlySavedSelectedFieldsAndOneUndoRestoresDrafts() async throws {
+        let host = try terminal(3), source = page(host)
+        let draft: JSONValue = .object(["card-1": "Review"])
+        let fields: JSONValue = .object(["draft": draft])
+        let saved: JSONValue = .object(["draft": draft, "notes": "keep drafting", "cards": .array(["card-1"]), "applied": "sub_previous"])
+        try board.update(source, props: .object(["state": saved]))
+        let revision = board.revision, steps = board.history.undoSteps.count
+        let now = Date(timeIntervalSince1970: 10_000)
+        let reply = try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: board, mayStartTurn: true, now: now)
+        let id = try #require(reply["id"]?.string)
+        #expect(id.hasPrefix("sub_"))
+        #expect(reply["terminal"] == .string(host))
+        let queued = try #require(board.htmlMessages[host]?.first)
+        #expect(reply["message"] == .string(queued.id) && queued.mayStartTurn == true && queued.attribution == "html")
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(queued.text.utf8)) == .object(["submit": .string(id), "fields": fields]))
+        let state = try #require(board.object(source).props["state"])
+        #expect(state["draft"] == nil && state["notes"] == saved["notes"] && state["cards"] == saved["cards"] && state["applied"] == saved["applied"])
+        #expect(state["submitted"] == .object(["id": .string(id), "at": "1970-01-01T02:46:40Z", "fields": fields]))
+        #expect(board.revision == revision + 1 && board.history.undoSteps.count == steps + 1)
+        #expect(board.undo())
+        #expect(try board.object(source).props["state"] == saved)
+        #expect(board.htmlMessages[host]?.map(\.id) == [queued.id], "undo cannot recall the instruction")
+        #expect(board.redo())
+        #expect(try board.object(source).props["state"] == state)
+        #expect(board.htmlMessages[host]?.map(\.id) == [queued.id])
+    }
+
+    @Test func refusedSubmitKeepsDraftAndQueueUnchanged() async throws {
+        let host = try terminal(3), source = page(host)
+        try board.update(source, props: .object(["state": .object(["draft": "saved"])]))
+        let before = try board.object(source), revision = board.revision
+        for (keys, permit) in [([], true), (["submitted"], true), (["applied"], true), (["bad/key"], true), (["draft"], false)] {
+            await #expect(throws: HtmlError.self) {
+                try await HtmlChannel.handle(.submit(keys: keys), tile: source, board: board, mayStartTurn: permit)
+            }
+        }
+        #expect(try board.object(source) == before)
+        #expect(board.revision == revision && board.htmlMessages.isEmpty)
+        let old = try terminal(2), incompatible = page(old)
+        let userPage = board.create(type: .html, props: .object(["html": "<p>user</p>"])).id
+        for source in [incompatible, userPage, host] {
+            let before = try board.object(source)
+            await #expect(throws: HtmlError.self) {
+                try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: board, mayStartTurn: true)
+            }
+            #expect(try board.object(source) == before && board.htmlMessages.isEmpty)
+        }
+        let now = Date(timeIntervalSince1970: 20_000)
+        for _ in 0..<HtmlSendBudget.rateCount { _ = try await send("queued", from: source, now: now) }
+        await #expect(throws: HtmlError.overBudget(HtmlSendBudget.rateReason)) {
+            try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: board, mayStartTurn: true, now: now)
+        }
+        #expect(try board.object(source) == before && board.htmlMessages[host]?.count == HtmlSendBudget.rateCount)
+    }
+
+    @Test func submitPreflightsStateAndPayloadCapsBeforeQueuing() async throws {
+        let host = try terminal(3), source = page(host)
+        let tooFull: JSONValue = .object(["draft": "saved", "padding": .string(String(repeating: "x", count: HtmlChannel.maxStateBytes - 64))])
+        let wide = JSONValue.object(Dictionary(uniqueKeysWithValues: (0..<5).map { ("draft\($0)", JSONValue.string(String(repeating: "x", count: 14_000))) }))
+        for (state, keys, limit) in [(tooFull, ["draft"], HtmlChannel.maxStateBytes), (wide, (0..<5).map { "draft\($0)" }, HtmlMessage.maxMessageBytes)] {
+            #expect(try JSONEncoder().encode(state).count <= HtmlChannel.maxStateBytes)
+            try board.update(source, props: .object(["state": .null]))
+            try board.update(source, props: .object(["state": state]))
+            let before = try board.object(source), revision = board.revision
+            do {
+                _ = try await HtmlChannel.handle(.submit(keys: keys), tile: source, board: board, mayStartTurn: true)
+                Issue.record("an oversized submission must refuse before queueing")
+            } catch HtmlError.tooLarge(_, let rejectedLimit) {
+                #expect(rejectedLimit == limit)
+            }
+            #expect(try board.object(source) == before && board.revision == revision && board.htmlMessages.isEmpty)
+        }
+    }
+
+    @Test func remoteSubmitRecordsWithoutQueueingAndStillRequiresAGesture() async throws {
+        let host = try terminal(3), source = page(host)
+        try board.update(source, props: .object(["state": .object(["draft": "saved", "notes": "retained"])]))
+        let remote = Board.measuring(try board.object(source), on: board)
+        let before = try remote.object(source)
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: remote)
+        }
+        #expect(try remote.object(source) == before)
+        let reply = try await HtmlChannel.handle(.submit(keys: ["draft"]), tile: source, board: remote, mayStartTurn: true)
+        let state = try #require(remote.object(source).props["state"])
+        #expect(reply["id"] == state["submitted"]?["id"] && reply["terminal"] == nil && reply["message"] == nil)
+        #expect(state["submitted"]?["fields"] == .object(["draft": "saved"]) && state["draft"] == nil && state["notes"] == "retained")
+        #expect(remote.htmlMessages.isEmpty && board.htmlMessages.isEmpty)
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.setState(key: "submitted", value: .null), tile: source, board: remote)
+        }
+        await #expect(throws: HtmlError.self) {
+            try await HtmlChannel.handle(.send(payload: "still unsupported"), tile: source, board: remote, mayStartTurn: true)
+        }
+    }
+
     @Test func protocolOneStillQueuesAnOrdinaryMessageAndRefusesPageSend() async throws {
         let host = try terminal(1)
         try board.queueMessage(AgentMessage(text: "still queued", from: nil, label: "script", when: .now, mentions: []), to: host)

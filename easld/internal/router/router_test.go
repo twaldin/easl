@@ -265,6 +265,168 @@ func TestAKeyAnotherObjectHoldsIsAConflictNamingIt(t *testing.T) {
 	}
 }
 
+func TestHTMLStateMergesAcrossUpdateUpsertAndBatch(t *testing.T) {
+	f := newFixture(t)
+	id := idOf(f.result("object.upsert", map[string]any{"key": "kanban", "type": "html", "props": map[string]any{
+		"html": "<p>x</p>", "state": map[string]any{"draft": "saved", "cards": "old"},
+	}}))
+	assertState := func(want map[string]any) {
+		t.Helper()
+		got := asMap(asMap(f.result("object.get", map[string]any{"id": id})["object"])["props"])["state"]
+		if want == nil && got == nil {
+			return
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("state = %v, want %v", got, want)
+		}
+	}
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"cards": "new"}}})
+	assertState(map[string]any{"draft": "saved", "cards": "new"})
+	f.result("object.upsert", map[string]any{"key": "kanban", "type": "html", "props": map[string]any{"state": map[string]any{"cards": nil, "applied": "sub_1"}}})
+	assertState(map[string]any{"draft": "saved", "applied": "sub_1"})
+	f.result("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.update", "params": map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"cards": "batch"}}}},
+		upsertOp("kanban", "html", map[string]any{"state": map[string]any{"applied": nil}}),
+	}})
+	assertState(map[string]any{"draft": "saved", "cards": "batch"})
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": nil}})
+	assertState(nil)
+	f.result("object.update", map[string]any{"id": id, "props": map[string]any{"state": map[string]any{"missing": nil, "draft": "again"}}})
+	assertState(map[string]any{"draft": "again"})
+}
+
+func TestHTMLManifestStateSummary(t *testing.T) {
+	for _, applied := range []string{"", "sub_1"} {
+		f := newFixture(t)
+		state := map[string]any{"draft": "private", "submitted": map[string]any{"id": "sub_1"}, "applied": applied}
+		id := idOf(f.result("object.create", map[string]any{"type": "html", "props": map[string]any{"html": "hello", "state": state}}))
+		want := "(5 bytes, state 3 keys, submission sub_1"
+		if applied == "" {
+			want += " pending"
+		}
+		want += ", use object.get)"
+		for _, result := range []map[string]any{
+			f.result("board.get", map[string]any{}),
+			f.result("object.find", map[string]any{"type": "html"}),
+		} {
+			objects := result["objects"].([]any)
+			props := asMap(asMap(objects[0])["props"])
+			if _, present := props["state"]; present || props["html"] != want {
+				t.Fatalf("manifest props = %v", props)
+			}
+		}
+		props := asMap(asMap(f.result("object.get", map[string]any{"id": id})["object"])["props"])
+		if !reflect.DeepEqual(props["state"], state) || props["html"] != "hello" {
+			t.Fatalf("full props = %v", props)
+		}
+	}
+}
+
+func TestCreateAndUpsertJoinGroupAtomically(t *testing.T) {
+	f := newFixture(t)
+	anchor := idOf(f.result("object.create", map[string]any{"type": "shape", "props": map[string]any{"kind": "rect"},
+		"frame": map[string]any{"x": 10000.0, "y": 10000.0, "w": 100.0, "h": 100.0}}))
+	group := idOf(f.result("object.create", map[string]any{"type": "group", "props": map[string]any{"members": []any{anchor}}}))
+	before := f.board.Objects()[group].Frame
+	expected := f.board.Place(180, 100, group, nil, false)
+	revision := f.board.Revision()
+	id := idOf(f.result("object.upsert", map[string]any{"key": "member", "type": "shape", "group": group,
+		"props": map[string]any{"kind": "rect"}, "frame": map[string]any{"w": 180.0, "h": 100.0}}))
+	if f.board.Revision() != revision+1 || f.board.Objects()[id].Frame != expected || f.board.Objects()[group].Frame == before {
+		t.Fatalf("not one revision near group: %+v", f.board.Snapshot())
+	}
+	for range 2 {
+		f.result("object.upsert", map[string]any{"key": "member", "type": "shape", "group": group, "props": map[string]any{"text": "updated"}})
+	}
+	if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{anchor, id}) {
+		t.Fatalf("members = %v", got)
+	}
+}
+
+func TestBatchGroupReferencesAndInvalidGroupRollback(t *testing.T) {
+	f := newFixture(t)
+	result := f.result("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.create", "params": map[string]any{"type": "group", "props": map[string]any{"members": []any{}}}},
+		map[string]any{"method": "object.create", "params": map[string]any{"type": "shape", "group": "$0", "props": map[string]any{"kind": "rect"}}},
+		upsertOp("existing", "shape", map[string]any{"kind": "rect"}),
+		map[string]any{"method": "object.upsert", "params": map[string]any{"key": "existing", "type": "shape", "group": "$0", "props": map[string]any{"text": "joined"}}},
+	}})
+	results := result["results"].([]any)
+	group := idOf(asMap(results[0]))
+	member := idOf(asMap(results[1]))
+	existing := idOf(asMap(results[2]))
+	if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{member, existing}) {
+		t.Fatalf("members = %v", got)
+	}
+	for _, invalidGroup := range []any{"missing", member, 12.0} {
+		count := len(f.board.Objects())
+		code, _ := errorOf(f.call("object.create", map[string]any{"type": "shape", "group": invalidGroup, "props": map[string]any{"kind": "rect"}}))
+		if code != "invalid_params" || len(f.board.Objects()) != count {
+			t.Fatalf("invalid group %v: %s", invalidGroup, code)
+		}
+		code, _ = errorOf(f.call("object.batch", map[string]any{"ops": []any{
+			map[string]any{"method": "object.create", "params": map[string]any{"type": "shape", "props": map[string]any{"kind": "rect"}}},
+			map[string]any{"method": "object.upsert", "params": map[string]any{"key": "existing", "type": "shape", "group": invalidGroup, "props": map[string]any{"text": "bad"}}},
+		}}))
+		if code != "invalid_params" || len(f.board.Objects()) != count || f.board.Objects()[existing].Props["text"] != "joined" {
+			t.Fatalf("batch failed to roll back: %s", code)
+		}
+	}
+}
+
+func TestBatchSimulationMergesHTMLState(t *testing.T) {
+	f := newFixture(t)
+	o := f.board.Create(model.HTML, map[string]any{"state": map[string]any{"draft": "keep", "cards": "old"}}, nil, "", "")
+	state := batchState{live: f.board, inputs: map[string]batchInput{}}
+	if err := state.advance("object.update", map[string]any{"id": o.ID, "props": map[string]any{"state": map[string]any{"cards": "new", "missing": nil}}}, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.inputs[o.ID].object.Props["state"]; !reflect.DeepEqual(got, map[string]any{"draft": "keep", "cards": "new"}) {
+		t.Fatalf("planned state = %v", got)
+	}
+}
+
+func TestHTMLSummaryWithoutStateKeepsExistingFormat(t *testing.T) {
+	o := summarized(model.Object{Type: model.HTML, Props: map[string]any{"html": "hello"}})
+	if o.Props["html"] != "(5 bytes, use object.get)" {
+		t.Fatalf("stateless summary = %v", o.Props)
+	}
+}
+
+func TestGroupMustBelongToTheTargetBoard(t *testing.T) {
+	f := newFixture(t)
+	other := f.result("board.open", map[string]any{"root": t.TempDir()})
+	group := idOf(f.result("object.create", map[string]any{"board": other["board"], "type": "group", "props": map[string]any{"members": []any{}}}))
+	code, _ := errorOf(f.call("object.create", map[string]any{"board": f.board.ID(), "type": "shape", "group": group, "props": map[string]any{"kind": "rect"}}))
+	if code != "invalid_params" || len(f.board.Objects()) != 0 {
+		t.Fatalf("foreign group = %s, objects = %v", code, f.board.Objects())
+	}
+}
+
+func TestReusedChangesCreateJoinsGroupOnceAndRefusesInvalidGroups(t *testing.T) {
+	f := newFixture(t)
+	caller := idOf(f.result("object.create", map[string]any{"type": "terminal", "props": map[string]any{}}))
+	id := idOf(f.result("object.create", map[string]any{"type": "changes", "caller": caller, "props": map[string]any{"title": "review"}}))
+	group := idOf(f.result("object.create", map[string]any{"type": "group", "props": map[string]any{"members": []any{}}}))
+	for range 2 {
+		reused := f.result("object.create", map[string]any{"type": "changes", "caller": caller, "group": group, "props": map[string]any{"title": "joined"}})
+		if reused["reused"] != true || idOf(reused) != id {
+			t.Fatalf("not reused: %v", reused)
+		}
+	}
+	for _, invalidGroup := range []any{id, "obj_missing", 12.0, nil} {
+		before := f.board.Objects()[id]
+		revision := f.board.Revision()
+		code, _ := errorOf(f.call("object.create", map[string]any{"type": "changes", "caller": caller, "group": invalidGroup, "props": map[string]any{"title": "must not change"}}))
+		if code != "invalid_params" || !reflect.DeepEqual(f.board.Objects()[id], before) || f.board.Revision() != revision {
+			t.Fatalf("invalid group %v changed reused tile: %s", invalidGroup, code)
+		}
+		if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{id}) {
+			t.Fatalf("members = %v", got)
+		}
+	}
+}
+
 func TestUpsertingAgainKeepsTheIdAndChangesOnlyProps(t *testing.T) {
 	f := newFixture(t)
 	created := f.result("object.upsert", map[string]any{"key": "REL-7", "type": "note", "props": map[string]any{"markdown": "open"}, "frame": map[string]any{"x": 0.0, "y": 0.0, "w": 200.0, "h": 100.0}})

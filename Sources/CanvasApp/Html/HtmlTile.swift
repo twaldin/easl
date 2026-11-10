@@ -367,7 +367,7 @@ final class HtmlTile: NSView, TileContent {
             case .getState(let key):
                 // The page being rendered or measured is this object's (which may not be on the board yet).
                 return HtmlChannel.state(object.props, key: key)
-            case .openCode, .setState, .send:
+            case .openCode, .setState, .send, .submit:
                 throw HtmlError.malformed("not available while the page renders offscreen")
             default:
                 break
@@ -389,7 +389,14 @@ final class HtmlTile: NSView, TileContent {
     /// Decides a `canvasKit.send` at bridge receipt, before the channel's work queue. A refusal
     /// does not consume the permit. Success is whether this document's permit was spent.
     func beginPageSend(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) -> Bool {
-        try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false)
+        if isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
+        return try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false)
+    }
+
+    func beginPageSubmit(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
+        guard try consumePagePermit(from: webView, frame: frame, at: time, forNavigation: false) else {
+            throw .unavailable("Submit requires a fresh native click or key")
+        }
     }
 
     func beginPageGoTo(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval) throws(HtmlError) {
@@ -400,7 +407,6 @@ final class HtmlTile: NSView, TileContent {
 
     private func consumePagePermit(from webView: WKWebView, frame: WKFrameInfo, at time: TimeInterval, forNavigation: Bool) throws(HtmlError) -> Bool {
         guard !hostBoardClosed, !board.isClosed else { throw .unavailable("host closed this board") }
-        if !forNavigation, isRemote { throw .unavailable("canvasKit.send is unsupported on remote boards") }
         guard webView === self.webView else { throw .malformed("not available while the page renders offscreen") }
         guard HtmlSendGate.isLivePage(originProtocol: frame.securityOrigin.protocol, originHost: frame.securityOrigin.host,
                                      isMainFrame: frame.isMainFrame, request: frame.request.url, liveURL: webView.url, page: pageURL) else {

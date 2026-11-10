@@ -428,16 +428,16 @@ public final class Board {
     // MARK: Objects
 
     @discardableResult
-    public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil, expires: ObjectExpiry? = nil) -> CanvasObject {
-        guard isRemote, hostWriteDepth == 0 else { return creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires) }
+    public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil, expires: ObjectExpiry? = nil, near: ObjectID? = nil) -> CanvasObject {
+        guard isRemote, hostWriteDepth == 0 else { return creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires, near: near) }
         return stepping { step in
-            let object = creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires)
+            let object = creating(type: type, props: props, frame: frame, parent: parent, caller: caller, expires: expires, near: near)
             host?.send(.create(object, step: step))
             return object
         }
     }
 
-    private func creating(type: ObjectType, props: JSONValue, frame: Frame?, parent: ObjectID?, caller: ObjectID?, expires: ObjectExpiry?) -> CanvasObject {
+    private func creating(type: ObjectType, props: JSONValue, frame: Frame?, parent: ObjectID?, caller: ObjectID?, expires: ObjectExpiry?, near: ObjectID?) -> CanvasObject {
         let size: (w: Double, h: Double)
         if type == .question {
             size = QuestionSpec.size(props)
@@ -456,7 +456,7 @@ public final class Board {
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
-            object.frame = place(width: size.w, height: size.h, near: caller, stacking: true)
+            object.frame = place(width: size.w, height: size.h, near: near ?? caller, stacking: near == nil)
         }
         commit(object)
         countWrite(caller: caller)
@@ -572,7 +572,7 @@ public final class Board {
         if let frame { object.frame = frame }
         if let z { object.z = z }
         if let props {
-            object.props = object.props.merging(props)
+            object.props = object.props.mergingProps(props, type: object.type)
             // A code tile aimed elsewhere without an anchor drops its old one, which named the
             // first line of the range it showed before.
             if object.type == .code, props["anchor"] == nil,

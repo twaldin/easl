@@ -363,7 +363,16 @@ extension Board {
                         keep(id)
                         continue
                     }
-                    patch.props[key] = value
+                    if key == "state", current.type == .html, let previous = old[key]?.object {
+                        let next = new[key]?.object ?? [:]
+                        var state: [String: JSONValue] = [:]
+                        for field in Set(previous.keys).union(next.keys) where previous[field] != next[field] {
+                            state[field] = previous[field] ?? .null
+                        }
+                        patch.props[key] = .object(state)
+                    } else {
+                        patch.props[key] = value
+                    }
                 }
                 if !patch.isEmpty { plan.patches.append(patch) }
             }

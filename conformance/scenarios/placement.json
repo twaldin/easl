@@ -1,5 +1,5 @@
 {
-  "description": "Objects created without a frame, or with only w and h, are placed in a free spot: beside the caller's terminal (stacking an agent's answers), else near the view. Where they land depends on the user's viewport, which only the client knows; the sizes and the rest are compared.",
+  "description": "Frameless creates, or creates with only w and h, choose a free spot beside group, otherwise beside the caller's terminal, otherwise near the view. Positions depend on the viewport and are excluded. The group cases start empty and compare sizes and membership, not relative placement.",
   "ignore": {
     "response.result.object.frame.x": "placement inside the user's view (client viewport)",
     "response.result.object.frame.y": "placement inside the user's view (client viewport)",
@@ -77,6 +77,32 @@
           "h": 90
         }
       }
+    },
+    {
+      "call": "object.create",
+      "params": {"board": "{{board}}", "type": "group", "props": {"members": [], "title": "Create placement"}},
+      "save": "createGroup"
+    },
+    {
+      "call": "object.create",
+      "params": {"board": "{{board}}", "type": "shape", "group": "{{createGroup.object.id}}", "props": {"kind": "rect"}}
+    },
+    {
+      "call": "object.get",
+      "params": {"id": "{{createGroup.object.id}}"}
+    },
+    {
+      "call": "object.create",
+      "params": {"board": "{{board}}", "type": "group", "props": {"members": [], "title": "Upsert placement"}},
+      "save": "upsertGroup"
+    },
+    {
+      "call": "object.upsert",
+      "params": {"board": "{{board}}", "key": "placed-group-member", "type": "shape", "group": "{{upsertGroup.object.id}}", "props": {"kind": "rect"}}
+    },
+    {
+      "call": "object.get",
+      "params": {"id": "{{upsertGroup.object.id}}"}
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "scenario": "keys-upsert-find",
   "description": "Object keys: upsert creates then updates by key, type mismatch is a conflict, a duplicate key on create is a conflict, object.find by key and keyPrefix.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "Mac dev instance ab1265a0a80491a58688ed7d8a7b977931d6c0dc agent-gui",
   "steps": [
     {
       "step": "board.open",

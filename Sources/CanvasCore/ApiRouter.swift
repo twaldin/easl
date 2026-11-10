@@ -1866,10 +1866,11 @@ public final class ApiRouter {
             try Self.checkProps(p)
             let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
+            let group = try board.groupID(p["group"])
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
                 if value["x"]?.number == nil, value["y"]?.number == nil, let w = value["w"]?.number, let h = value["h"]?.number {
-                    return board.place(width: w, height: h, near: caller(p), stacking: true)
+                    return board.place(width: w, height: h, near: group ?? caller(p), stacking: group == nil)
                 }
                 return try Self.frame(value, onto: nil)
             }
@@ -1885,7 +1886,11 @@ public final class ApiRouter {
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let expires: ObjectExpiry? = if case .set(let value) = expiry { value } else { nil }
-            let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p), expires: expires) }
+            let object = try board.asViewerEdit(edit) {
+                try board.joiningGroup(group, caller: caller(p)) {
+                    board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p), expires: expires, near: group)
+                }
+            }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
@@ -1894,6 +1899,7 @@ public final class ApiRouter {
             try Self.checkProps(p)
             let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
+            let group = try board.groupID(p["group"])
             let z = try p["z"].map { value -> Double in
                 guard let z = value.number, z.isFinite else { throw Failure("invalid_params", "z must be a finite number") }
                 return z
@@ -1917,7 +1923,11 @@ public final class ApiRouter {
             }
             if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
-            let object = try board.asViewerEdit(edit) { try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p), expires: expiry) }
+            let object = try board.asViewerEdit(edit) {
+                try board.joiningGroup(group, caller: caller(p)) {
+                    try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p), expires: expiry)
+                }
+            }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
@@ -2317,7 +2327,7 @@ public final class ApiRouter {
         if !given.isEmpty { update["props"] = .object(given) }
         if let frame = p["frame"] { update["frame"] = frame }
         if let size = p["size"] { update["size"] = size }
-        for key in ["viewer", "step", "expires", "expiresIn"] { update[key] = p[key] }
+        for key in ["viewer", "step", "expires", "expiresIn", "group"] { update[key] = p[key] }
         return .object(update)
     }
 
@@ -2451,12 +2461,12 @@ public final class ApiRouter {
             guard let created = pending[index], let type = ObjectType(rawValue: try string(created, "type")) else {
                 throw Failure("invalid_params", "\(id) must name an earlier create op")
             }
-            let props = p["props"].map { (created["props"] ?? .object([:])).merging($0) } ?? created["props"] ?? .object([:])
+            let props = p["props"].map { (created["props"] ?? .object([:])).mergingProps($0, type: type) } ?? created["props"] ?? .object([:])
             base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props))
         } else {
             let board = try board(forObject: id)
             let object = try board.object(id)
-            let props = p["props"].map { object.props.merging($0) } ?? object.props
+            let props = p["props"].map { object.props.mergingProps($0, type: object.type) } ?? object.props
             base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props))
         }
         return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image, .video].contains(base.type) ? nil : base.width), root: base.root)
@@ -2536,7 +2546,8 @@ public final class ApiRouter {
             origin = (x, y)
         } else {
             let board = try board(p)
-            let placed = board.place(width: size.width, height: size.height, near: caller(p), stacking: true)
+            let group = try board.groupID(p["group"])
+            let placed = board.place(width: size.width, height: size.height, near: group ?? caller(p), stacking: group == nil)
             origin = (placed.x, placed.y)
         }
         params["frame"] = JSONValue(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
@@ -3009,8 +3020,21 @@ public final class ApiRouter {
     /// the manifest; object.get returns them whole.
     func summarized(_ object: CanvasObject) -> CanvasObject {
         var copy = object
-        if object.type == .html, let html = object.props["html"]?.string {
-            copy.props = object.props.merging(.object(["html": .string("(\(html.utf8.count) bytes, use object.get)")]))
+        if object.type == .html {
+            var fields = object.props.object ?? [:]
+            let state = fields.removeValue(forKey: "state")?.object
+            if let html = fields["html"]?.string {
+                var summary = "(\(html.utf8.count) bytes"
+                if let state {
+                    summary += ", state \(state.count) keys"
+                    if let id = state["submitted"]?["id"]?.string {
+                        summary += ", submission \(id)"
+                        if state["applied"] != .string(id) { summary += " pending" }
+                    }
+                }
+                fields["html"] = .string(summary + ", use object.get)")
+            }
+            copy.props = .object(fields)
         }
         if object.type == .note, let markdown = object.props["markdown"]?.string, markdown.count > 400 {
             copy.props = object.props.merging(.object(["markdown": .string(String(markdown.prefix(400)) + "…")]))

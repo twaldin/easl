@@ -8,6 +8,7 @@ Users create tiles and drawings on a folder's board, arrange them, and undo chan
 - `board-move-undo` moves a selection and restores it with one undo.
 - `board-draw` creates rectangles, ellipses, arrows, text, and ink through the drawing tools.
 - `board-middle-pan-cancel` consumes a cancelled middle-button sequence without sending its release to a terminal.
+- `board-group-create` joins explicit group membership on create and upsert, including earlier batch `$n` groups, without moving existing members.
 
 ## How to get to it (user POV)
 
@@ -21,6 +22,12 @@ Preconditions: the isolated local board is selected, Get Started is closed, and 
 - Leave text editing with `input key escape`. Select a note by its title or measured bounds, drag its title with `input drag "$X" "$Y" "$TO_X" "$TO_Y"`, and retain the old and new frames through `object.get --id "$NOTE"`. `input shortcut z --mods cmd` must restore the original frame in the API and pixels.
 - With canvas focus, use `input mainmenu "Drawing/Rectangle"` and drag on empty canvas. Repeat for Ellipse and Arrow. Use Text, click empty canvas, and type a label. Commit it with `input key escape` before inspecting the object or choosing Draw. Use Draw and drag a stroke. Capture each tool's visible result and confirm its object in `board.get`. Undo each completed drawing once. Also select the same tools from their toolbar accessibility buttons when qualifying toolbar interaction.
 - For body drags, grouped movement, cancellation, and content input isolation, run the separate [Move tool journey](move-tool.md).
+
+### Explicit group membership
+
+Create a group around a tile at a distant board position. Create a second tile with `group: <id>` and no frame. Require one board revision, membership, placement beside the group, and a visible refit without moving the first tile. Undo once must remove the new tile and restore membership and bounds. Repeat with upsert, then repeat the upsert to verify no duplicate member and no movement.
+
+In one batch, create a group and use `group: "$0"` for a later create and upsert. Require both members. Pass a non-group and a missing ID independently; require `invalid_params` without a partial tile. Group membership never follows a drag's position.
 
 ### Middle-pan cancellation
 

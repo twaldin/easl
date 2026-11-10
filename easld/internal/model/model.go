@@ -492,8 +492,8 @@ func Clone(v any) any {
 	}
 }
 
-// Merge is the shallow merge object.update uses (JSONValue.merging): keys in patch replace
-// keys in base, a null deletes; a non-object on either side yields patch.
+// Merge is shallow (JSONValue.merging): keys in patch replace keys in base, a null deletes;
+// a non-object on either side yields patch. object.update uses MergeProps.
 func Merge(base, patch any) any {
 	b, ok1 := base.(map[string]any)
 	p, ok2 := patch.(map[string]any)
@@ -506,6 +506,33 @@ func Merge(base, patch any) any {
 			delete(out, k)
 		} else {
 			out[k] = Clone(v)
+		}
+	}
+	return out
+}
+
+// MergeProps preserves independently authored HTML state keys; other props stay shallow.
+func MergeProps(typ ObjectType, base, patch map[string]any) map[string]any {
+	state, mergingState := patch["state"].(map[string]any)
+	if typ != HTML || !mergingState {
+		out, _ := Merge(base, patch).(map[string]any)
+		return out
+	}
+	out := make(map[string]any, len(base)+len(patch))
+	for key, value := range base {
+		if _, replaced := patch[key]; !replaced {
+			out[key] = Clone(value)
+		}
+	}
+	for key, value := range patch {
+		if key == "state" {
+			stored, _ := base["state"].(map[string]any)
+			if stored == nil {
+				stored = map[string]any{}
+			}
+			out[key] = Merge(stored, state)
+		} else if value != nil {
+			out[key] = Clone(value)
 		}
 	}
 	return out

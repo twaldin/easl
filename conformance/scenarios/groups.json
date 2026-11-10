@@ -220,6 +220,69 @@
       }
     },
     {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "frame": {"x": 900, "y": 600, "w": 160, "h": 100},
+        "props": {"kind": "rect", "text": "Joined on create"}
+      },
+      "save": "joined"
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "group-join",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "frame": {"x": 1100, "y": 600, "w": 160, "h": 100},
+        "props": {"kind": "rect"}
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "group-join",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "props": {"text": "Still one member"}
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {"method": "object.create", "params": {"type": "group", "frame": {"x": 1800, "y": 1800, "w": 100, "h": 100}, "props": {"members": [], "title": "Batch group"}}},
+          {"method": "object.create", "params": {"type": "shape", "group": "$0", "frame": {"x": 2000, "y": 2000, "w": 160, "h": 100}, "props": {"kind": "rect"}}},
+          {"method": "object.upsert", "params": {"key": "batch-group-join", "type": "shape", "group": "$0", "frame": {"x": 2200, "y": 2000, "w": 160, "h": 100}, "props": {"kind": "ellipse"}}},
+          {"method": "object.upsert", "params": {"key": "batch-group-join", "type": "shape", "group": "$0", "props": {"text": "Once"}}}
+        ]
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "group": "{{joined.object.id}}",
+        "props": {"kind": "rect"}
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {"method": "object.create", "params": {"type": "shape", "frame": {"x": 2400, "y": 2000, "w": 160, "h": 100}, "props": {"kind": "rect"}}},
+          {"method": "object.create", "params": {"type": "shape", "group": "$0", "props": {"kind": "rect"}}}
+        ]
+      }
+    },
+    {
       "call": "board.get",
       "params": {
         "board": "{{board}}"

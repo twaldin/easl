@@ -41,6 +41,99 @@ final class ApiRouterTests {
         board.create(type: .terminal, props: .object(["cwd": .string(dir.path)])).id
     }
 
+    @Test func htmlRefreshMergesKeysAndManifestsHideState() async throws {
+        let client = try connect()
+        let created = try await call(client, "object.upsert", ["key": "kanban", "type": "html", "props": .object([
+            "html": "<p>x</p>", "state": .object(["draft": "move", "cards": "old"])
+        ])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .object(["cards": "new"])])])
+        #expect(board.objects[id]?.props["state"] == .object(["draft": "move", "cards": "new"]))
+        _ = try await call(client, "object.upsert", ["key": "kanban", "type": "html", "props": .object(["state": .object(["cards": "newer"])])])
+        #expect(board.objects[id]?.props["state"]?["draft"] == "move")
+        _ = try await call(client, "object.batch", ["ops": .array([.object(["method": "object.update", "params": .object([
+            "id": .string(id), "props": .object(["state": .object(["cards": "latest", "draft": .null,
+                "submitted": .object(["id": "sub_proof", "fields": .object(["draft": "move"])])])])
+        ])])])])
+        #expect(board.objects[id]?.props["state"]?["cards"] == "latest")
+        #expect(board.objects[id]?.props["state"]?["draft"] == nil)
+        for method in ["board.get", "object.find"] {
+            let manifest = try await call(client, method, method == "object.find" ? ["type": "html"] : [:])
+            let object = try #require(manifest["result"]?["objects"]?.array?.first { $0["id"]?.string == id })
+            #expect(object["props"]?["state"] == nil)
+            #expect(object["props"]?["html"] == "(8 bytes, state 2 keys, submission sub_proof pending, use object.get)")
+        }
+        let full = try await call(client, "object.get", ["id": .string(id)])
+        #expect(full["result"]?["object"]?["props"]?["state"]?["submitted"]?["fields"]?["draft"] == "move")
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .object(["applied": "sub_proof"])])])
+        let applied = try await call(client, "object.find", ["type": "html"])
+        #expect(applied["result"]?["objects"]?.array?.first?["props"]?["html"] == "(8 bytes, state 3 keys, submission sub_proof, use object.get)")
+        _ = try await call(client, "object.update", ["id": .string(id), "props": .object(["state": .null])])
+        #expect(board.objects[id]?.props["state"] == nil)
+    }
+
+    @Test func groupedCreatesAndUpsertsJoinAtomicallyWithoutMovingExistingMembers() async throws {
+        let client = try connect()
+        let anchor = board.create(type: .shape, props: .object(["kind": "rect"]), frame: Frame(x: 3000, y: 2000, w: 100, h: 100))
+        let group = board.create(type: .group, props: .object(["members": .array([.string(anchor.id)])]))
+        let revision = board.revision
+        let created = try await call(client, "object.upsert", ["key": "member", "type": "shape",
+            "props": .object(["kind": "rect"]), "group": .string(group.id)])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let frame = try #require(board.objects[id]?.frame)
+        #expect(board.revision == revision + 1)
+        #expect(board.objects[group.id]?.props["members"] == .array([.string(anchor.id), .string(id)]))
+        #expect(abs(frame.x - anchor.frame.x) < 1000 && abs(frame.y - anchor.frame.y) < 1000)
+        #expect(board.objects[anchor.id]?.frame == anchor.frame)
+        _ = try await call(client, "object.upsert", ["key": "member", "type": "shape", "props": .object(["fill": "semi"]), "group": .string(group.id)])
+        #expect(board.objects[id]?.frame == frame)
+        #expect(board.objects[group.id]?.props["members"]?.array?.filter { $0 == .string(id) }.count == 1)
+        _ = board.undo()
+        _ = board.undo()
+        #expect(board.objects[id] == nil)
+        #expect(board.objects[group.id]?.props["members"] == .array([.string(anchor.id)]))
+        let batch = try await call(client, "object.batch", ["ops": .array([
+            .object(["method": "object.create", "params": .object(["type": "group", "props": .object(["members": .array([])])])]),
+            .object(["method": "object.create", "params": .object(["type": "shape", "props": .object(["kind": "rect"]), "group": "$0"])])
+        ])])
+        let results = try #require(batch["result"]?["results"]?.array)
+        let groupID = try #require(results[0]["object"]?["id"]?.string)
+        let memberID = try #require(results[1]["object"]?["id"]?.string)
+        #expect(board.objects[groupID]?.props["members"] == .array([.string(memberID)]))
+        let count = board.objects.count
+        for invalid in [anchor.id, "obj_missing"] {
+            let refused = try await call(client, "object.create", ["type": "shape", "props": .object(["kind": "rect"]), "group": .string(invalid)])
+            #expect(refused["error"]?["code"] == "invalid_params")
+            #expect(board.objects.count == count)
+        }
+    }
+
+    @Test func reusedChangesCreateJoinsGroupOnceAndRefusesInvalidGroups() async throws {
+        let client = try connect()
+        let caller = terminal()
+        let created = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+            "props": .object(["title": "review"])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let group = board.create(type: .group, props: .object(["members": .array([])]))
+        for _ in 0..<2 {
+            let reused = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+                "props": .object(["title": "joined"]), "group": .string(group.id)])
+            #expect(reused["result"]?["reused"] == .bool(true))
+            #expect(reused["result"]?["object"]?["id"] == .string(id))
+        }
+        #expect(board.objects[group.id]?.props["members"] == .array([.string(id)]))
+        for invalid in [JSONValue.string(id), "obj_missing", 12, .null] {
+            let before = board.objects[id]
+            let revision = board.revision
+            let refused = try await call(client, "object.create", ["type": "changes", "caller": .string(caller),
+                "props": .object(["title": "must not change"]), "group": invalid])
+            #expect(refused["error"]?["code"] == "invalid_params")
+            #expect(board.objects[id] == before)
+            #expect(board.revision == revision)
+            #expect(board.objects[group.id]?.props["members"] == .array([.string(id)]))
+        }
+    }
+
     @Test func seenReturnsCanonicalTerminalOnlyForAcceptedRevision() async throws {
         let tile = terminal()
         let client = try connect()

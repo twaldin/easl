@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "8b6bda8201bbc5a3"
+    static let schemaHash = "c714651de35bbe3e"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
@@ -31,9 +31,9 @@ enum ApiParams {
         "board.export": (["board", "path"], []),
         "object.get": (["id", "as", "since"], ["id"]),
         "object.find": (["board", "key", "keyPrefix", "type", "status", "as"], []),
-        "object.create": (["board", "type", "props", "frame", "size", "parent", "expires", "expiresIn", "viewer", "step", "caller"], ["type", "props"]),
+        "object.create": (["board", "type", "props", "frame", "size", "parent", "group", "expires", "expiresIn", "viewer", "step", "caller"], ["type", "props"]),
         "object.update": (["id", "rev", "frame", "z", "size", "props", "expires", "expiresIn", "viewer", "step", "caller"], ["id"]),
-        "object.upsert": (["board", "key", "type", "props", "frame", "size", "expires", "expiresIn", "caller"], ["key", "type", "props"]),
+        "object.upsert": (["board", "key", "type", "props", "frame", "size", "group", "expires", "expiresIn", "caller"], ["key", "type", "props"]),
         "object.delete": (["id", "viewer", "step", "caller"], ["id"]),
         "object.measure": (["board", "type", "props", "width", "caller"], ["type", "props"]),
         "object.reload": (["id", "timeoutMs", "caller"], ["id"]),

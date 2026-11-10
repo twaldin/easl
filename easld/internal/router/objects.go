@@ -148,6 +148,54 @@ func withApproximate(result map[string]any, size *fit) map[string]any {
 	return result
 }
 
+func requestedGroup(b *board.Board, p map[string]any) (string, error) {
+	value, present := p["group"]
+	if !present {
+		return "", nil
+	}
+	id, ok := value.(string)
+	if !ok || id == "" {
+		return "", invalid("group must name a group on this board")
+	}
+	o, err := b.Object(id)
+	if err != nil || o.Type != model.Group {
+		return "", invalid("group must name a group on this board")
+	}
+	return id, nil
+}
+
+func writeInGroup(b *board.Board, group, caller string, write func() (model.Object, error)) (model.Object, error) {
+	if group == "" {
+		return write()
+	}
+	var o model.Object
+	err := b.Atomically(func() error {
+		var err error
+		o, err = write()
+		if err != nil {
+			return err
+		}
+		g, err := b.Object(group)
+		if err != nil {
+			return err
+		}
+		members := strings_(g.Props["members"])
+		for _, id := range members {
+			if id == o.ID {
+				return nil
+			}
+		}
+		values := make([]any, 0, len(members)+1)
+		for _, id := range members {
+			values = append(values, id)
+		}
+		values = append(values, o.ID)
+		_, err = b.Update(group, nil, nil, nil, map[string]any{"members": values}, caller, "")
+		return err
+	})
+	return o, err
+}
+
 func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	b, err := r.boardOf(p)
 	if err != nil {
@@ -182,6 +230,14 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 		}
 	}
 	caller := r.callerOf(p)
+	group, err := requestedGroup(b, p)
+	if err != nil {
+		return nil, err
+	}
+	near := caller
+	if group != "" {
+		near = group
+	}
 	var frame *model.Frame
 	if value, present := p["frame"]; present {
 		m := asMap(value)
@@ -190,7 +246,7 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 		w, hasW := m["w"].(float64)
 		h, hasH := m["h"].(float64)
 		if !hasX && !hasY && hasW && hasH {
-			f := b.Place(w, h, caller, nil, true)
+			f := b.Place(w, h, near, nil, group == "")
 			frame = &f
 		} else {
 			f, err := parseFrame(value, nil)
@@ -228,6 +284,10 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 			return nil, err
 		}
 	}
+	if frame == nil && group != "" {
+		f := b.PlaceNew(typ, props, group, false)
+		frame = &f
+	}
 	if typ == model.Browser {
 		props, err = r.withDrawing(b, props, from)
 		if err != nil {
@@ -237,8 +297,11 @@ func (r *Router) create(p map[string]any, from Conn) (any, error) {
 	parent, _ := optStr(p, "parent")
 	var o model.Object
 	if err := b.AsViewerEdit(edit, func() error {
-		o = b.Create(typ, props, frame, parent, caller, expiry...)
-		return nil
+		var err error
+		o, err = writeInGroup(b, group, caller, func() (model.Object, error) {
+			return b.Create(typ, props, frame, parent, caller, expiry...), nil
+		})
+		return err
 	}); err != nil {
 		return nil, err
 	}
@@ -274,6 +337,10 @@ func (r *Router) update(p map[string]any) (any, error) {
 		z = &n
 	}
 	current, err := b.Object(id)
+	if err != nil {
+		return nil, err
+	}
+	group, err := requestedGroup(b, p)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +397,9 @@ func (r *Router) update(p map[string]any) (any, error) {
 	var o model.Object
 	if err := b.AsViewerEdit(edit, func() error {
 		var err error
-		o, err = b.Update(id, rev, frame, z, written, caller, "", expiry...)
+		o, err = writeInGroup(b, group, caller, func() (model.Object, error) {
+			return b.Update(id, rev, frame, z, written, caller, "", expiry...)
+		})
 		return err
 	}); err != nil {
 		return nil, err
@@ -906,7 +975,7 @@ func (r *Router) reusableChanges(p map[string]any) (map[string]any, error) {
 	if s, ok := p["size"]; ok {
 		update["size"] = s
 	}
-	for _, k := range []string{"viewer", "step", "expires"} {
+	for _, k := range []string{"viewer", "step", "expires", "group"} {
 		if v, ok := p[k]; ok {
 			update[k] = v
 		}
@@ -1303,8 +1372,8 @@ func (r *Router) fitSize(method string, p map[string]any, state *batchState, gua
 		w := o.Frame.W
 		baseWidth = &w
 	}
-	if patch, ok := p["props"]; ok {
-		props, _ = model.Merge(props, patch).(map[string]any)
+	if patch, ok := p["props"].(map[string]any); ok {
+		props = model.MergeProps(typ, props, patch)
 	}
 	if width == nil && typ != model.Code && typ != model.Image && typ != model.Video {
 		width = baseWidth
@@ -1368,7 +1437,15 @@ func (r *Router) fitted(method string, p map[string]any, size *fit) (map[string]
 		if err != nil {
 			return nil, err
 		}
-		placed := b.Place(size.W, size.H, r.callerOf(p), nil, true)
+		near := r.callerOf(p)
+		group, err := requestedGroup(b, p)
+		if err != nil {
+			return nil, err
+		}
+		if group != "" {
+			near = group
+		}
+		placed := b.Place(size.W, size.H, near, nil, group == "")
 		x, y = placed.X, placed.Y
 	}
 	params["frame"] = model.Frame{X: x, Y: y, W: size.W, H: size.H}.JSON()
