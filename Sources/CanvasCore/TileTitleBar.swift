@@ -14,19 +14,19 @@ public enum TileTitleBar {
 
     /// The close button of a bar `width` wide, at its trailing end.
     public static func closeFrame(width: CGFloat) -> CGRect {
-        CGRect(x: width - 28, y: 3, width: 22, height: 20)
+        CGRect(x: width - 28, y: (height - 20) / 2, width: 22, height: 20)
     }
 
     /// The content zoom control, `controlWidth` wide as it shows now, just before the close
     /// button; nil while it is hidden (0 wide).
     public static func zoomControlFrame(width: CGFloat, controlWidth: CGFloat) -> CGRect? {
-        controlWidth > 0 ? CGRect(x: width - 30 - controlWidth, y: 4, width: controlWidth, height: 18) : nil
+        controlWidth > 0 ? CGRect(x: width - 30 - controlWidth, y: (height - 18) / 2, width: controlWidth, height: 18) : nil
     }
 
     public static func machineControlFrame(width: CGFloat, zoomControlWidth: CGFloat, controlWidth: CGFloat) -> CGRect? {
         guard controlWidth > 0 else { return nil }
         let trailing = zoomControlWidth > 0 ? zoomControlWidth + 4 : 0
-        return CGRect(x: width - 30 - trailing - controlWidth, y: 4, width: controlWidth, height: 18)
+        return CGRect(x: width - 30 - trailing - controlWidth, y: (height - 18) / 2, width: controlWidth, height: 18)
     }
 
     /// What a press at `point` (the bar's own points, top-left origin) is on a bar `width` wide

@@ -299,7 +299,7 @@ func zoomOf(props map[string]any) float64 {
 }
 
 // TileTitleHeight is RenderMath.tileTitleHeight.
-const TileTitleHeight = 26.0
+const TileTitleHeight = model.TileTitleHeight
 
 // naturalFrame is ObjectZoom.natural: the frame a tile lays its content out in at `zoom`.
 func naturalFrame(f model.Frame, zoom float64) model.Frame {

@@ -73,10 +73,10 @@ struct RenderMathTests {
 
     @Test func fullContentExtendsTheOutlineBelowAndRight() {
         let outline = Frame(x: 0, y: 0, w: 280, h: 266)
-        let body = CGSize(width: 280, height: 240)
-        #expect(RenderMath.extended(outline, body: body, content: CGSize(width: 280, height: 900)) == Frame(x: 0, y: 0, w: 280, h: 926))
+        let body = RenderMath.body(of: object(.note, outline))
+        #expect(RenderMath.extended(outline, body: body, content: CGSize(width: 280, height: 900)) == Frame(x: 0, y: 0, w: 280, h: 934))
         #expect(RenderMath.extended(outline, body: body, content: CGSize(width: 100, height: 100)) == outline, "never shrinks")
-        #expect(RenderMath.extended(outline, body: body, content: CGSize(width: 280, height: 1e9)).h == RenderMath.maxContentExtent + 26)
+        #expect(RenderMath.extended(outline, body: body, content: CGSize(width: 280, height: 1e9)).h == RenderMath.maxContentExtent + 34)
     }
 
     @Test func snappedRectsCoverTheTargetOnWholePoints() {

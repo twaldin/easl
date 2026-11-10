@@ -24,9 +24,9 @@ func TestACallerGraphMeasuresItsLevelsAndDetailRows(t *testing.T) {
 	}
 	w, h, err := size(t, model.Diagram, map[string]any{"kind": "graph", "knowledge": graph}, nil, "")
 	// Two columns (748 wide); the deeper column (two 50-point nodes, 14 apart) is the taller,
-	// 108 tall against the detail node's 70. The frame adds the 26-point title bar and the
+	// 108 tall against the detail node's 70. The frame adds the 34-point title bar and the
 	// 28-point status strip.
-	if err != nil || w != 2*36+2*300+76 || h != 26+28+2*36+50+14+50 {
+	if err != nil || w != 2*36+2*300+76 || h != 34+28+2*36+50+14+50 {
 		t.Errorf("graph diagram: %v×%v %v", w, h, err)
 	}
 

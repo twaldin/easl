@@ -450,11 +450,11 @@ final class LayoutApiTests {
         let fit = try board.object(try #require(created["object"]?["id"]?.string))
         #expect(fit.frame.w == Double(measured.width) && fit.frame.h == Double(measured.height))
 
-        // 200 tall at 2×: a 26-point title bar over a body of 87 content points.
+        // 200 tall at 2×: a 34-point title bar over a body of 83 content points.
         let tiny = board.create(type: .code, props: Self.code(1, 30).merging(.object(["zoom": 2])), frame: Frame(x: 0, y: 600, w: 600, h: 200))
         let report = try await result("layout.check", .object(["ids": .array([.string(tiny.id)])]))
         let scrolled = try #require(report["scrolls"]?.array?.first { $0["id"] == .string(tiny.id) })
-        #expect(scrolled["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - (26 + 87)))
+        #expect(scrolled["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - (34 + 83)))
     }
 
     /// A zoomed tile's natural width comes back a hair under the points it was fitted at
@@ -483,8 +483,8 @@ final class LayoutApiTests {
         let image = board.create(type: .image, props: .object(["path": "a.png", "zoom": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
         let note = board.create(type: .note, props: .object(["markdown": "n", "zoom": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
         #expect(text.zoom == 1 && image.zoom == 1 && note.zoom == 2)
-        #expect(note.naturalFrame == Frame(x: 0, y: 0, w: 200, h: 26 + 137), "the title bar stays; the body lays out at half its size")
-        #expect(RenderMath.body(of: image) == CGSize(width: 400, height: 274), "a picture fills its frame at any zoom")
+        #expect(note.naturalFrame == Frame(x: 0, y: 0, w: 200, h: 34 + 133), "the title bar stays; the body lays out at half its size")
+        #expect(RenderMath.body(of: image) == CGSize(width: 400, height: 266), "a picture fills its frame at any zoom")
     }
 
     @Test func zoomInAndOutStepThroughTheLevelsFromAnyZoom() {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/twaldin/easl/easld/internal/model"
 )
 
 // Code tile geometry in points (CodeMetrics.swift). Text is the system monospaced font at 12
@@ -15,7 +17,7 @@ const (
 	CharAdvance     = 7.41796875
 	RowHeight       = 16.0
 	TabWidth        = 4
-	TitleHeight     = 26.0 // RenderMath.tileTitleHeight
+	TitleHeight     = model.TileTitleHeight
 	HeaderHeight    = 26.0
 	CaptionHeight   = 20.0
 	CaptionInset    = 8.0

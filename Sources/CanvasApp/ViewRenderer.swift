@@ -238,46 +238,55 @@ extension CanvasView {
         let card = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         NSGraphicsContext.saveGraphicsState()
         card.addClip()
-        NSColor.windowBackgroundColor.setFill()
+        TileChrome.color(.surface).setFill()
         rect.fill()
         let bar = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: title)
-        NSColor.controlBackgroundColor.setFill()
+        TileChrome.color(.bar).setFill()
         bar.fill()
-        if object.type == .terminal, let state = object.props["lifecycle"]?["state"]?.string {
-            let badge = TileFrameView.badgeColor(state)
-            if badge != .clear {
-                badge.setFill()
-                NSBezierPath(roundedRect: NSRect(x: rect.minX + 10, y: rect.minY + (title - 10) / 2, width: 10, height: 10), xRadius: 5, yRadius: 5).fill()
-            }
-        }
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
-        let author = chrome ? tiles[object.id]?.author : nil
-        // At 100% whatever this client's chrome text scale is: a render is the same for every client.
+        let author = chrome ? (tiles[object.id]?.author ?? authorName(of: object)) : nil
+        let state = tiles[object.id]?.chromeState ?? TileChromeState(object: object, focused: focusedTile)
+        // Renders, including easld-delegated renders, always use 100% two-track chrome.
         let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom), scale: 1)
-        let frames = TileFrameView.titleFrames(width: rect.width - (zoomLabel.map { $0.width + 4 } ?? 0), title: name, author: author, scale: 1)
+        let frames = TileChrome.frames(width: rect.width, trailing: zoomLabel.map { $0.width + 4 } ?? 0, terminal: object.type == .terminal, scale: 1)
+        let symbol = NSImage(systemSymbolName: TileChromeState.typeSymbol(object.type), accessibilityDescription: object.type.rawValue)?
+            .withSymbolConfiguration(.init(paletteColors: [TileChrome.color(.type)]))
+        symbol?.draw(in: frames.type.offsetBy(dx: rect.minX, dy: rect.minY), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        let stateStyle = NSMutableParagraphStyle()
+        stateStyle.lineBreakMode = .byTruncatingTail
+        if let status = state.terminal {
+            (status.text as NSString).draw(in: frames.state.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
+                .font: TileChrome.font(status.role, scale: 1), .foregroundColor: TileChrome.color(status.role), .paragraphStyle: stateStyle,
+            ])
+        }
+        if state.typing {
+            ("typing" as NSString).draw(in: frames.typing.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
+                .font: TileChrome.font(.typing, scale: 1), .foregroundColor: TileChrome.color(.typing), .paragraphStyle: stateStyle,
+            ])
+        }
         (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
-            .font: TileFrameView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
+            .font: TileChrome.font(.title, scale: 1), .foregroundColor: TileChrome.color(.title), .paragraphStyle: style,
         ])
-        if let author, let mark = frames.author {
+        if let author {
             let tail = NSMutableParagraphStyle()
             tail.lineBreakMode = .byTruncatingTail
             tail.alignment = .right
             // Inset like a label cell's text.
-            (AuthorMark.label(author) as NSString).draw(in: mark.offsetBy(dx: rect.minX, dy: rect.minY).insetBy(dx: 2, dy: 0), withAttributes: [
-                .font: TileFrameView.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail,
+            (author as NSString).draw(in: frames.author.offsetBy(dx: rect.minX, dy: rect.minY).insetBy(dx: 2, dy: 0), withAttributes: [
+                .font: TileChrome.font(.author, scale: 1), .foregroundColor: TileChrome.color(object.createdBy == .user ? .authorYou : .authorAgent), .paragraphStyle: tail,
             ])
         }
         if let zoomLabel {
             let centered = NSMutableParagraphStyle()
             centered.alignment = .center
             (ObjectZoom.percent(Double(zoom)) as NSString).draw(in: zoomLabel.offsetBy(dx: rect.minX, dy: rect.minY + 2), withAttributes: [
-                .font: TileFrameView.zoomLabelFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: centered,
+                .font: TileFrameView.zoomLabelFont, .foregroundColor: TileChrome.color(.control), .paragraphStyle: centered,
             ])
         }
         if chrome {
-            ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+            ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + (title - 16) / 2), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: TileChrome.color(.control)])
         }
         let body = NSRect(x: rect.minX, y: rect.minY + title, width: rect.width, height: rect.height - title)
         if let image = render.image {
@@ -297,7 +306,7 @@ extension CanvasView {
             text.draw(with: pill.insetBy(dx: 8, dy: 5), options: [.usesLineFragmentOrigin], attributes: attributes)
         }
         NSGraphicsContext.restoreGraphicsState()
-        NSColor.separatorColor.setStroke()
+        TileChrome.color(.frame).setStroke()
         let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
         border.lineWidth = 1
         border.stroke()

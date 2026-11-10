@@ -169,7 +169,7 @@ public struct ViewState: Sendable {
 public enum RenderMath {
     /// Title bar at the top of every tile, inside its frame: a tile's `frame` is its whole drawn
     /// box, and its content (the body) is the frame below this.
-    public static let tileTitleHeight: Double = 26
+    public static let tileTitleHeight: Double = 34
     /// Largest image `view.render` produces; bigger requests render at a lower scale.
     public static let pixelBudget: Double = 32_000_000
     /// Tallest a tile's full content is drawn, in points (a runaway page can't allocate gigabytes).

@@ -141,10 +141,8 @@ final class CanvasView: NSScrollView {
     /// Each terminal's name as the author marks of its agent's objects show it (`AuthorMarks`).
     var authorNames: [ObjectID: String] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
-    /// Terminals whose agent is blocked (waiting on the user), each with a ring and a bubble of
-    /// its lifecycle message while on screen and an edge pill while offscreen, like a marker's
-    /// but in the blocked style (`AttentionStyle`).
-    private var blocked: [ObjectID: AttentionMarker] = [:]
+    private var chromeFocusedTile: ObjectID?
+    private var placingPills = false
     private(set) var selection: Set<ObjectID> = []
     private(set) var selectionSerial: UInt64 = 0
     /// The group being worked in: zoomed to, everything else dimmed.
@@ -265,6 +263,7 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(chromeTextChanged), name: ChromeText.didChange, object: nil)
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
         board.viewport = { [weak self] in
             guard let self, self.viewPlaced else { return nil }
@@ -289,8 +288,7 @@ final class CanvasView: NSScrollView {
                                  (frame?.content as? TerminalTile)?.terminal.inputRefusal ?? .init())
         }
         for object in board.snapshot.objects { add(object) }
-        // Markers the user hadn't seen when the board was last open.
-        for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
+        for id in board.objects.keys { syncNeedsYou(id) }
         restack()
         refreshGroups()
     }
@@ -343,10 +341,12 @@ final class CanvasView: NSScrollView {
         super.viewDidMoveToWindow()
         responderObservation = window?.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated {
+                self?.syncTypingFocus()
                 self?.refreshRings()
                 self?.scheduleLiveness()
             }
         }
+        syncTypingFocus()
         refreshRings()
         guard let window, mouseMonitor == nil else { return }
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .otherMouseDown, .scrollWheel, .magnify, .keyDown, .keyUp]) { [weak self, weak window] event in
@@ -396,6 +396,7 @@ final class CanvasView: NSScrollView {
             let carried = rekeyed.removeValue(forKey: object.id)
             let provisional = carried?.browser?.objectID
             add(object, reusing: carried?.browser)
+            syncNeedsYou(object.id)
             if object.type != .shape && object.type != .arrow { restack() }
             scheduleGeometry()
             if let carried {
@@ -437,21 +438,20 @@ final class CanvasView: NSScrollView {
                 add(object)
                 if object.type != .shape && object.type != .arrow { restack() }
             }
+            syncAuthor(object.id)
+            syncNeedsYou(object.id)
             scheduleGeometry()
         case .objectDeleted(let id):
             removeTile(id)
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
-            hideMarker(id)
-            if let view = blocked.removeValue(forKey: id) {
-                view.removeFromSuperview()
-                layoutPills()
-            }
+            markers.removeValue(forKey: id)?.removeFromSuperview()
+            layoutPills()
             seenLocally.remove(id)
             syncAuthors(of: id)
             scheduleGeometry()
-        case .attentionChanged(let id, let marker):
-            if let marker { showMarker(id, message: marker.message) } else { hideMarker(id) }
+        case .attentionChanged(let id, _):
+            syncNeedsYou(id)
         default: break
         }
     }
@@ -643,7 +643,9 @@ final class CanvasView: NSScrollView {
         if tile.superview == nil { document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay) }
         tiles[id] = tile
         if object.type == .terminal { lifecycleChanged(object) }
-        if object.type == .terminal { syncAuthors(of: id) } else { tile.setAuthor(authorName(of: object)) }
+        tile.setAuthor(authorName(of: object))
+        tile.setTyping(focusedTile == id)
+        if object.type == .terminal { syncAuthors(of: id) }
         scheduleLiveness()
     }
 
@@ -1382,6 +1384,14 @@ final class CanvasView: NSScrollView {
             responder = view.superview
         }
         return nil
+    }
+
+    private func syncTypingFocus() {
+        let next = focusedTile
+        guard next != chromeFocusedTile else { return }
+        if let previous = chromeFocusedTile { tiles[previous]?.setTyping(false) }
+        if let next { tiles[next]?.setTyping(true) }
+        chromeFocusedTile = next
     }
 
     /// The terminal holding keyboard focus.
@@ -2335,30 +2345,44 @@ final class CanvasView: NSScrollView {
 
     // MARK: Attention
 
-    /// Shows the board's marker on an object (`Board.attention`): a pulsing ring and message,
-    /// plus an edge pill while the object is offscreen. The user acknowledges it (the board
-    /// clears it) by selecting it, focusing it, clicking it or its bubble, or looking at it for
-    /// a while; the empty canvas's menu clears them all.
-    private func showMarker(_ id: ObjectID, message: String?) {
-        guard board.objects[id] != nil else { return }
-        if let marker = markers[id] {
+    @objc private func chromeTextChanged() {
+        layoutPills()
+    }
+
+    private func syncNeedsYou(_ id: ObjectID) {
+        let item = board.objects[id].flatMap {
+            NeedsYouItem.all([id: $0], attention: board.attention).first
+        }
+        guard let item else {
+            tiles[id]?.onChromeLayout = nil
+            _ = tiles[id]?.placeNeedsYou(width: 0)
+            guard let marker = markers.removeValue(forKey: id) else { return }
+            marker.removeFromSuperview()
+            layoutPills()
+            scheduleLiveness()
+            return
+        }
+        let style: AttentionStyle = switch item.reason {
+        case .marked: .marker
+        case .blocked: .blocked
+        case .question, .done: .needsYou
+        }
+        let message = TileChromeState.needsYouText(item)
+        if let marker = markers[id], marker.style == style {
+            guard marker.message != message else { return }
             marker.message = message
         } else {
-            let marker = AttentionMarker(objectID: id, message: message)
+            markers.removeValue(forKey: id)?.removeFromSuperview()
+            let marker = AttentionMarker(objectID: id, message: message, style: style)
             marker.onClick = { [weak self] in
                 self?.board.clearAttention(id)
+                self?.reveal(id, bottomFirst: item.reason == .blocked)
                 self?.select(id, extend: false)
             }
             attention.addSubview(marker)
             markers[id] = marker
         }
-        layoutPills()
-        scheduleLiveness()
-    }
-
-    private func hideMarker(_ id: ObjectID) {
-        guard let marker = markers.removeValue(forKey: id) else { return }
-        marker.removeFromSuperview()
+        tiles[id]?.onChromeLayout = { [weak self] in self?.layoutPills() }
         layoutPills()
         scheduleLiveness()
     }
@@ -2372,16 +2396,22 @@ final class CanvasView: NSScrollView {
     /// what jumps aim at). An object in view shows its bubble; one out of view gets an edge pill
     /// instead (a blocked terminal's says why it is blocked, even when it is also marked).
     private func layoutPills() {
-        guard !markers.isEmpty || !blocked.isEmpty || !edges.subviews.isEmpty else { return }
+        guard !placingPills else { return }
+        placingPills = true
+        defer { placingPills = false }
+        guard !markers.isEmpty || !edges.subviews.isEmpty else { return }
         let visible = documentVisibleRect
         let zoom = magnification
         var shownMarkers: [PillLayout.Marker] = []
         var pointers: [ObjectID: AttentionEdgeView.Pointer] = [:]
         func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
-        // Hidden chrome (presenting) hides agents' "look here" markers; a blocked agent still shows.
-        if chromeHidden { markers.values.forEach { $0.isHidden = true } }
-        let views = (chromeHidden ? [] : Array(markers.values)) + Array(blocked.values)
+        // Presenting hides explicit look-here markers, not requests for the user's action.
+        let views = markers.values.filter { view in
+            if chromeHidden && view.style == .marker { view.isHidden = true; return false }
+            return true
+        }
         var shownRects: [ObjectIdentifier: NSRect] = [:]
+        var foldedBubbles: [ObjectID: NSRect] = [:]
         for view in views {
             guard let rect = docFrame(view.objectID) else {
                 view.isHidden = true
@@ -2396,6 +2426,14 @@ final class CanvasView: NSScrollView {
             }
             let shown = attention.convert(rect, from: document)
             let header = headerOnScreen(view.objectID, zoom: zoom)
+            if !chromeHidden, TileChromeLayout.mode(scale: ChromeText.scale) == .folded, let tile = tiles[view.objectID] {
+                let slot = tile.placeNeedsYou(width: min(view.naturalWidth, 160) / zoom)
+                let row = attention.convert(slot, from: tile)
+                foldedBubbles[view.objectID] = NSRect(x: row.minX, y: row.midY - AttentionMarker.bubbleHeight / 2,
+                                                     width: row.width, height: AttentionMarker.bubbleHeight)
+                shownRects[ObjectIdentifier(view)] = shown
+                continue
+            }
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
             shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,
@@ -2414,7 +2452,7 @@ final class CanvasView: NSScrollView {
                                          tiles: onScreen, focused: focused, caret: caret, clear: clear,
                                          bands: chromeBands().map { edges.convert($0, from: nil) })
         for view in views {
-            let bubble = view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID]
+            let bubble = foldedBubbles[view.objectID] ?? (view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID])
             if let bubble, let shown = shownRects[ObjectIdentifier(view)] { view.place(around: shown, bubble: bubble) }
         }
         edges.show(pointers.values.sorted { $0.id < $1.id }.map { pointer in
@@ -2470,29 +2508,6 @@ final class CanvasView: NSScrollView {
         if state == LifecycleState.working.rawValue || state == LifecycleState.done.rawValue, lifecycle?["seen"]?.bool != true {
             seenLocally.remove(terminal.id)
         }
-        // A blocked terminal's ring and bubble come and go with the state, the moment it changes.
-        if lifecycle?["state"]?.string == LifecycleState.blocked.rawValue {
-            let message = lifecycle?["message"]?.string
-            if let view = blocked[terminal.id] {
-                guard view.message != message else { return scheduleLiveness() }
-                view.message = message
-            } else {
-                let id = terminal.id
-                let view = AttentionMarker(objectID: id, message: message, style: .blocked)
-                // Answering is what it needs: clicking the bubble shows the terminal (its bottom,
-                // where the question is, when it is taller than the view) and puts the keyboard in it.
-                view.onClick = { [weak self] in
-                    self?.reveal(id, bottomFirst: true)
-                    self?.select(id, extend: false)
-                }
-                attention.addSubview(view)
-                blocked[id] = view
-            }
-            layoutPills()
-        } else if let view = blocked.removeValue(forKey: terminal.id) {
-            view.removeFromSuperview()
-            layoutPills()
-        }
         scheduleLiveness()
     }
 
@@ -2513,7 +2528,7 @@ final class CanvasView: NSScrollView {
             return seen.update(visible: [])
         }
         let visible = documentVisibleRect
-        var candidates = Set(markers.keys)
+        var candidates = Set(board.attention.keys)
         for (id, tile) in tiles where tile.content is TerminalTile && !seenLocally.contains(id) {
             if board.objects[id]?.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue { candidates.insert(id) }
         }

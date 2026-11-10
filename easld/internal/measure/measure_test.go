@@ -114,10 +114,10 @@ func TestCodeTilesMeasureAsTheAppDid(t *testing.T) {
 		width *float64
 		w, h  float64
 	}{
-		{map[string]any{"path": "src/app.ts"}, nil, 441, 204},
-		{map[string]any{"path": "src/app.ts", "range": map[string]any{"start": 1.0, "end": 3.0}}, nil, 396, 108},
-		{map[string]any{"path": "src/app.ts"}, new(200.0), 280, 236},
-		{map[string]any{"path": "src/app.ts", "range": map[string]any{"start": 5.0, "end": 10.0}}, nil, 441, 140},
+		{map[string]any{"path": "src/app.ts"}, nil, 441, 212},
+		{map[string]any{"path": "src/app.ts", "range": map[string]any{"start": 1.0, "end": 3.0}}, nil, 396, 116},
+		{map[string]any{"path": "src/app.ts"}, new(200.0), 280, 244},
+		{map[string]any{"path": "src/app.ts", "range": map[string]any{"start": 5.0, "end": 10.0}}, nil, 441, 148},
 	}
 	for _, c := range cases {
 		w, h, err := size(t, model.Code, c.props, c.width, root)
@@ -136,7 +136,7 @@ func TestCodeTilesMeasureAsTheAppDid(t *testing.T) {
 	}
 	// A zoomed tile lays out at width / zoom and measures its body zoom times that.
 	w, h, _ := size(t, model.Code, map[string]any{"path": "src/app.ts", "zoom": 2.0}, nil, root)
-	if w != 882 || h != 26+178*2 {
+	if w != 882 || h != 34+178*2 {
 		t.Errorf("zoomed: %v×%v", w, h)
 	}
 	// A caption widens the tile, up to the widest it may get, as the client measures it.
@@ -195,12 +195,12 @@ func TestImagesFitTheirPictureCappedAtTheirWidth(t *testing.T) {
 		width *float64
 		w, h  float64
 	}{
-		{map[string]any{"path": "img.png"}, nil, 30, 46}, // conformance/fixtures/measure-notes.json
-		{map[string]any{"path": "chart.png"}, nil, 960, 26 + 540},
-		{map[string]any{"path": "chart.png", "caption": "Figure 1"}, nil, 960, 26 + 540 + 24},
-		{map[string]any{"path": "chart.png"}, new(400.0), 400, 26 + 225},
-		{map[string]any{"path": "chart.png"}, new(2000.0), 1200, 26 + 675},
-		{map[string]any{"path": filepath.Join(root, "chart.png"), "zoom": 2.0}, new(400.0), 400, 26 + 225},
+		{map[string]any{"path": "img.png"}, nil, 30, 54},
+		{map[string]any{"path": "chart.png"}, nil, 960, 34 + 540},
+		{map[string]any{"path": "chart.png", "caption": "Figure 1"}, nil, 960, 34 + 540 + 24},
+		{map[string]any{"path": "chart.png"}, new(400.0), 400, 34 + 225},
+		{map[string]any{"path": "chart.png"}, new(2000.0), 1200, 34 + 675},
+		{map[string]any{"path": filepath.Join(root, "chart.png"), "zoom": 2.0}, new(400.0), 400, 34 + 225},
 	}
 	for _, c := range cases {
 		w, h, err := size(t, model.Image, c.props, c.width, root)
@@ -271,7 +271,7 @@ func TestADiagramMeasuresItsGraphAtFullSize(t *testing.T) {
 	}
 	w, h, err := size(t, model.Diagram, map[string]any{"graph": graph}, nil, "")
 	// Two columns; the callers' column (a node of 50 points and one of 86, 14 apart) is the taller.
-	if err != nil || w != 2*36+2*300+76 || h != 26+28+2*36+50+14+86 {
+	if err != nil || w != 2*36+2*300+76 || h != 34+28+2*36+50+14+86 {
 		t.Errorf("diagram: %v×%v %v", w, h, err)
 	}
 	broken := map[string]any{"aim": graph["aim"], "nodes": []any{map[string]any{"id": "f"}}, "edges": []any{}, "computedAt": "x"}

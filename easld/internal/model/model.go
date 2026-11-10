@@ -200,7 +200,7 @@ func DefaultSize(t ObjectType) (w, h float64) {
 		return 760, 480
 	case Question:
 		// Three options, no context; a new question is sized by its props (question.Size).
-		return 460, 194 + 3*50
+		return 460, TileTitleHeight + 168 + 3*50
 	case Shape:
 		return 160, 100
 	}

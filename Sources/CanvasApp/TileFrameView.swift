@@ -18,11 +18,10 @@ final class TileFrameView: NSView {
     private let machineControl = DrawingMachineControl()
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
-    /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
     private let authorLabel = NSTextField(labelWithString: "")
-    /// An unresolved agent error, else the terminal's last failed or long command, right-aligned.
     private let statusLabel = NSTextField(labelWithString: "")
-    private let badge = NSView()
+    private let typingLabel = NSTextField(labelWithString: "typing")
+    private let typeGlyph = NSImageView()
     private let closeButton = TileCloseButton()
     private let card = CardImageView()
     private var cardTitle = NSTextField(labelWithString: "")
@@ -32,8 +31,22 @@ final class TileFrameView: NSView {
     /// Stacking order among tiles (the object's `z`).
     private(set) var z: Double = 0
     private var lifecycleState: String?
-    private var lifecycleError: String?
-    private var commandStatus: (text: String?, failed: Bool, detail: String?) = (nil, false, nil)
+    private var chromeObject: CanvasObject
+    private var commandStatus = TileChromeState.Command()
+    private(set) var chromeState: TileChromeState
+    private(set) var authorRole: ChromeRole = .authorAgent
+    var onChromeLayout: (() -> Void)?
+    private var titlePathToolTip: String?
+    private var needsYouWidth: CGFloat = 0
+    private(set) var needsYouFrame: NSRect = .zero
+
+    func placeNeedsYou(width: CGFloat) -> NSRect {
+        if needsYouWidth != width {
+            needsYouWidth = width
+            layoutTitle()
+        }
+        return needsYouFrame
+    }
 
     /// Called with the new canvas-space frame when a resize ends.
     var onFrameCommit: ((NSRect) -> Void)?
@@ -67,6 +80,9 @@ final class TileFrameView: NSView {
 
     init(object: CanvasObject, content: any TileContent, frame: NSRect) {
         objectID = object.id
+        chromeObject = object
+        chromeState = TileChromeState(object: object, focused: nil)
+        chromeState.terminal = nil
         self.content = content
         zoom = CGFloat(object.zoom)
         zoomable = ObjectZoom.applies(to: object.type)
@@ -81,10 +97,13 @@ final class TileFrameView: NSView {
         // The group's label says the title (with state, range, caption); the label itself would
         // say it again, and is empty while the window isn't visible (`syncTitle`).
         titleLabel.setAccessibilityElement(false)
-        titleLabel.font = ChromeText.font(Self.titleFont)
+        titleLabel.font = TileChrome.font(.title)
+        titleLabel.textColor = TileChrome.color(.title)
         titleLabel.lineBreakMode = .byTruncatingMiddle
-        badge.wantsLayer = true
-        badge.layer?.cornerRadius = 5
+        typeGlyph.image = NSImage(systemSymbolName: TileChromeState.typeSymbol(object.type), accessibilityDescription: roleDescription)
+        typeGlyph.contentTintColor = TileChrome.color(.type)
+        typeGlyph.imageScaling = .scaleProportionallyDown
+        typeGlyph.setAccessibilityElement(false)
         applyLayerColors()
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
@@ -92,19 +111,26 @@ final class TileFrameView: NSView {
         closeButton.title = "✕"
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        authorLabel.font = ChromeText.font(Self.authorFont)
-        authorLabel.textColor = .secondaryLabelColor
+        closeButton.contentTintColor = TileChrome.color(.control)
+        authorLabel.font = TileChrome.font(.author)
+        authorLabel.textColor = TileChrome.color(.author)
         authorLabel.lineBreakMode = .byTruncatingTail
         authorLabel.alignment = .right
         authorLabel.isHidden = true
-        titleBar.addSubview(badge)
+        titleBar.addSubview(typeGlyph)
         titleBar.addSubview(titleLabel)
         titleBar.addSubview(authorLabel)
-        statusLabel.font = ChromeText.font(Self.statusFont)
-        statusLabel.alignment = .right
+        statusLabel.font = TileChrome.font(.state)
+        statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.isHidden = true
         titleBar.addSubview(statusLabel)
+        typingLabel.font = TileChrome.font(.typing)
+        typingLabel.textColor = TileChrome.color(.typing)
+        typingLabel.isHidden = true
+        typingLabel.setAccessibilityElement(false)
+        titleBar.addSubview(typingLabel)
         titleBar.addSubview(closeButton)
+        machineControl.contentTintColor = TileChrome.color(.control)
         closeBaseFont = closeButton.font ?? .systemFont(ofSize: NSFont.systemFontSize)
         closeButton.font = ChromeText.font(closeBaseFont)
         zoomControl.applyScale()
@@ -146,7 +172,7 @@ final class TileFrameView: NSView {
     override func accessibilityRole() -> NSAccessibility.Role? { .group }
     override func accessibilityRoleDescription() -> String? { roleDescription }
     override func accessibilityLabel() -> String? {
-        ([title, accessibilityDetail] + [author.map { "created by \($0)" }]).compactMap { $0 }.joined(separator: ", ")
+        ([title, accessibilityDetail, chromeState.typing ? "typing" : nil] + [author.map { "created by \($0)" }]).compactMap { $0 }.joined(separator: ", ")
     }
     override func accessibilityChildren() -> [Any]? {
         let children = super.accessibilityChildren() ?? []
@@ -194,12 +220,9 @@ final class TileFrameView: NSView {
         let increased = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.borderWidth = increased ? 2 : 1
-            layer?.borderColor = NSColor.separatorColor.cgColor
-            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            titleBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            badge.layer?.backgroundColor = Self.badgeColor(lifecycleState).cgColor
-            badge.layer?.borderWidth = increased && lifecycleState != nil ? 1 : 0
-            badge.layer?.borderColor = NSColor.labelColor.cgColor
+            layer?.borderColor = TileChrome.color(.frame).cgColor
+            layer?.backgroundColor = TileChrome.color(.surface).cgColor
+            titleBar.layer?.backgroundColor = TileChrome.color(.bar).cgColor
         }
     }
 
@@ -242,7 +265,7 @@ final class TileFrameView: NSView {
     private func layoutParts() {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
-        badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
+        typeGlyph.frame = TileChrome.frames(width: width, terminal: chromeObject.type == .terminal).type
         closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
@@ -261,14 +284,18 @@ final class TileFrameView: NSView {
     }
 
     func update(_ object: CanvasObject) {
+        chromeObject = object
+        authorRole = object.createdBy == .user ? .authorYou : .authorAgent
+        authorLabel.textColor = TileChrome.color(authorRole)
         if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object, branch: branch)) }
         // A file outside the board root shows a short label, an image its file name; the
         // tooltip has the path.
         switch object.type {
-        case .code: titleLabel.toolTip = object.props["path"]?.string.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
-        case .image, .video: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
-        default: titleLabel.toolTip = nil
+        case .code: titlePathToolTip = object.props["path"]?.string.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
+        case .image, .video: titlePathToolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
+        default: titlePathToolTip = nil
         }
+        updateTitleToolTip()
         z = object.z
         if object.type == .browser {
             machineControl.show(DrawingMachine(object.props))
@@ -276,19 +303,11 @@ final class TileFrameView: NSView {
         }
         accessibilityDetail = Self.accessibilityDetail(for: object)
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
-        let error = object.type == .terminal ? object.props["lifecycle"]?["error"]?.string : nil
-        if error != lifecycleError {
-            lifecycleError = error
-            updateStatus()
-        }
-        badge.isHidden = object.type != .terminal
         if state != lifecycleState {
             lifecycleState = state
-            applyLayerColors()
-            // What the dot means, in the words of Help › easl Basics.
-            badge.toolTip = CanvasBasics.lifecycle(state)
             updateTint()
         }
+        updateStatus()
         content.update(object)
     }
 
@@ -321,18 +340,27 @@ final class TileFrameView: NSView {
     /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
     /// secondary text, red only for a failure; `detail` is its tooltip.
     func setStatus(_ status: String?, failed: Bool, detail: String?) {
-        commandStatus = (status, failed, detail)
+        commandStatus = TileChromeState.Command(text: status, failed: failed, detail: detail)
         updateStatus()
     }
 
     private func updateStatus() {
-        let status = lifecycleError == nil ? commandStatus.text : "error"
-        statusLabel.stringValue = status ?? ""
-        statusLabel.textColor = lifecycleError != nil || commandStatus.failed ? .systemRed : .secondaryLabelColor
-        statusLabel.toolTip = lifecycleError ?? commandStatus.detail
-        statusLabel.setAccessibilityLabel(lifecycleError.map { "Agent error: \($0)" } ?? status)
-        statusLabel.isHidden = status == nil
-        layoutTitle()
+        let state = TileChromeState(object: chromeObject, focused: chromeState.typing ? objectID : nil, command: commandStatus)
+        guard state.terminal != chromeState.terminal else { return }
+        chromeState = state
+        statusLabel.stringValue = state.terminal?.text ?? ""
+        statusLabel.textColor = TileChrome.color(state.terminal?.role ?? .state)
+        statusLabel.toolTip = state.terminal?.detail
+        statusLabel.setAccessibilityLabel(state.terminal.map { [$0.text, $0.detail].compactMap { $0 }.joined(separator: ": ") })
+        statusLabel.isHidden = state.terminal == nil
+        if TileChromeLayout.mode(scale: ChromeText.scale) == .folded { layoutTitle() }
+    }
+
+    func setTyping(_ typing: Bool) {
+        guard chromeState.typing != typing else { return }
+        chromeState.typing = typing
+        typingLabel.isHidden = !typing
+        if TileChromeLayout.mode(scale: ChromeText.scale) == .folded { layoutTitle() }
     }
 
     func setDrawingMachines(_ machines: [DrawingMachine]?, canSwitch: Bool) {
@@ -346,35 +374,26 @@ final class TileFrameView: NSView {
         guard titleLabel.stringValue != title else { return }
         titleLabel.stringValue = title
         cardTitle.stringValue = title
-        if author != nil { layoutTitle() }
     }
 
     // MARK: Author mark
 
-    /// The title bar's text at 100% (`ChromeText` scales it; `view.render` draws these as they are).
-    static let titleFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-    static let authorFont = NSFont.systemFont(ofSize: 11)
-    static let statusFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     private var closeBaseFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
 
     /// Chrome text changed size (`ChromeText.didChange`): the title bar's text and the width it
     /// takes. The bar itself stays `titleHeight` tall: that is the board's geometry.
     @objc private func chromeTextChanged() {
-        titleLabel.font = ChromeText.font(Self.titleFont)
-        authorLabel.font = ChromeText.font(Self.authorFont)
-        statusLabel.font = ChromeText.font(Self.statusFont)
+        titleLabel.font = TileChrome.font(.title)
+        authorLabel.font = TileChrome.font(.author)
+        statusLabel.font = TileChrome.font(.state)
+        typingLabel.font = TileChrome.font(.typing)
         closeButton.font = ChromeText.font(closeBaseFont)
         zoomControl.applyScale()
         machineControl.applyScale()
         updateZoomControl()
+        updateTitleToolTip()
     }
 
-    /// A line of title bar text `height` points tall at 100%, as a frame centred in the bar at
-    /// `scale`.
-    private static func line(_ height: CGFloat, scale: Double) -> (y: CGFloat, height: CGFloat) {
-        let scaled = (height * CGFloat(scale)).rounded()
-        return (((titleHeight - scaled) / 2).rounded(), scaled)
-    }
 
     /// The name of the agent terminal that made the object (`AuthorMark`), nil for none.
     private(set) var author: String?
@@ -382,27 +401,37 @@ final class TileFrameView: NSView {
     func setAuthor(_ author: String?) {
         guard author != self.author else { return }
         self.author = author
-        authorLabel.stringValue = author.map(AuthorMark.label) ?? ""
-        authorLabel.toolTip = author.map(AuthorMark.toolTip)
-        layoutTitle()
+        authorLabel.stringValue = author ?? ""
+        authorLabel.toolTip = author
+        authorLabel.isHidden = author == nil || TileChromeLayout.mode(scale: ChromeText.scale) == .folded
+        updateTitleToolTip()
+    }
+
+    private func updateTitleToolTip() {
+        titleLabel.toolTip = TileChromeLayout.titleToolTip(path: titlePathToolTip, author: author, scale: ChromeText.scale)
+        titleBar.toolTip = TileChromeLayout.mode(scale: ChromeText.scale) == .folded ? titleLabel.toolTip : nil
     }
 
     private func layoutTitle() {
-        // The content zoom control sits before the close button; a terminal's command status
-        // (never on a tile with an author mark) before that.
+        // Controls keep their existing hover and content-zoom behavior on both tracks.
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
         zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
-        let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, width - 42 - zoomWidth))
+        let machineSpace = width - 32 - 28 - TileChrome.metadataWidth(terminal: chromeObject.type == .terminal) - zoomWidth - 8
+        let machineWidth = machineControl.isHidden ? 0 : min(machineControl.fittedWidth, max(0, machineSpace))
         machineControl.frame = TileTitleBar.machineControlFrame(width: width, zoomControlWidth: zoomWidth, controlWidth: machineWidth) ?? .zero
         let trailing = (zoomWidth > 0 ? zoomWidth + 4 : 0) + (machineWidth > 0 ? machineWidth + 4 : 0)
-        let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
-        let line = Self.line(15, scale: ChromeText.scale)
-        statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: line.y, width: status, height: line.height)
-        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0) - trailing, title: titleLabel.stringValue, author: author, scale: ChromeText.scale)
+        let frames = TileChrome.frames(width: width, trailing: trailing, terminal: chromeObject.type == .terminal,
+                                       state: chromeState.terminal != nil, typing: chromeState.typing, needsYouWidth: needsYouWidth)
         titleLabel.frame = frames.title
-        authorLabel.isHidden = frames.author == nil
-        if let rect = frames.author { authorLabel.frame = rect }
+        statusLabel.frame = frames.state
+        typingLabel.frame = frames.typing
+        authorLabel.frame = frames.author
+        authorLabel.isHidden = author == nil || TileChromeLayout.mode(scale: ChromeText.scale) == .folded
+        if needsYouFrame != frames.needsYou {
+            needsYouFrame = frames.needsYou
+            onChromeLayout?()
+        }
     }
 
     // MARK: Content zoom
@@ -452,26 +481,9 @@ final class TileFrameView: NSView {
     static func zoomLabelFrame(width: CGFloat, zoom: Double, scale: Double = ChromeText.scale) -> NSRect? {
         guard abs(zoom - 1) >= 0.001 else { return nil }
         let percent = TileZoomControl.percentWidth(scale: scale)
-        return NSRect(x: width - 30 - percent, y: 4, width: percent, height: 18)
+        return NSRect(x: width - 30 - percent, y: (titleHeight - 18) / 2, width: percent, height: 18)
     }
 
-    /// Where a title bar `width` wide draws the title and the author mark (nil: none), here and
-    /// in `view.render`: the mark right-aligned before the close button, truncated before the
-    /// title and dropped in a narrow bar (`AuthorMark.width`). The text is `scale` times its
-    /// size; the bar's height and its left and right margins are fixed.
-    static func titleFrames(width: CGFloat, title: String, author: String?, scale: Double = ChromeText.scale) -> (title: NSRect, author: NSRect?) {
-        let space = max(0, width - 60)
-        let titleLine = line(16, scale: scale), markLine = line(15, scale: scale)
-        let whole = NSRect(x: 26, y: titleLine.y, width: space, height: titleLine.height)
-        guard let author else { return (whole, nil) }
-        // A label's cell pads its text 2 pt on either side.
-        func measure(_ text: String, _ font: NSFont) -> CGFloat { ((text as NSString).size(withAttributes: [.font: font]).width + 5).rounded(.up) }
-        let shown = AuthorMark.width(natural: measure(AuthorMark.label(author), ChromeText.font(authorFont, scale: scale)),
-                                     title: measure(title, ChromeText.font(titleFont, scale: scale)), space: space)
-        guard shown > 0 else { return (whole, nil) }
-        let mark = NSRect(x: whole.maxX - shown, y: markLine.y, width: shown, height: markLine.height)
-        return (NSRect(x: whole.minX, y: whole.minY, width: max(0, space - shown - AuthorMark.gap), height: whole.height), mark)
-    }
 
     // MARK: Title
 
@@ -514,13 +526,7 @@ final class TileFrameView: NSView {
     }
 
     static func badgeColor(_ state: String?) -> NSColor {
-        switch state {
-        case "working": .systemBlue
-        case "blocked": .systemOrange
-        case "done": .systemGreen
-        case "idle": .systemGray
-        default: .clear
-        }
+        TileChromeState.lifecycleRole(state).map(TileChrome.color) ?? .clear
     }
 
     /// Cards show below `CanvasView.liveThreshold` zoom, so ~0.6 pixels per point is all they need
@@ -923,7 +929,7 @@ private final class TileZoomControl: NSView {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
             button.imagePosition = .imageOnly
-            button.contentTintColor = .secondaryLabelColor
+            button.contentTintColor = TileChrome.color(.control)
             button.setAccessibilityLabel(label)
             button.toolTip = tip
             button.target = self
@@ -957,7 +963,7 @@ private final class TileZoomControl: NSView {
     func show(zoom: Double, expanded: Bool, canZoomOut: Bool, canZoomIn: Bool) {
         self.expanded = expanded
         let text = ObjectZoom.percent(zoom)
-        percent.attributedTitle = NSAttributedString(string: text, attributes: [.font: ChromeText.font(TileFrameView.zoomLabelFont), .foregroundColor: NSColor.secondaryLabelColor])
+        percent.attributedTitle = NSAttributedString(string: text, attributes: [.font: ChromeText.font(TileFrameView.zoomLabelFont), .foregroundColor: TileChrome.color(.control)])
         percent.setAccessibilityLabel("Content zoom \(text), reset to 100%")
         minus.isHidden = !expanded
         plus.isHidden = !expanded

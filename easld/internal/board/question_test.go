@@ -64,14 +64,14 @@ func TestANewQuestionIsSizedByItsPropsAndAskedByItsCaller(t *testing.T) {
 	b := New("brd", "/r")
 	terminal := b.Create(model.Terminal, map[string]any{}, frame(0, 0, 1000, 620), "", "")
 	q := ask(t, b, askProps(nil), nil, terminal.ID)
-	if q.Frame.W != 460 || q.Frame.H != 294 {
+	if q.Frame.W != 460 || q.Frame.H != 302 {
 		t.Errorf("two options: %v", q.Frame)
 	}
 	if q.Props["status"] != "open" || !jsonEq(q.Props["asker"], map[string]any{"tile": terminal.ID}) {
 		t.Errorf("props %v", q.Props)
 	}
 	withContext := ask(t, b, askProps(map[string]any{"asker": map[string]any{"name": "cos"}, "context": []any{map[string]any{"url": "https://x"}}}), nil, "")
-	if withContext.Frame.W != 460 || withContext.Frame.H != 324 {
+	if withContext.Frame.W != 460 || withContext.Frame.H != 332 {
 		t.Errorf("with context: %v", withContext.Frame)
 	}
 	framed := ask(t, b, askProps(map[string]any{"asker": map[string]any{"name": "cos"}}), frame(5000, 0, 300, 100), "")
@@ -94,22 +94,22 @@ func TestClosingAQuestionShrinksItToTheClosedTileUnlessTheCallGivesAFrame(t *tes
 	}
 
 	answered := write(t, b, open(map[string]any{}).ID, map[string]any{"status": "answered", "answer": map[string]any{"option": "a"}}, nil, "")
-	if answered.Frame.H != 148 || answered.Frame.W != 460 {
+	if answered.Frame.H != 156 || answered.Frame.W != 460 {
 		t.Errorf("answered: %v", answered.Frame)
 	}
 	cancelled := write(t, b, open(map[string]any{}).ID, map[string]any{"status": "cancelled"}, nil, "")
-	if cancelled.Frame.H != 148 {
+	if cancelled.Frame.H != 156 {
 		t.Errorf("cancelled: %v", cancelled.Frame)
 	}
 	expired := write(t, b, open(map[string]any{}).ID, map[string]any{"status": "expired"}, nil, "")
-	if expired.Frame.H != 148 {
+	if expired.Frame.H != 156 {
 		t.Errorf("expired: %v", expired.Frame)
 	}
 
 	// A note makes the closed tile 40 taller; where and how wide it was stays.
 	q := open(map[string]any{})
 	noted := write(t, b, q.ID, map[string]any{"status": "answered", "answer": map[string]any{"note": "go ahead"}}, nil, "")
-	if noted.Frame != (model.Frame{X: q.Frame.X, Y: q.Frame.Y, W: 460, H: 188}) {
+	if noted.Frame != (model.Frame{X: q.Frame.X, Y: q.Frame.Y, W: 460, H: 196}) {
 		t.Errorf("noted: %v (was %v)", noted.Frame, q.Frame)
 	}
 
@@ -125,14 +125,14 @@ func TestClosingAQuestionShrinksItToTheClosedTileUnlessTheCallGivesAFrame(t *tes
 		t.Errorf("small: %v", closed.Frame)
 	}
 
-	// At zoom 2 the body doubles under a 1× title bar: 26 + 122 × 2.
+	// At zoom 2 the body doubles under a 1× title bar: 34 + 122 × 2.
 	zoomed := ask(t, b, askProps(map[string]any{"asker": asker, "zoom": 2.0}), nil, "")
-	if closed := write(t, b, zoomed.ID, map[string]any{"status": "cancelled"}, nil, ""); closed.Frame.H != 270 {
+	if closed := write(t, b, zoomed.ID, map[string]any{"status": "cancelled"}, nil, ""); closed.Frame.H != 278 {
 		t.Errorf("zoomed: %v", closed.Frame)
 	}
 	// A zoomed note makes the closed tile taller than the open one was: it stays.
 	both := ask(t, b, askProps(map[string]any{"asker": asker, "zoom": 2.0}), nil, "")
-	if closed := write(t, b, both.ID, map[string]any{"status": "answered", "answer": map[string]any{"note": "n"}}, nil, ""); closed.Frame.H != 294 {
+	if closed := write(t, b, both.ID, map[string]any{"status": "answered", "answer": map[string]any{"note": "n"}}, nil, ""); closed.Frame.H != 302 {
 		t.Errorf("zoomed with a note: %v", closed.Frame)
 	}
 
@@ -352,10 +352,10 @@ func TestExpiringQuestionsClosesTheDueOpenOnesAsTheSystem(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expired %v, want %v", got, want)
 	}
-	if o := b.Objects()[due.ID]; o.Props["status"] != "expired" || o.Frame.H != 148 || o.Frame.W != 460 || o.Frame.X != due.Frame.X || o.Rev != 2 || o.UpdatedBy == nil || o.UpdatedBy.Kind != "user" {
+	if o := b.Objects()[due.ID]; o.Props["status"] != "expired" || o.Frame.H != 156 || o.Frame.W != 460 || o.Frame.X != due.Frame.X || o.Rev != 2 || o.UpdatedBy == nil || o.UpdatedBy.Kind != "user" {
 		t.Errorf("due: %+v", o)
 	}
-	if o := b.Objects()[zoomed.ID]; o.Frame.H != 270 {
+	if o := b.Objects()[zoomed.ID]; o.Frame.H != 278 {
 		t.Errorf("zoomed: %v", o.Frame)
 	}
 	for _, id := range []string{later.ID, never.ID, note.ID} {
@@ -456,7 +456,7 @@ func TestAPastDueQuestionExpiresOnTheNextTurnNotInsideItsWrite(t *testing.T) {
 	b.expired(t, q.ID, 2*time.Second)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if o := b.Objects()[q.ID]; o.Props["status"] != "expired" || o.Frame.H != 148 {
+	if o := b.Objects()[q.ID]; o.Props["status"] != "expired" || o.Frame.H != 156 {
 		t.Errorf("after: %+v", o)
 	}
 }
@@ -817,7 +817,7 @@ func TestExpiryThenArchiveUsesOneTimer(t *testing.T) {
 	defer b.mu.Unlock()
 	defer b.StopQuestionExpiry()
 	o := b.Objects()[q.ID]
-	if o.Props["status"] != "expired" || o.Props["archived"] != true || o.Frame.H != 148 {
+	if o.Props["status"] != "expired" || o.Props["archived"] != true || o.Frame.H != 156 {
 		t.Fatalf("after: %+v", o)
 	}
 	if statusOf(b.Board, later.ID) != "open" {

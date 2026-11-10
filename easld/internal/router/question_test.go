@@ -68,14 +68,14 @@ func TestAQuestionIsCreatedOpenAskedByItsCallerAndSizedByItsProps(t *testing.T) 
 	if props := propsOf(o); props["status"] != "open" || props["asker"].(map[string]any)["tile"] != terminal || o["type"] != "question" {
 		t.Errorf("props %v", props)
 	}
-	if got := sizeOf(o); got != [2]float64{460, 294} {
+	if got := sizeOf(o); got != [2]float64{460, 302} {
 		t.Errorf("size %v", got)
 	}
 	if created["warnings"] != nil {
 		t.Errorf("warnings %v", created["warnings"])
 	}
 	sized := f.ask(map[string]any{"context": []any{map[string]any{"url": "https://x"}}})
-	if got := sizeOf(sized); got != [2]float64{460, 324} {
+	if got := sizeOf(sized); got != [2]float64{460, 332} {
 		t.Errorf("with context %v", got)
 	}
 	framed := f.result("object.create", map[string]any{"type": "question", "props": questionProps(nil), "frame": map[string]any{"x": 5000.0, "y": 0.0, "w": 500.0, "h": 400.0}})["object"].(map[string]any)
@@ -125,7 +125,7 @@ func TestUpdatingAQuestionAnswersItStampedAndShrunk(t *testing.T) {
 	if answer["option"] != "b" || !strings.HasSuffix(answer["at"].(string), "Z") || time.Since(at) > time.Minute || time.Since(at) < -time.Minute || answer["by"].(map[string]any)["tile"] != terminal || answer["by"].(map[string]any)["kind"] != "agent" {
 		t.Errorf("answer %v", answer)
 	}
-	if got := sizeOf(answered); got != [2]float64{460, 188} {
+	if got := sizeOf(answered); got != [2]float64{460, 196} {
 		t.Errorf("closed size %v (a note makes it 40 taller)", got)
 	}
 
@@ -192,7 +192,7 @@ func TestQuestionRulesApplyToUpsertAndBatchToo(t *testing.T) {
 		map[string]any{"method": "object.update", "params": map[string]any{"id": "$0", "props": map[string]any{"status": "cancelled"}}},
 	}})
 	second := result["results"].([]any)[1].(map[string]any)["object"].(map[string]any)
-	if propsOf(second)["status"] != "cancelled" || sizeOf(second)[1] != 148 {
+	if propsOf(second)["status"] != "cancelled" || sizeOf(second)[1] != 156 {
 		t.Errorf("batch: %v", second)
 	}
 	beforeN := len(f.board.Objects())
@@ -289,11 +289,11 @@ func TestMeasuringAQuestionCountsItsRowsAtItsZoomAndWidth(t *testing.T) {
 		width any
 		want  [2]float64
 	}{
-		"open":              {nil, nil, [2]float64{460, 294}},
-		"width":             {nil, 300.0, [2]float64{300, 294}},
-		"zoomed":            {map[string]any{"zoom": 2.0}, nil, [2]float64{920, 562}},
-		"zoomed with width": {map[string]any{"zoom": 2.0}, 300.0, [2]float64{300, 562}},
-		"closed":            {map[string]any{"status": "cancelled"}, nil, [2]float64{460, 148}},
+		"open":              {nil, nil, [2]float64{460, 302}},
+		"width":             {nil, 300.0, [2]float64{300, 302}},
+		"zoomed":            {map[string]any{"zoom": 2.0}, nil, [2]float64{920, 570}},
+		"zoomed with width": {map[string]any{"zoom": 2.0}, 300.0, [2]float64{300, 570}},
+		"closed":            {map[string]any{"status": "cancelled"}, nil, [2]float64{460, 156}},
 	} {
 		if got := measure(c.extra, c.width); got != c.want {
 			t.Errorf("%s: %v, want %v", name, got, c.want)
@@ -301,12 +301,12 @@ func TestMeasuringAQuestionCountsItsRowsAtItsZoomAndWidth(t *testing.T) {
 	}
 	// size: fit is the same count, at the given origin.
 	fit := f.result("object.create", map[string]any{"type": "question", "size": "fit", "props": questionProps(nil), "frame": map[string]any{"x": 4000.0, "y": 100.0, "w": 520.0}})["object"].(map[string]any)
-	if got := sizeOf(fit); got != [2]float64{520, 294} {
+	if got := sizeOf(fit); got != [2]float64{520, 302} {
 		t.Errorf("fit %v", got)
 	}
 	// A question refit after an update takes the new rows.
 	refit := f.result("object.update", map[string]any{"id": fit["id"], "size": "fit", "props": map[string]any{"options": []any{map[string]any{"id": "a", "label": "Yes"}}}})["object"].(map[string]any)
-	if got := sizeOf(refit); got != [2]float64{520, 244} {
+	if got := sizeOf(refit); got != [2]float64{520, 252} {
 		t.Errorf("refit %v", got)
 	}
 }
@@ -452,14 +452,14 @@ func TestAPastDueQuestionIsExpiredAndAnnouncedAfterItsWrite(t *testing.T) {
 	q := f.ask(map[string]any{"expiresAt": past})
 	id := q["id"].(string)
 	// The reply to the write still says open.
-	if propsOf(q)["status"] != "open" || sizeOf(q)[1] != 294 {
+	if propsOf(q)["status"] != "open" || sizeOf(q)[1] != 302 {
 		t.Fatalf("reply %v", q)
 	}
 	event, ok := f.waitEvent("object.updated", id, 3*time.Second)
 	if !ok {
 		t.Fatal("no object.updated announcing the expiry")
 	}
-	if event["board"] != f.board.ID() || sizeOf(event["data"].(map[string]any))[1] != 148 {
+	if event["board"] != f.board.ID() || sizeOf(event["data"].(map[string]any))[1] != 156 {
 		t.Errorf("event %v", event)
 	}
 	o := f.object(id)
@@ -579,7 +579,7 @@ func TestExpiryIsAnnouncedBeforeArchive(t *testing.T) {
 		t.Fatal("no expiry event before the archive")
 	}
 	o := f.object(id)
-	if propsOf(o)["status"] != "expired" || propsOf(o)["archived"] != true || sizeOf(o)[1] != 148 {
+	if propsOf(o)["status"] != "expired" || propsOf(o)["archived"] != true || sizeOf(o)[1] != 156 {
 		t.Fatalf("after %v", o)
 	}
 }

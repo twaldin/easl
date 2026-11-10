@@ -1,17 +1,13 @@
 import AppKit
 import CanvasCore
 
-/// What a ring and bubble (or edge pill) says. A blocked agent needs the user's action: the
-/// lifecycle's orange (its title-bar dot and the board's tab dot) and a raised hand before its
-/// message ("approve Bash?"). An attention marker is an agent's (or a program's) "look here":
-/// pink, a color no lifecycle state or ink swatch uses, and just the message.
+/// Window-space attention uses the shared needs-you role and preserves the classifier's reason.
 @MainActor
 enum AttentionStyle {
-    case marker, blocked
+    case marker, blocked, needsYou
 
-    var color: NSColor { self == .blocked ? .systemOrange : .systemPink }
-    /// Text and glyphs on `color` (bubbles, edge pills, Go to's flags): black reads at least
-    /// 5.9:1 on the pink and orange (and the lifecycle green), white read 2.2–3.5:1.
+    var color: NSColor { TileChrome.color(.needsYou) }
+    /// Existing high-contrast ink on the semantic attention background.
     static let ink = NSColor.black
     /// The raised hand leading a blocked bubble's or edge pill's text.
     var glyph: NSImage? { self == .blocked ? Self.hand : nil }
@@ -20,7 +16,7 @@ enum AttentionStyle {
     static let glyphWidth: CGFloat = 18
     /// What the pill draws: one line of the message (`Attention.pillLine`), else the default.
     func text(_ message: String?) -> NSString {
-        (Attention.pillLine(message) ?? (self == .blocked ? "Needs you" : "Look here")) as NSString
+        (Attention.pillLine(message) ?? (self == .marker ? "Look here" : "Needs you")) as NSString
     }
     /// The whole message, for tooltips; the pill's own text without one.
     func whole(_ message: String?) -> String {
@@ -29,14 +25,17 @@ enum AttentionStyle {
     /// A bubble's tooltip: its whole message when the pill cuts it (too wide, or more than one
     /// line), then what the bubble is.
     func toolTip(_ message: String?, truncated: Bool) -> String {
-        let about = self == .blocked ? CanvasBasics.blockedBubble : CanvasBasics.marker
+        let about: String = switch self {
+        case .blocked: CanvasBasics.blockedBubble
+        case .marker: CanvasBasics.marker
+        case .needsYou: "Needs your attention. Click to go to the object."
+        }
         return truncated || whole(message) != text(message) as String ? "\(whole(message))\n\n\(about)" : about
     }
 }
 
-/// Something on screen that needs the user: a pulsing ring around the object and a bubble beside
-/// it, either an attention marker (an agent's "look here") or a blocked agent's terminal (its
-/// lifecycle message, e.g. "approve Bash?", until it stops being blocked). Lives in window space
+/// Something on screen that needs the user: a static ring and a reason pill beside the object.
+/// Lives in window space
 /// above the canvas (`AttentionLayer`) and is re-placed on every pan and pinch step, so it keeps
 /// its on-screen size at any zoom and follows the zoom smoothly while everything on the canvas
 /// scales. Only the bubble takes clicks. The view spans its layer and draws nothing itself: the
@@ -48,7 +47,7 @@ final class AttentionMarker: NSView {
     static let inset: CGFloat = 10
     static let bubbleHeight: CGFloat = 28
     static let gap: CGFloat = 6
-    static let stroke: CGFloat = 4
+    static let stroke: CGFloat = 1
 
     let objectID: ObjectID
     let style: AttentionStyle
@@ -57,14 +56,12 @@ final class AttentionMarker: NSView {
             guard message != oldValue else { return }
             naturalWidth = Self.naturalWidth(message, style: style)
             bubble.text = style.text(message)
-            // New news: draw the eye again.
-            ring.pulse()
         }
     }
     var onClick: (() -> Void)?
     /// The bubble's width with its whole message; `PillLayout.bubbleWidth` caps it.
     private(set) var naturalWidth: CGFloat
-    /// The ring, in its own view so it can pulse while the bubble's text stays fully opaque.
+    /// The ring and bubble have separate bounds so movement does not leave stale pixels.
     private let ring: MarkerRing
     private let bubble: MarkerBubble
 
@@ -79,7 +76,6 @@ final class AttentionMarker: NSView {
         addSubview(ring)
         addSubview(bubble)
         bubble.onClick = { [weak self] in self?.onClick?() }
-        ring.pulse()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -89,7 +85,7 @@ final class AttentionMarker: NSView {
     fileprivate static let bubbleAttributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        return [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: AttentionStyle.ink, .paragraphStyle: paragraph]
+        return [.font: TileChrome.font(.needsYou, scale: 1), .foregroundColor: AttentionStyle.ink, .paragraphStyle: paragraph]
     }()
     private static func naturalWidth(_ message: String?, style: AttentionStyle) -> CGFloat {
         (style.text(message).size(withAttributes: bubbleAttributes).width + 24 + (style.glyph == nil ? 0 : AttentionStyle.glyphWidth)).rounded(.up)
@@ -163,11 +159,9 @@ private final class MarkerBubble: NSView {
     override func mouseDown(with event: NSEvent) { onClick?() }
 }
 
-/// A marker's ring. It pulses a few times when the marker appears or its message changes, then
-/// stays solid; the pulse runs in the render server, and snapshots capture the drawn ring.
+/// A static attention outline in window space.
 @MainActor
 private final class MarkerRing: NSView {
-    static let pulses: Float = 3
     private let color: NSColor
     var rect = NSRect.zero {
         didSet { if rect != oldValue { needsDisplay = true } }
@@ -187,16 +181,6 @@ private final class MarkerRing: NSView {
     nonisolated override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func pulse() {
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1
-        pulse.toValue = 0.35
-        pulse.duration = 0.9
-        pulse.autoreverses = true
-        pulse.repeatCount = Self.pulses
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(pulse, forKey: "pulse")
-    }
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
@@ -261,7 +245,7 @@ final class AttentionEdgeView: NSView {
             chevron.message = pointer.message
             chevron.style = pointer.style
             // The pill shows the start of its message: the whole of it, and where the pill leads.
-            let tip = "\(pointer.style.whole(pointer.message))\n\n\(pointer.style == .blocked ? "An agent waiting for you" : "Something to look at") is off screen that way: click to go there."
+            let tip = "\(pointer.style.whole(pointer.message))\n\nThis object is off screen that way. Click to go there."
             if chevron.toolTip != tip { chevron.toolTip = tip }
             chevron.onClick = { [weak self] in self?.onReveal?(pointer.id) }
             chevron.angle = atan2(pointer.target.y - pointer.frame.midY, pointer.target.x - pointer.frame.midX)

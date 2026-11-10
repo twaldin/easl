@@ -24,11 +24,11 @@ func TestNotesStackLinesAsTextKitDoes(t *testing.T) {
 		width    *float64
 		w, h     float64
 	}{
-		{"# Heading\n\nA paragraph of text that wraps at some width.", nil, 280, 110},
-		{"short", new(200.0), 200, 63},
-		{"fits\n\nits text", new(300.0), 300, 86},
+		{"# Heading\n\nA paragraph of text that wraps at some width.", nil, 280, 118},
+		{"short", new(200.0), 200, 71},
+		{"fits\n\nits text", new(300.0), 300, 94},
 		// Empty: the placeholder, one line at line height multiple 1.
-		{"", nil, 280, 62},
+		{"", nil, 280, 70},
 	} {
 		got := one(t, measure.TextItem{Kind: "note", Text: c.markdown, Width: c.width})
 		if got.W != c.w || got.H != c.h {

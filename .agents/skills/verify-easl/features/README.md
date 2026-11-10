@@ -5,6 +5,7 @@ Read [verify-easl](../SKILL.md) for guest claims, launch, Doctor, capture, expor
 ## Features
 
 - [Local board basics](local-board.md) covers creation, selection, title-bar movement, undo, and drawing.
+- [Shared tile chrome](tile-chrome.md) covers type glyphs, truthful states, durable authors, two-track and folded ChromeText layouts, geometry, controls, and version skew.
 - [Move tool](move-tool.md) covers body drags, groups, cancellation, and input isolation.
 - [Unreadable boards](unreadable-boards.md) covers refusal, recovery copies, restore, and migration.
 - [Board saves](board-saves.md) covers main-thread save attribution, delayed worker writes, default and modal completion, and idle-cost comparisons.

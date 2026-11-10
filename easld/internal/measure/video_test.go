@@ -44,9 +44,9 @@ func TestVideoMeasureUsesContainerDisplayDimensions(t *testing.T) {
 			t.Fatal(err)
 		}
 		w, h, approximate, err := Size("video", map[string]any{"path": "clip.mp4"}, nil, root, nil)
-		wantW, wantH := 960.0, 566.0
+		wantW, wantH := 960.0, 574.0
 		if rotated {
-			wantW, wantH = 960, 1733
+			wantW, wantH = 960, 1741
 		}
 		if err != nil || w != wantW || h != wantH || approximate {
 			t.Fatalf("rotated %v: %v x %v approximate %v, %v", rotated, w, h, approximate, err)
