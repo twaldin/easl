@@ -2719,14 +2719,16 @@ private enum SelectionTyping {
                 try f.board.raiseAttention(wide.id, message: "Review this note before continuing", caller: nil)
                 let wideMarker = try marker(for: wide)
                 let widePosition = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
+                guard let wideTile = f.canvas.tiles[wide.id] else { throw Failure("wide native tile missing") }
                 f.canvas.setSelection([])
                 let collapsed = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
                 try require(collapsed == widePosition,
                             "collapsing controls must not move the inline pill away from the pointer")
-                f.canvas.setSelection([wide.id])
+                wideTile.isSelected = true
                 let expanded = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
                 try require(expanded == widePosition,
                             "expanding controls must not move the inline pill away from the pointer")
+                wideTile.isSelected = false
                 f.board.clearAttention(wide.id)
 
                 try await enter(code, in: f)
