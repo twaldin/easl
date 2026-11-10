@@ -17,7 +17,8 @@ extension BoardMirrorTests {
             var props: [String: JSONValue] = ["html": "<p>draft</p>"]
             props["state"] = entry.0
             let page = host.create(type: .html, props: .object(props))
-            let edit = try #require(ViewerEdit(.object(["viewer": "vw_stateTest", "step": .number(Double(index + 1))])))
+            let parsedEdit = try ViewerEdit(.object(["viewer": "vw_stateTest", "step": .number(Double(index + 1))]))
+            let edit = try #require(parsedEdit)
             try host.asViewerEdit(edit) {
                 _ = try host.update(page.id, props: .object(["state": entry.1]))
             }
