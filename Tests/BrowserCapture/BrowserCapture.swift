@@ -73,16 +73,13 @@ private enum BrowserCapture {
         guard let tile = canvas.tiles[object.id]?.content as? BrowserTile else { throw Failure(message: "no browser tile") }
         await tile.markDriven()
         guard let web = tile.webView else { throw Failure(message: "no web view") }
+        let fixture = try Data(contentsOf: output.appendingPathComponent("fixture.png")).base64EncodedString()
         let page = """
         <!doctype html><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:rgb(240,20,20)}
         #pictures{position:absolute;top:15%;height:70%;width:100%;display:grid;grid-template-columns:repeat(12,1fr)}
         img{width:100%;height:100%;min-height:0;object-fit:fill}</style><div id=pictures></div><script>
         window.ready=false;window.onerror=(message,source,line,column,error)=>{window.ready='script error: '+(error?.stack||message)};
-        let c=document.createElement('canvas');c.width=512;c.height=512;
-        let x=c.getContext('2d'),p=x.createImageData(512,512),s=12345;
-        for(let i=0;i<p.data.length;i+=4){s=(Math.imul(s,1664525)+1013904223)>>>0;
-        p.data[i]=s&255;p.data[i+1]=(s>>>8)&255;p.data[i+2]=(s>>>16)&255;p.data[i+3]=255}x.putImageData(p,0,0);
-        let src=c.toDataURL('image/png');
+        let src='data:image/png;base64,\(fixture)';
         Promise.all(Array.from({length:96},()=>{let i=new Image;i.src=src;document.querySelector('#pictures').append(i);return i.decode()})).then(()=>window.ready=true,e=>{window.ready='rejected: '+e;throw e});
         window.paint=n=>{document.body.style.background=n%2?'rgb(20,20,240)':'rgb(240,20,20)';return n};
         </script>
@@ -92,7 +89,10 @@ private enum BrowserCapture {
         var lastEvaluationError = "none"
         while true {
             do {
-                if try await web.evaluateJavaScript("window.ready === true") as? Bool == true { break }
+                if try await web.evaluateJavaScript("""
+                window.ready === true && document.images.length === 96 &&
+                [...document.images].every(i=>i.complete&&i.naturalWidth===512&&i.naturalHeight===512)
+                """) as? Bool == true { break }
             } catch {
                 lastEvaluationError = String(describing: error)
             }

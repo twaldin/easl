@@ -8,7 +8,25 @@ import pathlib
 import platform
 import shlex
 import subprocess
+import struct
 import tempfile
+import zlib
+
+
+def fixture_png():
+    pixels = bytearray()
+    state = 12345
+    for _ in range(512):
+        pixels.append(0)
+        for _ in range(512):
+            state = (state * 1664525 + 1013904223) & 0xffffffff
+            pixels.extend((state & 255, (state >> 8) & 255, (state >> 16) & 255, 255))
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 512, 512, 8, 6, 0, 0, 0))
+            + chunk(b'sRGB', b'\x00') + chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b''))
 
 
 def main():
@@ -79,6 +97,7 @@ def main():
     if args.compile_only:
         print(f'Compiled {executable}; no AppKit/WebKit execution, no runtime claim.')
         return
+    (output / 'fixture.png').write_bytes(fixture_png())
     with tempfile.TemporaryDirectory(prefix='easl-browser-capture-', dir='/tmp') as temporary:
         environment = os.environ.copy()
         environment.update(EASL_HOME=temporary, CFFIXED_USER_HOME=temporary, XDG_CONFIG_HOME=temporary, EASL_NO_ACTIVATE='1')
