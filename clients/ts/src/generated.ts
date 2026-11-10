@@ -1592,6 +1592,8 @@ export type ObjectCreateParams = {
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
   size?: "fit";
   parent?: Id;
+  /** Add the object to this group's members in the same revision and undo step. Must name a group on this board. Without frame, place beside the group. In object.batch, an earlier group can be named as $n. Membership is explicit, never inferred from position. */
+  group?: Id;
   /** RFC3339 timestamp with timezone, or null to clear; mutually exclusive with expiresIn */
   expires?: string | null;
   /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */
@@ -1657,6 +1659,8 @@ export type ObjectUpsertParams = {
   frame?: Frame | FitFrame | SizeFrame;
   /** as for object.create and object.update */
   size?: "fit";
+  /** Add the created or existing object to this group's members once, in the same revision and undo step. Must name a group on this board; an earlier batch group may be $n. New objects without frame are placed beside it; existing objects keep their position. */
+  group?: Id;
   /** RFC3339 timestamp with timezone, or null to clear; omission preserves an existing deadline; mutually exclusive with expiresIn */
   expires?: string | null;
   /** finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires */

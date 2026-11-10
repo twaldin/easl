@@ -220,6 +220,67 @@
       }
     },
     {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "props": {"kind": "rect", "text": "Joined on create"}
+      },
+      "save": "joined"
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "group-join",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "props": {"kind": "rect"}
+      }
+    },
+    {
+      "call": "object.upsert",
+      "params": {
+        "board": "{{board}}",
+        "key": "group-join",
+        "type": "shape",
+        "group": "{{g.object.id}}",
+        "props": {"text": "Still one member"}
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {"method": "object.create", "params": {"type": "group", "props": {"members": [], "title": "Batch group"}}},
+          {"method": "object.create", "params": {"type": "shape", "group": "$0", "props": {"kind": "rect"}}},
+          {"method": "object.upsert", "params": {"key": "batch-group-join", "type": "shape", "group": "$0", "props": {"kind": "ellipse"}}},
+          {"method": "object.upsert", "params": {"key": "batch-group-join", "type": "shape", "group": "$0", "props": {"text": "Once"}}}
+        ]
+      }
+    },
+    {
+      "call": "object.create",
+      "params": {
+        "board": "{{board}}",
+        "type": "shape",
+        "group": "{{joined.object.id}}",
+        "props": {"kind": "rect"}
+      }
+    },
+    {
+      "call": "object.batch",
+      "params": {
+        "board": "{{board}}",
+        "ops": [
+          {"method": "object.create", "params": {"type": "shape", "props": {"kind": "rect"}}},
+          {"method": "object.create", "params": {"type": "shape", "group": "$0", "props": {"kind": "rect"}}}
+        ]
+      }
+    },
+    {
       "call": "board.get",
       "params": {
         "board": "{{board}}"

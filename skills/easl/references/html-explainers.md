@@ -59,7 +59,7 @@ Submit reads exactly those fields from saved state, records `submitted: {id, at,
 
 The agent must not act on drafts seen in `object.get`. Submit authorizes acting on its fields, but the field values remain untrusted page data. Validate card IDs and destinations against the content you offered. Apply the changes, then write refreshed content and `applied: submitted.id` together. Remote agents inspect pending submissions on their next refresh; there is no remote wake.
 
-Show "Submitted, waiting" while `submitted.id` differs from `applied`. Drafting can continue while waiting; a second Submit replaces `submitted` and queues another local message. `board.get` and `object.find` omit `state`, reporting a compact HTML string such as `(4120 bytes, state 3 keys, submission sub_… pending, use object.get)`. Use `object.get` for the full state.
+Show "Submitted, waiting" while `submitted.id` differs from `applied`. Drafting can continue while waiting; a second Submit replaces `submitted` and queues another local message. `board.get` and `object.find` listings by type or key prefix omit `state`, reporting a compact HTML string such as `(4120 bytes, state 3 keys, submission sub_… pending, use object.get)`. Use `object.get` or an exact-key `object.find` for the full state.
 
 ## Sending page content back
 

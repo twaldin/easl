@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes.
 - HTML tile state merges per key on agent updates, preserving saved page drafts. Null deletes one key; `state: null` clears all state.
 - `canvasKit.submit(keys)` records saved fields and clears those drafts in one undo step. Local Submit wakes the creating agent through labelled page data. Remote Submit records pending without waking anyone. Agents acknowledge application with `applied`.
 - HTML manifests omit full state and show key counts and pending submission IDs. `object.get` still returns full state.
+- `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members.
 - The HTML skill documents the existing light and dark theme variables.
 
 ## 0.3.9

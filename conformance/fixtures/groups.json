@@ -1,7 +1,7 @@
 {
   "scenario": "groups",
   "description": "Groups are regions fitted to their members plus padding and a title band: refit when members move, resize or go away, nested groups, a frame given for a group is ignored, translate moves members.",
-  "recordedOn": "easl main afe45b0, dev instance (scripts/dev.sh)",
+  "recordedOn": "scratch easld genui-contract, provisional; guest Mac recording required",
   "steps": [
     {
       "step": "board.open",
@@ -1373,13 +1373,769 @@
       ]
     },
     {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:4>",
+        "props": {
+          "kind": "rect",
+          "text": "Joined on create"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r20",
+        "ok": true,
+        "result": {
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 752,
+              "y": 30
+            },
+            "id": "<obj:8>",
+            "props": {
+              "kind": "rect",
+              "text": "Joined on create"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 8
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 752,
+              "y": 30
+            },
+            "id": "<obj:8>",
+            "props": {
+              "kind": "rect",
+              "text": "Joined on create"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 8
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 418,
+              "w": 928,
+              "x": -8,
+              "y": -10
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:2>",
+                "<obj:3>",
+                "<obj:8>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:8>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 530,
+              "w": 1008,
+              "x": -48,
+              "y": -82
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:5>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:4>",
+        "key": "group-join",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r21",
+        "ok": true,
+        "result": {
+          "created": true,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 984,
+              "y": -10
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "group-join",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 984,
+              "y": -10
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "group-join",
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 9
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 458,
+              "w": 1160,
+              "x": -8,
+              "y": -50
+            },
+            "id": "<obj:4>",
+            "props": {
+              "color": "green",
+              "members": [
+                "<obj:2>",
+                "<obj:3>",
+                "<obj:8>",
+                "<obj:9>"
+              ],
+              "padding": 8,
+              "title": "Pair"
+            },
+            "rev": "<rev:9>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 4
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 570,
+              "w": 1240,
+              "x": -48,
+              "y": -122
+            },
+            "id": "<obj:5>",
+            "props": {
+              "members": [
+                "<obj:4>",
+                "<obj:3>"
+              ],
+              "padding": 40,
+              "title": "Outer"
+            },
+            "rev": "<rev:6>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 5
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.upsert",
+      "method": "object.upsert",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:4>",
+        "key": "group-join",
+        "props": {
+          "text": "Still one member"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "id": "r22",
+        "ok": true,
+        "result": {
+          "created": false,
+          "object": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 984,
+              "y": -10
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "group-join",
+              "kind": "rect",
+              "text": "Still one member"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          }
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": 984,
+              "y": -10
+            },
+            "id": "<obj:9>",
+            "props": {
+              "key": "group-join",
+              "kind": "rect",
+              "text": "Still one member"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 9
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.batch",
+      "method": "object.batch",
+      "request": {
+        "board": "<board>",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "props": {
+                "members": [],
+                "title": "Batch group"
+              },
+              "type": "group"
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "group": "$0",
+              "props": {
+                "kind": "rect"
+              },
+              "type": "shape"
+            }
+          },
+          {
+            "method": "object.upsert",
+            "params": {
+              "group": "$0",
+              "key": "batch-group-join",
+              "props": {
+                "kind": "ellipse"
+              },
+              "type": "shape"
+            }
+          },
+          {
+            "method": "object.upsert",
+            "params": {
+              "group": "$0",
+              "key": "batch-group-join",
+              "props": {
+                "text": "Once"
+              },
+              "type": "shape"
+            }
+          }
+        ]
+      },
+      "response": {
+        "id": "r23",
+        "ok": true,
+        "result": {
+          "results": [
+            {
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 0,
+                  "w": 0,
+                  "x": -72,
+                  "y": 0
+                },
+                "id": "<obj:10>",
+                "props": {
+                  "members": [],
+                  "title": "Batch group"
+                },
+                "rev": "<rev:1>",
+                "type": "group",
+                "updatedAt": "<time:number>",
+                "z": 10
+              }
+            },
+            {
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 100,
+                  "w": 160,
+                  "x": -232,
+                  "y": 0
+                },
+                "id": "<obj:11>",
+                "props": {
+                  "kind": "rect"
+                },
+                "rev": "<rev:1>",
+                "type": "shape",
+                "updatedAt": "<time:number>",
+                "z": 11
+              }
+            },
+            {
+              "created": true,
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 100,
+                  "w": 160,
+                  "x": -256,
+                  "y": 148
+                },
+                "id": "<obj:12>",
+                "props": {
+                  "key": "batch-group-join",
+                  "kind": "ellipse"
+                },
+                "rev": "<rev:1>",
+                "type": "shape",
+                "updatedAt": "<time:number>",
+                "z": 12
+              }
+            },
+            {
+              "created": false,
+              "object": {
+                "createdAt": "<time:number>",
+                "createdBy": {
+                  "kind": "user"
+                },
+                "frame": {
+                  "h": 100,
+                  "w": 160,
+                  "x": -256,
+                  "y": 148
+                },
+                "id": "<obj:12>",
+                "props": {
+                  "key": "batch-group-join",
+                  "kind": "ellipse",
+                  "text": "Once"
+                },
+                "rev": "<rev:2>",
+                "type": "shape",
+                "updatedAt": "<time:number>",
+                "updatedBy": {
+                  "kind": "user"
+                },
+                "z": 12
+              }
+            }
+          ],
+          "revision": "<board:1>"
+        }
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 0,
+              "w": 0,
+              "x": -72,
+              "y": 0
+            },
+            "id": "<obj:10>",
+            "props": {
+              "members": [],
+              "title": "Batch group"
+            },
+            "rev": "<rev:1>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "z": 10
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": -232,
+              "y": 0
+            },
+            "id": "<obj:11>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 11
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 180,
+              "w": 208,
+              "x": -256,
+              "y": -56
+            },
+            "id": "<obj:10>",
+            "props": {
+              "members": [
+                "<obj:11>"
+              ],
+              "title": "Batch group"
+            },
+            "rev": "<rev:2>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": -256,
+              "y": 148
+            },
+            "id": "<obj:12>",
+            "props": {
+              "key": "batch-group-join",
+              "kind": "ellipse"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 12
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 328,
+              "w": 232,
+              "x": -280,
+              "y": -56
+            },
+            "id": "<obj:10>",
+            "props": {
+              "members": [
+                "<obj:11>",
+                "<obj:12>"
+              ],
+              "title": "Batch group"
+            },
+            "rev": "<rev:3>",
+            "type": "group",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 10
+          },
+          "event": "object.updated"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": -256,
+              "y": 148
+            },
+            "id": "<obj:12>",
+            "props": {
+              "key": "batch-group-join",
+              "kind": "ellipse",
+              "text": "Once"
+            },
+            "rev": "<rev:2>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "updatedBy": {
+              "kind": "user"
+            },
+            "z": 12
+          },
+          "event": "object.updated"
+        }
+      ]
+    },
+    {
+      "step": "object.create",
+      "method": "object.create",
+      "request": {
+        "board": "<board>",
+        "group": "<obj:8>",
+        "props": {
+          "kind": "rect"
+        },
+        "type": "shape"
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "group must name a group on this board"
+        },
+        "id": "r24",
+        "ok": false
+      }
+    },
+    {
+      "step": "object.batch",
+      "method": "object.batch",
+      "request": {
+        "board": "<board>",
+        "ops": [
+          {
+            "method": "object.create",
+            "params": {
+              "props": {
+                "kind": "rect"
+              },
+              "type": "shape"
+            }
+          },
+          {
+            "method": "object.create",
+            "params": {
+              "group": "$0",
+              "props": {
+                "kind": "rect"
+              },
+              "type": "shape"
+            }
+          }
+        ]
+      },
+      "response": {
+        "error": {
+          "code": "invalid_params",
+          "message": "op 1 (object.create): group must name a group on this board"
+        },
+        "id": "r25",
+        "ok": false
+      },
+      "events": [
+        {
+          "board": "<board>",
+          "data": {
+            "createdAt": "<time:number>",
+            "createdBy": {
+              "kind": "user"
+            },
+            "frame": {
+              "h": 100,
+              "w": 160,
+              "x": -80,
+              "y": -246
+            },
+            "id": "<obj:13>",
+            "props": {
+              "kind": "rect"
+            },
+            "rev": "<rev:1>",
+            "type": "shape",
+            "updatedAt": "<time:number>",
+            "z": 13
+          },
+          "event": "object.created"
+        },
+        {
+          "board": "<board>",
+          "data": {
+            "id": "<obj:13>"
+          },
+          "event": "object.deleted"
+        }
+      ]
+    },
+    {
       "step": "board.get",
       "method": "board.get",
       "request": {
         "board": "<board>"
       },
       "response": {
-        "id": "r20",
+        "id": "r26",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -1433,22 +2189,24 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 378,
-                "w": 696,
+                "h": 458,
+                "w": 1160,
                 "x": -8,
-                "y": 30
+                "y": -50
               },
               "id": "<obj:4>",
               "props": {
                 "color": "green",
                 "members": [
                   "<obj:2>",
-                  "<obj:3>"
+                  "<obj:3>",
+                  "<obj:8>",
+                  "<obj:9>"
                 ],
                 "padding": 8,
                 "title": "Pair"
               },
-              "rev": "<rev:7>",
+              "rev": "<rev:9>",
               "type": "group",
               "updatedAt": "<time:number>",
               "updatedBy": {
@@ -1462,10 +2220,10 @@
                 "kind": "user"
               },
               "frame": {
-                "h": 490,
-                "w": 776,
+                "h": 570,
+                "w": 1240,
                 "x": -48,
-                "y": -42
+                "y": -122
               },
               "id": "<obj:5>",
               "props": {
@@ -1476,7 +2234,7 @@
                 "padding": 40,
                 "title": "Outer"
               },
-              "rev": "<rev:4>",
+              "rev": "<rev:6>",
               "type": "group",
               "updatedAt": "<time:number>",
               "updatedBy": {
@@ -1524,9 +2282,127 @@
               "type": "group",
               "updatedAt": "<time:number>",
               "z": 7
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 752,
+                "y": 30
+              },
+              "id": "<obj:8>",
+              "props": {
+                "kind": "rect",
+                "text": "Joined on create"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 8
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": 984,
+                "y": -10
+              },
+              "id": "<obj:9>",
+              "props": {
+                "key": "group-join",
+                "kind": "rect",
+                "text": "Still one member"
+              },
+              "rev": "<rev:2>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 9
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 328,
+                "w": 232,
+                "x": -280,
+                "y": -56
+              },
+              "id": "<obj:10>",
+              "props": {
+                "members": [
+                  "<obj:11>",
+                  "<obj:12>"
+                ],
+                "title": "Batch group"
+              },
+              "rev": "<rev:3>",
+              "type": "group",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 10
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": -232,
+                "y": 0
+              },
+              "id": "<obj:11>",
+              "props": {
+                "kind": "rect"
+              },
+              "rev": "<rev:1>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "z": 11
+            },
+            {
+              "createdAt": "<time:number>",
+              "createdBy": {
+                "kind": "user"
+              },
+              "frame": {
+                "h": 100,
+                "w": 160,
+                "x": -256,
+                "y": 148
+              },
+              "id": "<obj:12>",
+              "props": {
+                "key": "batch-group-join",
+                "kind": "ellipse",
+                "text": "Once"
+              },
+              "rev": "<rev:2>",
+              "type": "shape",
+              "updatedAt": "<time:number>",
+              "updatedBy": {
+                "kind": "user"
+              },
+              "z": 12
             }
           ],
-          "revision": "<board:1>",
+          "revision": "<board:2>",
           "root": "<root>"
         }
       }
@@ -1538,7 +2414,7 @@
         "board": "<board>"
       },
       "response": {
-        "id": "r21",
+        "id": "r27",
         "ok": true,
         "result": {
           "board": "<board>",
@@ -1548,7 +2424,7 @@
               "actor": "system",
               "at": "<time:iso>",
               "kind": "restart",
-              "rev": "<board:2>",
+              "rev": "<board:3>",
               "seq": "<seq:1>",
               "summary": "easl started (pid <pid>); board opened with 0 objects"
             },
@@ -1557,7 +2433,7 @@
               "at": "<time:iso>",
               "id": "<obj:1>",
               "kind": "created",
-              "rev": "<board:3>",
+              "rev": "<board:4>",
               "seq": "<seq:2>",
               "summary": "created shape rect at (0, 0) 160×100",
               "type": "shape"
@@ -1567,7 +2443,7 @@
               "at": "<time:iso>",
               "id": "<obj:2>",
               "kind": "created",
-              "rev": "<board:4>",
+              "rev": "<board:5>",
               "seq": "<seq:3>",
               "summary": "created shape rect at (300, 0) 160×100",
               "type": "shape"
@@ -1577,7 +2453,7 @@
               "at": "<time:iso>",
               "id": "<obj:3>",
               "kind": "created",
-              "rev": "<board:5>",
+              "rev": "<board:6>",
               "seq": "<seq:4>",
               "summary": "created shape ellipse at (0, 300) 160×100",
               "type": "shape"
@@ -1587,7 +2463,7 @@
               "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "created",
-              "rev": "<board:6>",
+              "rev": "<board:7>",
               "seq": "<seq:5>",
               "summary": "created group (2 members) at (-24, -56) 508×180",
               "type": "group"
@@ -1597,7 +2473,7 @@
               "at": "<time:iso>",
               "id": "<obj:2>",
               "kind": "updated",
-              "rev": "<board:7>",
+              "rev": "<board:8>",
               "seq": "<seq:6>",
               "summary": "shape rect: moved (300, 0) → (500, 50)",
               "type": "shape"
@@ -1608,7 +2484,7 @@
               "cause": "fit to its members",
               "id": "<obj:4>",
               "kind": "updated",
-              "rev": "<board:8>",
+              "rev": "<board:9>",
               "seq": "<seq:7>",
               "summary": "group (2 members): resized 508×180 → 708×230",
               "type": "group"
@@ -1618,7 +2494,7 @@
               "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "updated",
-              "rev": "<board:9>",
+              "rev": "<board:10>",
               "seq": "<seq:8>",
               "summary": "group (2 members): moved (-24, -56) → (-8, -40); resized 708×230 → 676×198; props color, padding",
               "type": "group"
@@ -1628,7 +2504,7 @@
               "at": "<time:iso>",
               "id": "<obj:5>",
               "kind": "created",
-              "rev": "<board:10>",
+              "rev": "<board:11>",
               "seq": "<seq:9>",
               "summary": "created group (2 members) at (-48, -112) 756×552",
               "type": "group"
@@ -1638,7 +2514,7 @@
               "at": "<time:iso>",
               "id": "<obj:1>",
               "kind": "updated",
-              "rev": "<board:11>",
+              "rev": "<board:12>",
               "seq": "<seq:10>",
               "summary": "shape rect: moved (0, 0) → (20, 20)",
               "type": "shape"
@@ -1648,7 +2524,7 @@
               "at": "<time:iso>",
               "id": "<obj:2>",
               "kind": "updated",
-              "rev": "<board:11>",
+              "rev": "<board:12>",
               "seq": "<seq:11>",
               "summary": "shape rect: moved (500, 50) → (520, 70)",
               "type": "shape"
@@ -1659,7 +2535,7 @@
               "cause": "fit to its members",
               "id": "<obj:4>",
               "kind": "updated",
-              "rev": "<board:11>",
+              "rev": "<board:12>",
               "seq": "<seq:12>",
               "summary": "group (2 members): moved (-8, -40) → (12, -20)",
               "type": "group"
@@ -1670,7 +2546,7 @@
               "cause": "fit to its members",
               "id": "<obj:5>",
               "kind": "updated",
-              "rev": "<board:11>",
+              "rev": "<board:12>",
               "seq": "<seq:13>",
               "summary": "group (2 members): moved (-48, -112) → (-40, -92); resized 756×552 → 768×532",
               "type": "group"
@@ -1680,7 +2556,7 @@
               "at": "<time:iso>",
               "id": "<obj:1>",
               "kind": "deleted",
-              "rev": "<board:12>",
+              "rev": "<board:13>",
               "seq": "<seq:14>",
               "summary": "deleted shape rect",
               "type": "shape"
@@ -1691,7 +2567,7 @@
               "cause": "fit to its members",
               "id": "<obj:4>",
               "kind": "updated",
-              "rev": "<board:13>",
+              "rev": "<board:14>",
               "seq": "<seq:15>",
               "summary": "group (2 members): moved (12, -20) → (512, 30); resized 676×198 → 176×148",
               "type": "group"
@@ -1702,7 +2578,7 @@
               "cause": "fit to its members",
               "id": "<obj:5>",
               "kind": "updated",
-              "rev": "<board:14>",
+              "rev": "<board:15>",
               "seq": "<seq:16>",
               "summary": "group (2 members): moved (-40, -92) → (-40, -42); resized 768×532 → 768×482",
               "type": "group"
@@ -1712,7 +2588,7 @@
               "at": "<time:iso>",
               "id": "<obj:4>",
               "kind": "updated",
-              "rev": "<board:15>",
+              "rev": "<board:16>",
               "seq": "<seq:17>",
               "summary": "group (2 members): moved (512, 30) → (-8, 30); resized 176×148 → 696×378; props members",
               "type": "group"
@@ -1723,7 +2599,7 @@
               "cause": "fit to its members",
               "id": "<obj:5>",
               "kind": "updated",
-              "rev": "<board:16>",
+              "rev": "<board:17>",
               "seq": "<seq:18>",
               "summary": "group (2 members): moved (-40, -42) → (-48, -42); resized 768×482 → 776×490",
               "type": "group"
@@ -1733,7 +2609,7 @@
               "at": "<time:iso>",
               "id": "<obj:6>",
               "kind": "created",
-              "rev": "<board:17>",
+              "rev": "<board:18>",
               "seq": "<seq:19>",
               "summary": "created group (0 members) at (0, 900) 100×100",
               "type": "group"
@@ -1743,10 +2619,162 @@
               "at": "<time:iso>",
               "id": "<obj:7>",
               "kind": "created",
-              "rev": "<board:1>",
+              "rev": "<board:19>",
               "seq": "<seq:20>",
               "summary": "created group (0 members) at (0, 0) 0×0",
               "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:8>",
+              "kind": "created",
+              "rev": "<board:20>",
+              "seq": "<seq:21>",
+              "summary": "created shape rect \"Joined on create\" at (752, 30) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:20>",
+              "seq": "<seq:22>",
+              "summary": "group (3 members): moved (-8, 30) → (-8, -10); resized 696×378 → 928×418; props members",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "cause": "fit to its members",
+              "id": "<obj:5>",
+              "kind": "updated",
+              "rev": "<board:20>",
+              "seq": "<seq:23>",
+              "summary": "group (2 members): moved (-48, -42) → (-48, -82); resized 776×490 → 1008×530",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:9>",
+              "kind": "created",
+              "rev": "<board:21>",
+              "seq": "<seq:24>",
+              "summary": "created shape rect at (984, -10) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:4>",
+              "kind": "updated",
+              "rev": "<board:21>",
+              "seq": "<seq:25>",
+              "summary": "group (4 members): moved (-8, -10) → (-8, -50); resized 928×418 → 1160×458; props members",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "cause": "fit to its members",
+              "id": "<obj:5>",
+              "kind": "updated",
+              "rev": "<board:21>",
+              "seq": "<seq:26>",
+              "summary": "group (2 members): moved (-48, -82) → (-48, -122); resized 1008×530 → 1240×570",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:9>",
+              "kind": "updated",
+              "rev": "<board:22>",
+              "seq": "<seq:27>",
+              "summary": "shape rect \"Still one member\": props text",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:10>",
+              "kind": "created",
+              "rev": "<board:1>",
+              "seq": "<seq:28>",
+              "summary": "created group (0 members) at (-72, 0) 0×0",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:11>",
+              "kind": "created",
+              "rev": "<board:1>",
+              "seq": "<seq:29>",
+              "summary": "created shape rect at (-232, 0) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:10>",
+              "kind": "updated",
+              "rev": "<board:1>",
+              "seq": "<seq:30>",
+              "summary": "group (1 members): moved (-72, 0) → (-256, -56); resized 0×0 → 208×180; props members",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:12>",
+              "kind": "created",
+              "rev": "<board:1>",
+              "seq": "<seq:31>",
+              "summary": "created shape ellipse at (-256, 148) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:10>",
+              "kind": "updated",
+              "rev": "<board:1>",
+              "seq": "<seq:32>",
+              "summary": "group (2 members): moved (-256, -56) → (-280, -56); resized 208×180 → 232×328; props members",
+              "type": "group"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:12>",
+              "kind": "updated",
+              "rev": "<board:1>",
+              "seq": "<seq:33>",
+              "summary": "shape ellipse \"Once\": props text",
+              "type": "shape"
+            },
+            {
+              "actor": "user",
+              "at": "<time:iso>",
+              "id": "<obj:13>",
+              "kind": "created",
+              "rev": "<board:2>",
+              "seq": "<seq:34>",
+              "summary": "created shape rect at (-80, -246) 160×100",
+              "type": "shape"
+            },
+            {
+              "actor": "system",
+              "at": "<time:iso>",
+              "id": "<obj:13>",
+              "kind": "deleted",
+              "rev": "<board:2>",
+              "seq": "<seq:35>",
+              "summary": "reverted (batch failed): deleted shape rect",
+              "type": "shape"
             }
           ],
           "restarted": false,

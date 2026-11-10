@@ -1866,10 +1866,11 @@ public final class ApiRouter {
             try Self.checkProps(p)
             let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
+            let group = try board.groupID(p["group"])
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
                 if value["x"]?.number == nil, value["y"]?.number == nil, let w = value["w"]?.number, let h = value["h"]?.number {
-                    return board.place(width: w, height: h, near: caller(p), stacking: true)
+                    return board.place(width: w, height: h, near: group ?? caller(p), stacking: group == nil)
                 }
                 return try Self.frame(value, onto: nil)
             }
@@ -1885,7 +1886,11 @@ public final class ApiRouter {
             if type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             if type == .question { props = try board.questionToCreate(props, caller: caller(p)) }
             let expires: ObjectExpiry? = if case .set(let value) = expiry { value } else { nil }
-            let object = try board.asViewerEdit(edit) { board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p), expires: expires) }
+            let object = try board.asViewerEdit(edit) {
+                try board.joiningGroup(group, caller: caller(p)) {
+                    board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p), expires: expires, near: group)
+                }
+            }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
@@ -1894,6 +1899,7 @@ public final class ApiRouter {
             try Self.checkProps(p)
             let expiry = try ObjectExpiryPatch(p)
             let edit = try ViewerEdit(p)
+            let group = try board.groupID(p["group"])
             let z = try p["z"].map { value -> Double in
                 guard let z = value.number, z.isFinite else { throw Failure("invalid_params", "z must be a finite number") }
                 return z
@@ -1917,7 +1923,11 @@ public final class ApiRouter {
             }
             if try board.object(id).type == .browser, let problem = board.browserPropsProblem(props) { throw Failure("invalid_params", problem) }
             (props, frame) = try board.questionUpdate(id, props: props, frame: frame, caller: caller(p))
-            let object = try board.asViewerEdit(edit) { try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p), expires: expiry) }
+            let object = try board.asViewerEdit(edit) {
+                try board.joiningGroup(group, caller: caller(p)) {
+                    try board.update(id, rev: p["rev"]?.int, frame: frame, z: z, props: props, caller: caller(p), expires: expiry)
+                }
+            }
             return Self.withWarnings(["object": JSONValue(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
@@ -2536,7 +2546,8 @@ public final class ApiRouter {
             origin = (x, y)
         } else {
             let board = try board(p)
-            let placed = board.place(width: size.width, height: size.height, near: caller(p), stacking: true)
+            let group = try board.groupID(p["group"])
+            let placed = board.place(width: size.width, height: size.height, near: group ?? caller(p), stacking: group == nil)
             origin = (placed.x, placed.y)
         }
         params["frame"] = JSONValue(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))

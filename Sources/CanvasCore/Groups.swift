@@ -41,6 +41,27 @@ public struct GroupSpec: Equatable, Sendable {
 }
 
 extension Board {
+    func groupID(_ value: JSONValue?) throws -> ObjectID? {
+        guard let value else { return nil }
+        guard let id = value.string, objects[id]?.type == .group else {
+            throw BoardError.invalidParams("group must name a group on this board")
+        }
+        return id
+    }
+
+    func joiningGroup(_ group: ObjectID?, caller: ObjectID?, _ change: () throws -> CanvasObject) throws -> CanvasObject {
+        guard let group else { return try change() }
+        return try atomically {
+            let changed = try change()
+            var members = objects[group]?.props["members"]?.array ?? []
+            if !members.contains(.string(changed.id)) {
+                members.append(.string(changed.id))
+                try update(group, props: .object(["members": .array(members)]), caller: caller)
+            }
+            return changed
+        }
+    }
+
     /// The frame around visible geometric members. Archiving the last one collapses the group.
     /// Groups with no extant non-arrow members keep their stored frame.
     func fittedFrame(ofGroup group: CanvasObject) -> Frame? {

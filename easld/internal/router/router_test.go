@@ -322,6 +322,58 @@ func TestHTMLManifestStateSummary(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpsertJoinGroupAtomically(t *testing.T) {
+	f := newFixture(t)
+	anchor := idOf(f.result("object.create", map[string]any{"type": "shape", "props": map[string]any{"kind": "rect"},
+		"frame": map[string]any{"x": 10000.0, "y": 10000.0, "w": 100.0, "h": 100.0}}))
+	group := idOf(f.result("object.create", map[string]any{"type": "group", "props": map[string]any{"members": []any{anchor}}}))
+	before := f.board.Objects()[group].Frame
+	expected := f.board.Place(180, 100, group, nil, false)
+	revision := f.board.Revision()
+	id := idOf(f.result("object.upsert", map[string]any{"key": "member", "type": "shape", "group": group,
+		"props": map[string]any{"kind": "rect"}, "frame": map[string]any{"w": 180.0, "h": 100.0}}))
+	if f.board.Revision() != revision+1 || f.board.Objects()[id].Frame != expected || f.board.Objects()[group].Frame == before {
+		t.Fatalf("not one revision near group: %+v", f.board.Snapshot())
+	}
+	for range 2 {
+		f.result("object.upsert", map[string]any{"key": "member", "type": "shape", "group": group, "props": map[string]any{"text": "updated"}})
+	}
+	if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{anchor, id}) {
+		t.Fatalf("members = %v", got)
+	}
+}
+
+func TestBatchGroupReferencesAndInvalidGroupRollback(t *testing.T) {
+	f := newFixture(t)
+	result := f.result("object.batch", map[string]any{"ops": []any{
+		map[string]any{"method": "object.create", "params": map[string]any{"type": "group", "props": map[string]any{"members": []any{}}}},
+		map[string]any{"method": "object.create", "params": map[string]any{"type": "shape", "group": "$0", "props": map[string]any{"kind": "rect"}}},
+		upsertOp("existing", "shape", map[string]any{"kind": "rect"}),
+		map[string]any{"method": "object.upsert", "params": map[string]any{"key": "existing", "type": "shape", "group": "$0", "props": map[string]any{"text": "joined"}}},
+	}})
+	results := result["results"].([]any)
+	group := idOf(asMap(results[0]))
+	member := idOf(asMap(results[1]))
+	existing := idOf(asMap(results[2]))
+	if got := strings_(f.board.Objects()[group].Props["members"]); !reflect.DeepEqual(got, []string{member, existing}) {
+		t.Fatalf("members = %v", got)
+	}
+	for _, invalidGroup := range []any{"missing", member, 12.0} {
+		count := len(f.board.Objects())
+		code, _ := errorOf(f.call("object.create", map[string]any{"type": "shape", "group": invalidGroup, "props": map[string]any{"kind": "rect"}}))
+		if code != "invalid_params" || len(f.board.Objects()) != count {
+			t.Fatalf("invalid group %v: %s", invalidGroup, code)
+		}
+		code, _ = errorOf(f.call("object.batch", map[string]any{"ops": []any{
+			map[string]any{"method": "object.create", "params": map[string]any{"type": "shape", "props": map[string]any{"kind": "rect"}}},
+			map[string]any{"method": "object.upsert", "params": map[string]any{"key": "existing", "type": "shape", "group": invalidGroup, "props": map[string]any{"text": "bad"}}},
+		}}))
+		if code != "invalid_params" || len(f.board.Objects()) != count || f.board.Objects()[existing].Props["text"] != "joined" {
+			t.Fatalf("batch failed to roll back: %s", code)
+		}
+	}
+}
+
 func TestBatchSimulationMergesHTMLState(t *testing.T) {
 	f := newFixture(t)
 	o := f.board.Create(model.HTML, map[string]any{"state": map[string]any{"draft": "keep", "cards": "old"}}, nil, "", "")
@@ -338,6 +390,16 @@ func TestHTMLSummaryWithoutStateKeepsExistingFormat(t *testing.T) {
 	o := summarized(model.Object{Type: model.HTML, Props: map[string]any{"html": "hello"}})
 	if o.Props["html"] != "(5 bytes, use object.get)" {
 		t.Fatalf("stateless summary = %v", o.Props)
+	}
+}
+
+func TestGroupMustBelongToTheTargetBoard(t *testing.T) {
+	f := newFixture(t)
+	other := f.result("board.open", map[string]any{"root": t.TempDir()})
+	group := idOf(f.result("object.create", map[string]any{"board": other["board"], "type": "group", "props": map[string]any{"members": []any{}}}))
+	code, _ := errorOf(f.call("object.create", map[string]any{"board": f.board.ID(), "type": "shape", "group": group, "props": map[string]any{"kind": "rect"}}))
+	if code != "invalid_params" || len(f.board.Objects()) != 0 {
+		t.Fatalf("foreign group = %s, objects = %v", code, f.board.Objects())
 	}
 }
 

@@ -1695,6 +1695,7 @@
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
+          "group": { "$ref": "#/definitions/Id", "description": "Add the object to this group's members in the same revision and undo step. Must name a group on this board. Without frame, place beside the group. In object.batch, an earlier group can be named as $n. Membership is explicit, never inferred from position." },
           "expires": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 timestamp with timezone, or null to clear; mutually exclusive with expiresIn" },
           "expiresIn": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "description": "finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires" },
           "viewer": { "$ref": "#/definitions/ViewerId", "description": "With step, record this remote window's edit for board.undo. Both fields are required together and forbidden inside object.batch." },
@@ -1739,6 +1740,7 @@
           "props": { "type": "object", "description": "the type's props, as for object.create (on an update, merged into the object's)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }], "description": "as for object.create; on an update, as object.update's (any of x, y, w, h). Omit it to leave where the object is (a region the user moved stays moved)" },
           "size": { "const": "fit", "description": "as for object.create and object.update" },
+          "group": { "$ref": "#/definitions/Id", "description": "Add the created or existing object to this group's members once, in the same revision and undo step. Must name a group on this board; an earlier batch group may be $n. New objects without frame are placed beside it; existing objects keep their position." },
           "expires": { "type": ["string", "null"], "format": "date-time", "description": "RFC3339 timestamp with timezone, or null to clear; omission preserves an existing deadline; mutually exclusive with expiresIn" },
           "expiresIn": { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?[smhd]$", "description": "finite nonnegative duration (s, m, h, d; fractions allowed), resolved once by the host to absolute expires; mutually exclusive with expires" },
           "caller": { "$ref": "#/definitions/Id" }

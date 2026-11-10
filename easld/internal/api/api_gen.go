@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "07e028ce25c31f17"
+const SchemaHash = "936ca35b72b6016f"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -137,7 +137,7 @@ var Methods = map[string]ParamSpec{
 		Required: nil,
 	},
 	"object.create": {
-		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "expires", "expiresIn", "viewer", "step", "caller"},
+		Accepted: []string{"board", "type", "props", "frame", "size", "parent", "group", "expires", "expiresIn", "viewer", "step", "caller"},
 		Required: []string{"type", "props"},
 	},
 	"object.update": {
@@ -145,7 +145,7 @@ var Methods = map[string]ParamSpec{
 		Required: []string{"id"},
 	},
 	"object.upsert": {
-		Accepted: []string{"board", "key", "type", "props", "frame", "size", "expires", "expiresIn", "caller"},
+		Accepted: []string{"board", "key", "type", "props", "frame", "size", "group", "expires", "expiresIn", "caller"},
 		Required: []string{"key", "type", "props"},
 	},
 	"object.delete": {

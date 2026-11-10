@@ -39,7 +39,7 @@ Inspect staged mentions with `tray.list`, never drain the user's tray. Full rule
 ## Board grammar and the user's keyboard
 
 A tile shows code, changes, a note, a diagram, an image, a video, a browser, HTML, a question or a terminal.
-A `group` is a titled region with explicit `members`. Update your own group's list when adding tiles. Arrows carry a machine-readable `relation`.
+A `group` is a titled region with explicit `members`. Pass `group: <id>` on create or upsert to add a tile in the same revision and undo step. New tiles without a frame are placed beside the group; existing upserts keep their position. Arrows carry a machine-readable `relation`.
 Use stable keys: `props.key` on create, top-level `key` on `object.upsert`. Keys are unique per board.
 Upsert updates in place. Find by `object.find --key <key>` or `--keyPrefix <prefix>`. A key/type conflict means inspect, not overwrite.
 HTML state merges per key, so agent content refreshes preserve page drafts. Drafts are saved, not instructions. `canvasKit.submit(keys)` records the saved fields; local boards wake the creating agent, remote boards record pending without a wake. Validate submitted data, apply it, and write `applied` with the refreshed content. See [HTML explainers](references/html-explainers.md#drafts-and-submit).
@@ -116,7 +116,7 @@ Include these fields in the note, with real values:
 Claim by writing this note. It records intent, not atomic ownership. Re-read before layout if another agent could be working there.
 Place your region once with layout helpers. After checking the region, set `Layout owner: user` in the manifest.
 The user's moves now stick. Find your content by key, then update its id without `frame`, `size` or another layout pass. Do not silently reclaim layout ownership.
-To add a member to your own group after hand-back, place only the new tile near an existing member with `layout.place`, then update the group's `members` and the manifest's Member keys, and check the region.
+To add a member to your own group after hand-back, pass its `group` id on create or upsert and omit `frame`. Only the new tile is placed beside the group. Update the manifest's Member keys and check the region.
 If the result is not clean, move or delete only the new tile and hand the issue back. Never move existing members.
 If a refresh needs more space, inspect overlaps and hand the layout issue back instead of moving somebody else's region.
 Hand back by naming the user or a successor as refresher in the manifest, or by deleting your own task tiles, group and manifest. Once `Layout owner: user` is set it stays `user` unless the user asks.
