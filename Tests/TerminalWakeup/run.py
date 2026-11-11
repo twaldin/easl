@@ -94,6 +94,7 @@ def main():
     parser.add_argument("--bin-path", type=Path)
     parser.add_argument("--executable", type=Path, help="Run an already compiled stand-in without rebuilding it")
     parser.add_argument("--compile-only", action="store_true", help="Compile on a build Mac without launching a GUI")
+    parser.add_argument("--window-helper", type=Path, help="Existing perf-window helper for native marker OCR")
     parser.add_argument("--output", required=True, type=Path, help="New evidence directory; never overwrite a prior run")
     args = parser.parse_args()
     if platform.system() != "Darwin":
@@ -105,6 +106,8 @@ def main():
     model = subprocess.check_output(["sysctl", "-n", "hw.model"], text=True).strip()
     if not args.compile_only and not model.startswith("VirtualMac"):
         parser.error("GUI execution requires the claimed VirtualMac guest")
+    if not args.compile_only and not args.window_helper:
+        parser.error("Native pixel proof requires --window-helper")
     if not args.compile_only and not Path(DRIVER).is_file():
         parser.error("CuaDriver must be installed and authorized in the GUI guest")
     root = Path(__file__).resolve().parents[2]
@@ -173,6 +176,15 @@ def main():
                             captures.add(receipt["capture_id"])
                             snapshots.add(receipt["snapshot_id"])
                             pixels = pixel_evidence(screenshot, request)
+                            recognized = subprocess.run([str(args.window_helper), "--drawn", str(screenshot)],
+                                                        capture_output=True, text=True, timeout=10)
+                            stem.with_suffix(".ocr.json").write_text(recognized.stdout)
+                            stem.with_suffix(".ocr.stderr").write_text(recognized.stderr)
+                            recognized.check_returncode()
+                            lines = json.loads(recognized.stdout)["lines"]
+                            normalize = lambda value: "".join(character.lower() for character in value if character.isalnum())
+                            pixels["markerRecognized"] = normalize(request["marker"]) in normalize(" ".join(lines))
+                            pixels["matches"] = pixels["matches"] and pixels["markerRecognized"]
                             stem.with_suffix(".pixels.json").write_text(json.dumps(pixels, indent=2) + "\n")
                             if pixels["matches"]:
                                 (output / f"{phase}.captured").write_text(screenshot.name + "\n")
@@ -184,7 +196,7 @@ def main():
                     time.sleep(0.02)
                 if process.returncode != 0:
                     raise RuntimeError(f"Native harness exited {process.returncode}; see {output / 'stderr.log'}")
-                if len(completed) != 8 or not (output / "result.txt").is_file():
+                if len(completed) != 9 or not (output / "result.txt").is_file():
                     raise RuntimeError(f"Incomplete native proof: captured {sorted(completed)}")
                 print((output / "result.txt").read_text(), end="")
             finally:

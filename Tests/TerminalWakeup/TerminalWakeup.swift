@@ -48,7 +48,6 @@ private enum TerminalWakeup {
         session.receive("\(escape)[?25l\(escape)[0;97;\(background)m\(escape)[2J\(escape)[H\(marker)")
     }
 
-    // The runner acknowledges only a fresh, PID/window-bound native capture with matching pixels.
     static func capture(_ phase: String, window: NSWindow, active: FrameView,
                         marker: String, color: [Int], width: CGFloat = 600, exitText: Bool = false) async throws {
         var request: [String: Any] = ["phase": phase, "pid": ProcessInfo.processInfo.processIdentifier,
@@ -184,6 +183,18 @@ private enum TerminalWakeup {
         }
         try await capture("08-visible-exit", window: window, active: active,
                           marker: "Press any key to close the window.", color: [120, 32, 180], width: 520, exitText: true)
+        let normalExit = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        active.configuration = TerminalSurfaceOptions(backend: .inMemory(normalExit))
+        paint(normalExit, color: nil, marker: "NORMAL_EXIT")
+        try await eventually("normal exit control") { normalExit.readViewportText()?.contains("NORMAL_EXIT") == true }
+        try await Task.sleep(for: .seconds(1))
+        mailbox.closed = false
+        normalExit.finish(exitCode: 0, runtimeMilliseconds: 1000)
+        try await eventually("normal unfocused exit text") {
+            mailbox.closed && normalExit.readViewportText()?.contains("Process exited. Press any key to close the terminal.") == true
+        }
+        try await capture("09-normal-exit", window: window, active: active,
+                          marker: "Process exited. Press any key to close the terminal.", color: [120, 32, 180], width: 520)
         try Data("PASS native output, hidden mailbox/backpressure/exit, reveal, config, layout/focus, reattach, frame delivery and captured pixels\n".utf8)
             .write(to: evidence.appendingPathComponent("result.txt"), options: .atomic)
     }

@@ -19,9 +19,11 @@
         override open var layer: CALayer? {
             didSet {
                 nativeFrameObservation = layer?.observe(\.contents) { [weak self] layer, _ in
+                    guard layer.contents != nil else { return }
+                    let deliveredLayer = ObjectIdentifier(layer)
                     MainActor.assumeIsolated {
-                        guard let self, self.layer === layer, self.core.surface != nil,
-                              layer.contents != nil else { return }
+                        guard let self, self.layer.map(ObjectIdentifier.init) == deliveredLayer,
+                              self.core.surface != nil else { return }
                         self.enforceMetalLayerScale()
                         // A synchronous draw still holds Ghostty's renderer lock here.
                         DispatchQueue.main.async { [weak self] in self?.surfaceDidDraw() }
