@@ -31,17 +31,18 @@ def compile_harness(root, build):
     if not link_file.is_file() or not (build / "description.json").is_file():
         raise RuntimeError("Build Easl with --build-system native -Xswiftc -enable-testing first")
     objects = [Path(p) for p in shlex.split(link_file.read_text())]
-    objects = [p for p in objects if p.name not in {"main.swift.o", "main.o"}]
-    if not any("CanvasApp.build" in p.parts for p in objects):
-        raise RuntimeError("The native Easl link file does not contain CanvasApp objects")
+    modules = {"GhosttyTerminal.build", "GhosttyKit.build", "MSDisplayLink.build"}
+    objects = [p for p in objects if modules.intersection(p.parts)]
+    if not all(any(module in p.parts for p in objects) for module in modules):
+        raise RuntimeError("The native Easl link file is missing terminal module objects")
     compiler = subprocess.check_output(["xcrun", "--find", "swiftc"], text=True).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
     command = [compiler, "-swift-version", "6", "-parse-as-library", "-enable-testing",
                "-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx14.0",
                "-I", str(build / "Modules"), "-I", str(build)]
     description = json.loads((build / "description.json").read_text())
-    app = next(value for value in description["swiftCommands"].values() if value["moduleName"] == "CanvasApp")
-    arguments = app["otherArguments"]
+    terminal = next(value for value in description["swiftCommands"].values() if value["moduleName"] == "GhosttyTerminal")
+    arguments = terminal["otherArguments"]
     for index, argument in enumerate(arguments[:-1]):
         if argument == "-Xcc":
             command.extend(["-Xcc", arguments[index + 1]])
