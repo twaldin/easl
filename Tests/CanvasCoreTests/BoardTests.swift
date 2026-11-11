@@ -832,7 +832,7 @@ struct BoardTests {
         try board.stage(.object(circle.id))
         try board.stage(.object(straddling.id))
         let over = await board.drain().context
-        #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 200) 125×120"), "the topmost containing tile, in its local units (below its title bar)")
+        #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 192) 125×120"), "the topmost containing tile, in its local units (below its title bar)")
         #expect(!over.contains(page.id))
         #expect(!over.contains("\(straddling.id) \"rect\" (drawn by user) · over"), "a box that only partly covers a tile isn't drawn on it")
 
@@ -841,7 +841,7 @@ struct BoardTests {
         let mark = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 3480, y: 426, w: 250, h: 240))
         try board.stage(.object(mark.id))
         let onZoomed = await board.drain().context
-        #expect(onZoomed.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(zoomed.id) at (240, 200) 125×120"))
+        #expect(onZoomed.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(zoomed.id) at (240, 196) 125×120"))
     }
 
     @Test func drawingMentionsCarryTheWholeNoteWhatTheyAreOnAndThePageUnderThem() async throws {
@@ -853,7 +853,7 @@ struct BoardTests {
         try board.stage(.object(text.id))
         let context = await board.drain().context
         #expect(context.contains("\"dots dangle at line ends: keep link + dot together, one per line on phone?\\nand the footer\" (drawn by user)"), "all of the note")
-        #expect(context.contains("· partly over browser \(page.id) at (0, 274) 200×60"), "the part on the page, in the page tile's units")
+        #expect(context.contains("· partly over browser \(page.id) at (0, 266) 200×60"), "the part on the page, in the page tile's units")
 
         var asked: (ObjectID, CGRect)?
         board.pageElements = { id, rect in
@@ -978,7 +978,7 @@ struct BoardTests {
         let zoomed = try board.update(terminal.id, props: .object(["zoom": .number(1.5)]))
         #expect(zoomed.frame == terminal.frame)
         let grid = TerminalGrid.size(of: zoomed, cell: cell, padding: padding)
-        #expect(grid.columns == 78 && grid.rows == 23, "the body is 666 × 396 content points at 150%")
+        #expect(grid.columns == 78 && grid.rows == 22, "the 34-pt bar leaves 586 / 1.5 content points of height")
         let out = try board.update(terminal.id, props: .object(["zoom": .number(0.67)]))
         #expect(TerminalGrid.size(of: out, cell: cell, padding: padding).columns == 177 && out.frame == terminal.frame)
     }

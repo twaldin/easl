@@ -153,7 +153,8 @@ type Board struct {
 	// created). The registry's router starts and ends the sessions of those easld owns.
 	OnTerminals func(created, ended []model.Object)
 	// OnChange is called after any persisted change (the store debounces saves).
-	OnChange func()
+	OnChange       func()
+	creationAuthor func(string) string
 	// Viewport is the canvas rect a window shows; easld has none (nil), so placement ignores it.
 	Viewport func() *model.Frame
 	// Texts measures arrow captions for routing (DrawingStyle.arrowLabel); nil: arrows route
@@ -189,9 +190,6 @@ func New(id, root string) *Board {
 		defaultQuestionArchiveAfter: question.DefaultArchiveAfter,
 	}
 }
-
-// TileTitleHeight is a tile's title bar (RenderMath.tileTitleHeight).
-const TileTitleHeight = 26.0
 
 // FromSnapshot is a board as saved (Board.init(snapshot:)): stored frames and stacking migrated,
 // `props.scale` migrated, legacy group `name` → `title`, terminals saved working or blocked
@@ -540,6 +538,15 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	}
 	now := time.Now()
 	o := model.Object{ID: model.NewID("obj"), Type: typ, Z: z, Rev: 1, Parent: parent, CreatedBy: model.ActorFor(caller), CreatedAt: now, UpdatedAt: now, ContentUpdatedAt: now, ContentRev: 1, Props: props}
+	name := "you"
+	if caller != "" {
+		if b.creationAuthor != nil {
+			name = b.creationAuthor(caller)
+		} else {
+			name = authorName(b.objects[caller])
+		}
+	}
+	o.AuthorName = &name
 	if len(expiry) > 0 && expiry[0].At != nil {
 		at := *expiry[0].At
 		o.Expires = &at
@@ -565,6 +572,18 @@ func (b *Board) Create(typ model.ObjectType, props map[string]any, frame *model.
 	// A create opens no step of its own: outside one it is reported now.
 	b.flushTerminals()
 	return o
+}
+
+func authorName(terminal model.Object) string {
+	agent, _ := terminal.Props["agent"].(map[string]any)
+	for _, value := range []any{terminal.Props["name"], terminal.Props["title"], agent["kind"]} {
+		if text, ok := value.(string); ok {
+			if name := strings.TrimSpace(text); name != "" {
+				return name
+			}
+		}
+	}
+	return "Terminal"
 }
 
 // Update patches an object (Board.update); a group's frame is never taken from frame. actor

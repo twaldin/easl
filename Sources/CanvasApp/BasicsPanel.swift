@@ -2,7 +2,7 @@ import AppKit
 import CanvasCore
 
 /// Help › easl Basics: a floating panel inside the board window (an overlay like Go to, never
-/// modal) with the short legend in `CanvasBasics`: lifecycle dots, markers, the follow tile, the
+/// modal) with the short legend in `CanvasBasics`: lifecycle labels, markers, the follow tile, the
 /// tray and Hyper-click, zoom and cards, the keyboard. It stays open while the canvas is used
 /// beside it, so the user can try what it says; ×, Esc while it has the keyboard, or the menu
 /// item again close it, and the keyboard goes back to whoever had it.
@@ -40,7 +40,7 @@ final class BasicsPanel: NSVisualEffectView {
         hide.controlSize = .small
         hide.bezelStyle = .push
         hide.font = .systemFont(ofSize: 11)
-        hide.toolTip = "For presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers. Esc brings them back (View › Hide Board Chrome)."
+        hide.toolTip = "For presenting: hides the toolbar, tray, selection rings, author marks, code headers and look-here markers. Blocked agents, open questions and unseen results keep their needs-you rings and pills. Esc brings the chrome back (View › Hide Board Chrome)."
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false

@@ -19,6 +19,13 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 
 ## Reading a board
 
+- Every tile has a shared **34 pt title bar**. A small type glyph stays before its title, even a custom title. At ChromeText 100% and 115%, the title is above state and a trailing author; long author names truncate with the full name in a tooltip.
+  At ChromeText 130% and 150%, the bar folds to one line: type, title, and states, followed by the needs-you pill only when its full screen-sized rectangle fits inside the bar and visible clear area. An inline pill reserves expanded control space before hover, so approaching it does not move it. Otherwise the same pill uses existing outside-bar placement without reserving unused controls. At 50% board zoom the pill is taller than the bar and stays outside on every tile type. The author moves to a hover tooltip and stays complete in accessibility. These text settings do not change tile geometry; API renders always use 100% text and two tracks.
+  At 100% and 115%, clipped live state or typing takes space from the author. Already-fitting bars stay unchanged. The author tail-truncates with its full stored name on its own tooltip. Where live labels reclaim author space, the title bar also carries that full-name tooltip, even for tiny positive or empty author slots. Accessibility always keeps the complete author.
+- **Author** is the creation-time name stored by either host, unchanged after the creator is renamed or deleted. User-made tiles say "you". Older tiles without a stored name keep live creator resolution, without backfill.
+- **Typing** means the tile actually holds the keyboard, not merely that it is selected. Terminal lifecycle and command labels never transfer to tiles an agent creates. A terminal can show typing and working together.
+- **Needs-you pill** uses the shared classifier's reason: "Needs you", "Open question", "Look here", or "Result unseen", with its message when present. It can appear on any tile type, uses static text, and stays screen-sized at 50% board zoom. A tile with no applicable state stays neutral.
+
 - Scroll over content that can move in that direction to scroll it, selected or not. Empty board, fitting content, and a starting content limit pan the board. Pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
   The same content or board keeps both directions through pointer crossings, content edges, and momentum. Start a new gesture at a content edge to pan. Pause a mouse wheel for 250 ms to start a new burst.
   This applies to every tile type, local and remote, including nested scrollers. Maps and pages that handle their own wheel input keep it even at an edge. Older drawing Macs and unsupported WebKit versions keep page input without board handoff; implementation and compatibility details are in `docs/design.md`.
@@ -35,15 +42,15 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
   While a browser page holds the keyboard, these keys navigate its page history. Its Back/Forward buttons, context menu and browser automation still navigate history.
   Browser tiles disable two- and three-finger history swipes so unused sideways scrolls pan the board. Swipe previews are not shown, and WebKit does not record their snapshots.
-- **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+- **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' look-here markers. Blocked agents, open questions and unseen results keep their needs-you rings and pills.
   Esc on the board or the item again brings them back.
 
 ## Agents
 
-- **Lifecycle dot** in a terminal's title bar (its tooltip says the same):
-  blue *working* (busy), orange *blocked* (waits for the user to approve or answer), green *done* (finished, not seen yet), grey *idle* (waiting for the next prompt).
-  No dot: no agent reports a lifecycle in that terminal.
-  An agent without an integration (aider through easl's `aider` wrapper, any CLI that sends a terminal notification or bell) turns green *done* when it says it waits and has no dot while it may be working; it never shows blue or orange.
+- **Lifecycle label** in a terminal's title bar:
+  blue *working* (busy), orange *blocked* (waits for the user to approve or answer), green *done* (finished, not seen yet), grey *idle* (waiting for the next prompt), or red *error* from a reported lifecycle error or failed command.
+  Without reported lifecycle, a terminal may show its command status; no applicable status means no label.
+  An agent without an integration (aider through easl's `aider` wrapper, any CLI that sends a terminal notification or bell) reports *done* when it says it waits; easl does not infer working or blocked from that notification.
 - **Blocked**: the terminal also gets an orange ring and a bubble with a raised hand and the approval text; clicking the bubble brings the terminal into view (its bottom, where the question is, when it is taller than the window) and puts the keyboard in it.
   Off screen, an orange pill at the edge of the view points at it.
 - **Tab dot** on a board's tab: orange, an agent there is blocked; green, one finished unseen.
@@ -51,7 +58,7 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 
 ## Needs you
 
-- **Pink ring and bubble**: an attention marker (`view.attention`, or a terminal's bell or notification): "look here".
+- **Attention ring and reason pill**: a static orange ring and pill use the shared semantic needs-you role. The pill names the reason and includes its message when present. An attention marker (`view.attention`, or a terminal's bell or notification) says "Look here".
   It clears when the user selects the tile, types in it, or looks at it for a few seconds; View › Clear Attention Markers clears them all.
   Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.

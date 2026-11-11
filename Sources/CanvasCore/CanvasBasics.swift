@@ -4,7 +4,7 @@
 /// agents asked "what is this?".
 public enum CanvasBasics {
     public struct Item: Sendable {
-        /// What it is, as it looks ("Blue dot", "⌘P").
+        /// What it is, as it looks ("Working", "⌘P").
         public var term: String
         public var text: String
     }
@@ -14,7 +14,7 @@ public enum CanvasBasics {
         public var items: [Item]
     }
 
-    /// What a terminal's lifecycle dot says, for its tooltip; nil without an agent reporting.
+    /// What a terminal's lifecycle label says, for its tooltip; nil without an agent reporting.
     public static func lifecycle(_ state: String?) -> String? {
         switch state {
         case "working": "Working: the agent is busy"
@@ -51,18 +51,19 @@ public enum CanvasBasics {
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Links select the destination without taking typing from the source."),
             Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
             Item(term: "Browser history", text: "two- and three-finger history swipes are off so unused sideways scrolls pan the board. Use the tile's Back and Forward buttons or its context menu. While the page holds the keyboard, ⌘[ and ⌘] navigate its history. Browser automation still works. Swipe previews are not shown or recorded."),
-            Item(term: "Hide Board Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
+            Item(term: "Hide Board Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' look-here markers. Blocked agents, open questions and unseen results keep their needs-you rings and pills. Esc brings the chrome back."),
         ]),
         Section(title: "Agents", items: [
-            Item(term: "Blue dot", text: "working: the agent is busy."),
-            Item(term: "Orange dot, ring and ✋ bubble", text: "blocked: it waits for you to approve or answer. Click the bubble to answer in its terminal."),
-            Item(term: "Green dot", text: "done: it finished, or an agent without an integration (aider) said it waits, and you haven't looked yet."),
-            Item(term: "Grey dot", text: "idle: waiting for your next prompt. No dot: no agent reporting."),
+            Item(term: "Working", text: "the terminal's static blue label: the agent is busy."),
+            Item(term: "Blocked", text: "the terminal's orange label: it waits for you to approve or answer. Click its needs-you pill to answer in its terminal."),
+            Item(term: "Done", text: "the terminal's green label: it finished, or an agent without an integration (aider) said it waits, and you haven't looked yet."),
+            Item(term: "Idle · Error", text: "grey idle means waiting for your next prompt; red error means a reported error or failed command. Without reported lifecycle, a terminal may show command status; no applicable status means no label."),
+            Item(term: "Typing", text: "the tile holds the keyboard. A terminal can show typing and working together; other tile types never inherit their creator's lifecycle."),
             Item(term: "Dot on a board's tab", text: "orange: an agent there is blocked; green: one finished unseen."),
             Item(term: "Quit · closing a tab", text: "agents and shells keep running in the background and are back when you open the folder again; closing a terminal tile ends its session."),
         ]),
         Section(title: "Needs you", items: [
-            Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select the tile, type in it, or look at it."),
+            Item(term: "Orange ring and reason pill", text: "something needs you: a blocked agent, an open question, a look-here marker or an unseen result. The static pill names the reason and shows its message when present. A look-here marker clears when you select the tile, type in it, or look at it."),
             Item(term: "Pill at the edge", text: "something that needs you is off screen that way. Click it to go there."),
             Item(term: "Question tile", text: "an agent asks you to decide: its options (the recommended one outlined, each with why), links to what it's about, and who asks. Press a number to pick, add a note if you like, Return answers; the answer goes back to the agent. Archive hides an answered tile; a cancelled or expired one is dimmed."),
             Item(term: "Open asks", text: "the count beside the drawing toolbar: questions waiting for you on this board. Click it to go to the next one."),
@@ -70,7 +71,7 @@ public enum CanvasBasics {
         ]),
         Section(title: "Agents' tiles", items: [
             Item(term: "Follow tile", text: "each agent's code tile follows the file and line it last read or edited; the strip under it lists recent places (a pencil marks an edit). Pin keeps a view; turn it off with right-click › Follow Files."),
-            Item(term: "Where new tiles land", text: "next to the agent's terminal, clear of other tiles, inside your view when there's room nearby. The view never moves by itself: look for a marker, or press ⌘9. \"by name\" in a title bar says which agent made the tile."),
+            Item(term: "Where new tiles land", text: "next to the agent's terminal, clear of other tiles, inside your view when there's room nearby. The view never moves by itself: look for a marker, or press ⌘9. The trailing author is the creator's stored name, unchanged after rename or removal; user-made tiles say \"you\". Older tiles without a stored name keep live creator resolution. At 130% and 150% ChromeText, the author moves to the hover tooltip and stays in accessibility."),
             Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's or changed your files or git index (a Stage or Discard); ⇧⌘Z redoes it. In a terminal, ⌘Z is the terminal's."),
         ]),
         Section(title: "Reviewing work", items: [

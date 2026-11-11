@@ -374,12 +374,12 @@ public struct QuestionSpec: Equatable, Sendable {
     /// question, one row per option, the context links, the note field and the footer while it
     /// is open; once closed, the question over its answer (and note) and who answered when.
     public static let width = 460.0
-    public static let openBase = 194.0
+    public static let openBase = RenderMath.tileTitleHeight + 168
     public static let optionRow = 50.0
     public static let contextRow = 30.0
     /// The confidence slider's row on a question asked with `askConfidence`.
     public static let confidenceRow = 30.0
-    public static let closedBase = 148.0
+    public static let closedBase = RenderMath.tileTitleHeight + 122
     public static let noteRow = 40.0
 
     /// The tile's frame size at 100% for these props (`object.create` without a frame,

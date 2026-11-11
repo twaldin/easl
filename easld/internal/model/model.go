@@ -200,7 +200,7 @@ func DefaultSize(t ObjectType) (w, h float64) {
 		return 760, 480
 	case Question:
 		// Three options, no context; a new question is sized by its props (question.Size).
-		return 460, 194 + 3*50
+		return 460, TileTitleHeight + 168 + 3*50
 	case Shape:
 		return 160, 100
 	}
@@ -216,6 +216,7 @@ type Object struct {
 	Rev              int
 	Parent           ObjectID // "" for none
 	CreatedBy        Actor
+	AuthorName       *string
 	UpdatedBy        *Actor
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
@@ -236,7 +237,8 @@ func (o Object) Hidden() bool {
 // ObjectKeys are the keys of a CanvasObject.
 var ObjectKeys = map[string]bool{
 	"id": true, "type": true, "frame": true, "z": true, "rev": true, "parent": true, "createdBy": true,
-	"updatedBy": true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "contentRev": true, "expires": true, "props": true,
+	"authorName": true,
+	"updatedBy":  true, "createdAt": true, "updatedAt": true, "contentUpdatedAt": true, "contentRev": true, "expires": true, "props": true,
 }
 
 // Clone copies the object deeply (props included), so a copy can be changed freely.
@@ -249,6 +251,10 @@ func (o Object) Clone() Object {
 	if o.UpdatedBy != nil {
 		u := *o.UpdatedBy
 		c.UpdatedBy = &u
+	}
+	if o.AuthorName != nil {
+		name := *o.AuthorName
+		c.AuthorName = &name
 	}
 	if o.Expires != nil {
 		at := *o.Expires
@@ -302,6 +308,9 @@ func (o Object) encode(timeOf func(time.Time) any) map[string]any {
 	if o.Parent != "" {
 		m["parent"] = o.Parent
 	}
+	if o.AuthorName != nil {
+		m["authorName"] = *o.AuthorName
+	}
 	if o.UpdatedBy != nil {
 		m["updatedBy"] = o.UpdatedBy.JSON()
 	}
@@ -353,6 +362,9 @@ func ObjectFromJSON(v any) (Object, error) {
 		o.Rev = 1
 	}
 	o.Parent, _ = m["parent"].(string)
+	if name, ok := m["authorName"].(string); ok {
+		o.AuthorName = &name
+	}
 	if u, ok := m["updatedBy"]; ok && u != nil {
 		a := ActorFromJSON(u)
 		o.UpdatedBy = &a

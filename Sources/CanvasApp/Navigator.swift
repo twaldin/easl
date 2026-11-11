@@ -498,8 +498,6 @@ private final class NavigatorCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("navigator.cell")
 
     private let dot = NSView()
-    /// "Blocked" (orange), "Marked" (pink), or "Done" (green): the row needs the user
-    /// (`NavigatorRow.needs`).
     private let flag = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")

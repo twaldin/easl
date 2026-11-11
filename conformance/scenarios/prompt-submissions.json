@@ -1,6 +1,8 @@
 {
   "description": "Both hosts retain prompt submission outcomes after the agent acknowledges the message. A receipt query never submits. Cancelling a missing composer identity prevents a late original from typing. Changed payloads, host restarts and expired identities cannot authorize another delivery.",
   "ignore": {
+    "response.result.agent.pid": "the agent's process: a reported pid only while that process lives, else the zmx session's foreground process (client)",
+    "response.result.agent.program": "the terminal's foreground program comes from its live surface (client)",
     "response.result.promptEpoch": "Each running host has its own receipt registry incarnation.",
     "request.submission.epoch": "The request carries the current host's opaque registry incarnation."
   },

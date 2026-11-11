@@ -241,7 +241,7 @@ final class DelegatedCallsTests {
     }
 
     /// An HTML page measures as the whole frame its tile needs, framed as the app frames it: laid
-    /// out at the width over its zoom (default 640), the 26-pt title bar at 1× over the zoomed
+    /// out at the width over its zoom (default 640), the 34-pt title bar at 1× over the zoomed
     /// document, at most 4000 tall. Other types are easld's to measure.
     @Test func anHtmlPageMeasuresAsItsTilesWholeFrame() async throws {
         let calls = delegated()
@@ -250,8 +250,8 @@ final class DelegatedCallsTests {
             if let width { params["width"] = .number(width) }
             return try await answer(calls, "object.measure", .object(params)).get()
         }
-        #expect(try await measure(.object(["html": "<p>hi</p>"])) == .object(["w": 640, "h": 927]))
-        #expect(try await measure(.object(["html": "<p>hi</p>", "zoom": 2]), width: 500) == .object(["w": 500, "h": 1828]))
+        #expect(try await measure(.object(["html": "<p>hi</p>"])) == .object(["w": 640, "h": 935]))
+        #expect(try await measure(.object(["html": "<p>hi</p>", "zoom": 2]), width: 500) == .object(["w": 500, "h": 1836]))
         #expect(laidOut == [640, 250])
         page = { _, width in CGSize(width: width, height: 9000) }
         #expect(try await measure(.object(["html": "<p>long</p>"])) == .object(["w": 640, "h": 4000]))

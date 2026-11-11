@@ -113,6 +113,14 @@ func (r *Registry) Open(root string) (*Board, error) {
 	}
 	b.Texts = r.Texts
 	b.defaultQuestionArchiveAfter = r.DefaultQuestionArchiveAfter
+	b.creationAuthor = func(caller string) string {
+		for _, creatorBoard := range r.boards {
+			if terminal, ok := creatorBoard.objects[caller]; ok && terminal.Type == model.Terminal {
+				return authorName(terminal)
+			}
+		}
+		return "Terminal"
+	}
 	b.OnEvent = func(e model.Event) {
 		if r.Hook != nil {
 			r.Hook(b, e)

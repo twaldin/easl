@@ -6,7 +6,7 @@ package api
 const SchemaVersion = 2
 
 // SchemaHash is the first 16 hex digits of the SHA-256 of the schema file this build was generated from (client.attach `schema`).
-const SchemaHash = "c714651de35bbe3e"
+const SchemaHash = "61a063982bed0684"
 
 // Error codes of a failed response's `error.code`, with what each means.
 const (
@@ -910,7 +910,7 @@ type QuestionPropsAnswer struct {
 	By Actor `json:"by,omitempty"`
 }
 
-// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 194 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 148 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
+// QuestionProps: A question an agent (or a script elsewhere) asks the user on the board instead of in chat; the user answers it on its tile (`easl ask` is the CLI for it). Lifecycle: status open → answered | cancelled | expired, each final; a closed question takes only `archived`, `keep`, and `archiveAfter` (and key, zoom). Validated on create and update (invalid_params names the rule): option ids unique, `correct`, `recommended` and `answer.option` name an option, `answer.confidence` only on a question asked with `askConfidence`, `answer` exactly when answered. A new question without a frame is sized from its props: 460 wide, 202 + 50 per option (+ 30 with context, + 30 with askConfidence) tall while open; closing it shrinks it to 156 (+ 40 with a note). Open questions are on the user's ⌘J needs-you list and the board's open-asks count. Answered, it reaches the asker as an object.updated event and, when `asker.tile` is a terminal on the board, as a mention of the question with that terminal's next prompt (never typed into it). An open question past `expiresAt` becomes expired (by easl, no undo step). A closed question that is not kept is archived by the host `archiveAfter` seconds after its `updatedAt` (default 10, at most 86400), on the same timer as expiry, as the app's own write (object.updated, persisted, no undo step). `keep: true` exempts that, not expiry or an explicit archive. null removes `keep` or `archiveAfter` and restores the default. Moving, zooming, changing retention, or unarchiving restarts the delay from the new `updatedAt`.
 type QuestionProps struct {
 	Question string `json:"question"`
 	// what the user picks from (number keys 1–9 pick on the tile); may be empty, then the answer is a note
@@ -1041,9 +1041,11 @@ type CanvasObject struct {
 	Rev       int     `json:"rev"`
 	Parent    *Id     `json:"parent,omitempty"`
 	CreatedBy Actor   `json:"createdBy"`
-	UpdatedBy Actor   `json:"updatedBy,omitempty"`
-	CreatedAt string  `json:"createdAt"`
-	UpdatedAt string  `json:"updatedAt"`
+	// Immutable creation-time author name, captured by the host (user: you). Preserved after creator rename or removal. Absent on legacy objects; never backfilled.
+	AuthorName *string `json:"authorName,omitempty"`
+	UpdatedBy  Actor   `json:"updatedBy,omitempty"`
+	CreatedAt  string  `json:"createdAt"`
+	UpdatedAt  string  `json:"updatedAt"`
 	// absolute RFC3339 deletion deadline, set by the host; absent when no expiry is scheduled
 	Expires *string `json:"expires,omitempty"`
 	// one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | VideoProps | DiagramProps | QuestionProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)
@@ -1344,7 +1346,7 @@ type RenderedObjectOverflow struct {
 type RenderedObject struct {
 	ID   Id         `json:"id"`
 	Type ObjectType `json:"type"`
-	// image pixels, top-left origin; a tile's rect is its frame (its 26 pt title bar is inside it)
+	// image pixels, top-left origin; a tile's rect is its frame (its 34 pt title bar is inside it)
 	PixelRect Frame `json:"pixelRect"`
 	// placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored One of "rendered", "placeholder", "failed".
 	State string `json:"state"`

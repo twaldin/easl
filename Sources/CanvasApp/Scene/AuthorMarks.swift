@@ -1,12 +1,11 @@
 import AppKit
 import CanvasCore
 
-/// Author marks (`AuthorMark`): an agent's tiles and groups name the terminal that made them, and
-/// follow it when the terminal is renamed, runs another program, or goes.
+/// Creation-time names stay fixed. Objects without a snapshot retain legacy live resolution.
 extension CanvasView {
     /// The name `object`'s author mark shows, nil for none (and while the chrome is hidden).
     func authorName(of object: CanvasObject) -> String? {
-        guard !chromeHidden else { return nil }
+        guard !chromeHidden, object.type != .group || object.createdBy != .user else { return nil }
         return AuthorMark.name(of: object, in: board.objects) { [tiles] in (tiles[$0]?.content as? TerminalTile)?.program }
     }
 
@@ -25,6 +24,6 @@ extension CanvasView {
         }
         guard name != authorNames[terminal] else { return }
         authorNames[terminal] = name
-        for object in board.objects.values where object.createdBy == .agent(tile: terminal) { syncAuthor(object.id) }
+        for object in board.objects.values where object.authorName == nil && object.createdBy == .agent(tile: terminal) { syncAuthor(object.id) }
     }
 }

@@ -273,18 +273,18 @@ func TestSizeIsCountedFromTheProps(t *testing.T) {
 		props map[string]any
 		h     float64
 	}{
-		{"no options", map[string]any{"options": list()}, 194},
-		{"two options", base(), 294},
-		{"two options and context", with(map[string]any{"context": list(obj("url", "u"))}), 324},
-		{"two options and a confidence slider", with(map[string]any{"askConfidence": true}), 324},
-		{"empty context adds nothing", with(map[string]any{"context": list()}), 294},
-		{"no status is open", with(map[string]any{"status": gone{}}), 294},
-		{"an unknown status is open", with(map[string]any{"status": "weird"}), 294},
-		{"answered", with(map[string]any{"status": "answered", "answer": obj("option", "a")}), 148},
-		{"answered with a note", with(map[string]any{"status": "answered", "answer": obj("option", "a", "note", "why")}), 188},
-		{"answered with a blank note", with(map[string]any{"status": "answered", "answer": obj("note", "  ")}), 148},
-		{"cancelled", with(map[string]any{"status": "cancelled"}), 148},
-		{"expired with context and options", with(map[string]any{"status": "expired", "context": list(obj("url", "u"))}), 148},
+		{"no options", map[string]any{"options": list()}, 202},
+		{"two options", base(), 302},
+		{"two options and context", with(map[string]any{"context": list(obj("url", "u"))}), 332},
+		{"two options and a confidence slider", with(map[string]any{"askConfidence": true}), 332},
+		{"empty context adds nothing", with(map[string]any{"context": list()}), 302},
+		{"no status is open", with(map[string]any{"status": gone{}}), 302},
+		{"an unknown status is open", with(map[string]any{"status": "weird"}), 302},
+		{"answered", with(map[string]any{"status": "answered", "answer": obj("option", "a")}), 156},
+		{"answered with a note", with(map[string]any{"status": "answered", "answer": obj("option", "a", "note", "why")}), 196},
+		{"answered with a blank note", with(map[string]any{"status": "answered", "answer": obj("note", "  ")}), 156},
+		{"cancelled", with(map[string]any{"status": "cancelled"}), 156},
+		{"expired with context and options", with(map[string]any{"status": "expired", "context": list(obj("url", "u"))}), 156},
 	}
 	for _, c := range cases {
 		if w, h := Size(c.props); w != 460 || h != c.h {

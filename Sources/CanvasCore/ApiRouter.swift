@@ -101,6 +101,11 @@ public final class BoardRegistry {
             self.messageQueued?(board, tile)
         }
         board.hostMachine = drawingMachine
+        board.creationAuthor = { [weak self] caller in
+            guard let creatorBoard = self?.boards.values.first(where: { $0.objects[caller]?.type == .terminal }),
+                  let terminal = creatorBoard.objects[caller] else { return nil }
+            return AuthorMark.name(of: terminal, program: creatorBoard.authorProgram?(caller))
+        }
         board.defaultQuestionArchiveAfter = defaultQuestionArchiveAfter
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,

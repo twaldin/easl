@@ -60,6 +60,28 @@ final class BoardMirrorTests {
         host.create(type: .note, props: .object(["markdown": .string(markdown)]), frame: Frame(x: x, y: 0, w: 280, h: 200))
     }
 
+    @Test func authorSnapshotsSurviveRemoteCreationRenameRemovalAndReload() async throws {
+        let creator = host.create(type: .terminal, props: .object(["name": "Captured"]))
+        let output = host.create(type: .note, props: .object(["markdown": "authored"]), caller: creator.id)
+        let (mirror, view) = try await mirror()
+        defer { mirror.close() }
+        #expect(view.objects[output.id]?.authorName == "Captured")
+        _ = try host.update(creator.id, props: .object(["name": "Renamed"]))
+        try await eventually { view.objects[creator.id]?.props["name"] == "Renamed" }
+        #expect(view.objects[output.id]?.authorName == "Captured")
+        let browser = view.create(type: .browser, props: .object(["url": "about:blank"]), caller: creator.id)
+        try await eventually { host.objects.values.contains { $0.type == .browser && $0.authorName == "Renamed" } }
+        let canonical = try #require(host.objects.values.first { $0.type == .browser })
+        try await eventually { view.objects[browser.id] == nil && view.objects[canonical.id]?.authorName == "Renamed" }
+        try host.delete(creator.id)
+        try await eventually { view.objects[creator.id] == nil }
+        #expect(view.objects[output.id]?.authorName == "Captured")
+        #expect(view.objects[canonical.id]?.authorName == "Renamed")
+        try await registry.store.saveChecked(host)
+        let reloaded = try await registry.store.load(root: host.root)
+        #expect(reloaded.objects[output.id]?.authorName == "Captured")
+        #expect(reloaded.objects[canonical.id]?.authorName == "Renamed")
+    }
     @Test func terminalReferencesReaimTheHostPreviewAfterCanonicalCreate() async throws {
         let terminal = host.create(type: .terminal, props: .object([:]))
         let (_, view) = try await mirror()

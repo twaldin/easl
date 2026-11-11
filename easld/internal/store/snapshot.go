@@ -8,7 +8,6 @@ import (
 
 	"github.com/twaldin/easl/easld/internal/model"
 	"github.com/twaldin/easl/easld/internal/question"
-	"github.com/twaldin/easl/easld/internal/route"
 	"github.com/twaldin/easl/easld/internal/swiftjson"
 )
 
@@ -61,7 +60,7 @@ func (s *Snapshot) MigrateFormat() {
 	if previous < 2 {
 		for i := range s.Objects {
 			if s.Objects[i].Type.IsTile() {
-				s.Objects[i].Frame.H += route.TileTitleHeight
+				s.Objects[i].Frame.H += 26 // Format 2 added the original title bar to stored frames.
 			}
 		}
 	}

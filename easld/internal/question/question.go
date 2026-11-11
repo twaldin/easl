@@ -690,12 +690,12 @@ func Percent(confidence float64) string {
 // open; once closed, the question over its answer (and note) and who answered when.
 const (
 	Width      = 460.0
-	OpenBase   = 194.0
+	OpenBase   = model.TileTitleHeight + 168
 	OptionRow  = 50.0
 	ContextRow = 30.0
 	// ConfidenceRow is the confidence slider's row on a question asked with askConfidence.
 	ConfidenceRow = 30.0
-	ClosedBase    = 148.0
+	ClosedBase    = model.TileTitleHeight + 122
 	NoteRow       = 40.0
 )
 

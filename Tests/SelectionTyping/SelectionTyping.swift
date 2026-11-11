@@ -135,6 +135,9 @@ private enum SelectionTyping {
                      "damage-terminal-resign-navigator", "damage-ring-pure-move"] {
             cases.append(Scenario(name: name, baseline: "terminal focus damage regression"))
         }
+        cases.append(Scenario(name: "chrome-typing-rekey-focus", baseline: "keyboard chrome ownership regression"))
+        cases.append(Scenario(name: "chrome-folded-attention-overflow", baseline: "native folded chrome overflow regression"))
+        cases.append(Scenario(name: "chrome-two-track-priority", baseline: "order532 native state-author pressure"))
         return cases
     }
 
@@ -825,6 +828,8 @@ private enum SelectionTyping {
         case "group-selection":
             let group = f.board.create(type: .group, props: .object(["members": .array([.string(terminal.id), .string(other.id)]), "title": "Group selection"]))
             try await f.ready(group.id)
+            try require(f.canvas.groups[group.id]?.author == nil,
+                        "user-made group bands must not gain a redundant or migration-invented author")
             try await click(try f.point(group.id), in: f.window)
             try f.boardOwns([group.id])
         case "move-terminal":
@@ -2536,6 +2541,465 @@ private enum SelectionTyping {
             f.board.objects[note.id]?.props["markdown"]?.string == "After panel"
         }
     }
+    private static func exerciseChromeTypingRekeyFocus(_ f: Fixture) async throws {
+        let browser = try await f.create(.browser, x: 20, y: 110, width: 450, height: 290)
+        let note = try await f.create(.note, x: 530, y: 110, width: 450, height: 290)
+        guard let browserFrame = f.canvas.tiles[browser.id],
+              let noteFrame = f.canvas.tiles[note.id],
+              let root = f.window.contentView,
+              let composer = descendants(root).compactMap({ $0 as? ComposerBar }).first else {
+            throw Failure("chrome fixture requires real browser, note and composer views")
+        }
+
+        func requireTypingOwner(_ expected: ObjectID?) throws {
+            let expectedIDs: Set<ObjectID> = Set(expected.map { [$0] } ?? [])
+            let chromeIDs = Set(f.canvas.tiles.values.filter { $0.chromeState.typing }.map(\.objectID))
+            let accessibleIDs = Set(f.canvas.tiles.values.filter {
+                ($0.accessibilityLabel() ?? "").components(separatedBy: ", ").contains("typing")
+            }.map(\.objectID))
+            try require(f.canvas.focusedTile == expected, "actual keyboard owner must be \(String(describing: expected)); \(f.diagnostic())")
+            try require(chromeIDs == expectedIDs, "chrome must show exactly the keyboard owner, got \(chromeIDs)")
+            try require(accessibleIDs == expectedIDs, "accessibility must announce typing only for the keyboard owner, got \(accessibleIDs)")
+        }
+
+        try await click(try await f.pagePoint(browser.id, selector: "#field"), in: f.window)
+        try await wait("browser field must really own the first responder") {
+            (f.window.firstResponder as? NSView)?.isDescendant(of: browserFrame) == true
+                && f.canvas.focusedTile == browser.id
+        }
+        try requireTypingOwner(browser.id)
+        let browserResponder = f.window.firstResponder
+        var canonical = browser
+        canonical.id = "canonical-chrome-browser"
+        f.board.rekeyHost(browser.id, as: canonical)
+        try require(f.board.objects[browser.id] == nil && f.board.objects[canonical.id] != nil,
+                    "host canonicalization must replace the provisional board identity")
+        try require(f.canvas.tiles[browser.id] == nil && f.canvas.tiles[canonical.id] === browserFrame,
+                    "host canonicalization must preserve the live browser frame")
+        try require(f.window.firstResponder === browserResponder,
+                    "canonicalization must preserve the actual browser responder")
+        try requireTypingOwner(canonical.id)
+
+        try await click(try f.point(note.id), in: f.window)
+        try await wait("note must take actual editing focus from the canonical browser") {
+            guard let editor = f.window.firstResponder as? NSTextView else { return false }
+            return editor.isEditable && editor.isDescendant(of: noteFrame) && f.canvas.focusedTile == note.id
+        }
+        try requireTypingOwner(note.id)
+        try await post([key(34, "i", flags: .command, in: f.window)])
+        try await wait("Command-I must transfer the real first responder to the composer") {
+            f.window.firstResponder === composer.text && f.canvas.focusedTile == nil
+        }
+        try requireTypingOwner(nil)
+    }
+
+    private static func exerciseTwoTrackPriority(_ f: Fixture) async throws {
+        let originalScale = ChromeText.scale
+        defer { ChromeText.configure(originalScale) }
+        let creator = try await f.create(.terminal, x: 350, y: 430, width: 600, height: 240)
+        let author = "A complete stored author name beyond the trailing slot"
+        _ = try f.board.update(creator.id, props: .object(["name": .string(author)]))
+        let narrow = f.board.create(type: .note, props: .object(["markdown": "Narrow typing proof"]),
+                                    frame: Frame(x: 30, y: 100, w: 160, h: 250), caller: creator.id)
+        let inBand = f.board.create(type: .note, props: .object(["markdown": "Partial author hover proof"]),
+                                    frame: Frame(x: 30, y: 400, w: 190, h: 250), caller: creator.id)
+        let wide = f.board.create(type: .note, props: .object(["markdown": "Wide unchanged proof"]),
+                                  frame: Frame(x: 350, y: 100, w: 600, h: 250), caller: creator.id)
+        try await f.ready(narrow.id)
+        try await f.ready(inBand.id)
+        try await f.ready(wide.id)
+        func pixels(_ label: NSTextField) throws -> Data {
+            guard let bitmap = label.bitmapImageRepForCachingDisplay(in: label.bounds),
+                  let bytes = bitmap.bitmapData else { throw Failure("native label bitmap unavailable") }
+            bytes.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+            label.cacheDisplay(in: label.bounds, to: bitmap)
+            return Data(bytes: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        }
+        func requireInk(_ label: NSTextField) throws {
+            let shown = try pixels(label)
+            let color = label.textColor
+            label.textColor = .clear
+            defer { label.textColor = color }
+            let blank = try pixels(label)
+            try require(shown != blank, "the real typing field must paint visible native ink")
+        }
+        func requireTitleAbove(_ title: NSTextField, _ secondRow: [NSTextField]) throws {
+            try require(!title.isHiddenOrHasHiddenAncestor && title.bounds.width > 0,
+                        "the actual title must remain visible")
+            let titleRect = title.convert(title.bounds, to: nil)
+            for label in secondRow {
+                try require(!label.isHiddenOrHasHiddenAncestor && label.bounds.width > 0,
+                            "the actual second-row field must remain visible")
+                let labelRect = label.convert(label.bounds, to: nil)
+                try require(titleRect.midY > labelRect.midY,
+                            "the actual title must appear above the second row in window coordinates")
+            }
+        }
+        for scale in [1.0, 1.15] {
+            ChromeText.configure(scale)
+            for object in [narrow, inBand, wide] {
+                f.canvas.show(Viewport(rect: Frame(x: object.frame.x - 60, y: object.frame.y - 160, w: 1200, h: 820), zoom: 1))
+                try require(f.window.makeFirstResponder(f.canvas.document), "the board must release typing before the control capture")
+                f.canvas.setSelection([object.id])
+                guard let tile = f.canvas.tiles[object.id] else { throw Failure("two-track native tile missing") }
+                tile.syncTitle()
+                guard let title = descendants(tile).compactMap({ $0 as? NSTextField }).first(where: {
+                    $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+                }), let bar = title.superview else { throw Failure("native two-track title missing") }
+                let labels = descendants(bar).compactMap { $0 as? NSTextField }
+                guard let typing = labels.first(where: { $0.stringValue == "typing" }),
+                      let authorLabel = labels.first(where: { $0.stringValue == author }) else {
+                    throw Failure("native typing and stored author fields missing")
+                }
+                try requireTitleAbove(title, [authorLabel])
+                let frames = labels.map(\.frame)
+                let fonts = labels.map(\.font)
+                let titleFrame = title.frame
+                let authorBefore = authorLabel.frame
+                let titlePixels = try pixels(title)
+                let authorPixels = try pixels(authorLabel)
+                try await enter(object, in: f)
+                try require(f.canvas.focusedTile == object.id && tile.chromeState.typing && tile.chromeState.terminal == nil,
+                            "a note must show only its real keyboard-owned typing state")
+                try require(!typing.isHiddenOrHasHiddenAncestor && typing.frame.width > 0 && bar.bounds.contains(typing.frame),
+                            "the minimum selected note must retain a visible typing slot")
+                try requireTitleAbove(title, [typing])
+                try require(!typing.frame.intersects(authorLabel.frame), "typing must not overlap its trailing author")
+                try require(title.frame == titleFrame && bar.bounds.height == 34 && labels.map(\.font) == fonts,
+                            "the correction must leave the title track, fonts and bar height unchanged")
+                try require(tile.author == author && tile.accessibilityLabel()?.contains(author) == true,
+                            "the complete stored author must remain accessible under state pressure")
+                try requireInk(typing)
+                if object.id != wide.id {
+                    try require(authorLabel.frame.width < authorBefore.width, "only the author must yield room to clipped typing")
+                    try require(title.toolTip?.contains(author) == true && bar.toolTip?.contains(author) == true,
+                                "reclaimed author space must retain full-name title and bar hover access")
+                    if object.id == inBand.id && scale == 1 {
+                        try require(authorLabel.frame.width > 0, "the in-band case must exercise a tiny positive author slot")
+                    }
+                } else {
+                    let titleAfter = try pixels(title)
+                    let authorAfter = try pixels(authorLabel)
+                    try require(labels.map(\.frame) == frames && titleAfter == titlePixels && authorAfter == authorPixels,
+                                "already-fitting wide chrome must retain its exact native geometry and drawn title/author")
+                }
+                try require(f.board.objects[object.id]?.frame == object.frame, "typing pressure must not change stored geometry")
+            }
+            f.canvas.show(Viewport(rect: Frame(x: creator.frame.x - 60, y: creator.frame.y - 160, w: 1200, h: 820), zoom: 1))
+            try await f.ready(creator.id)
+            try await enter(creator, in: f)
+            try f.board.reportLifecycle(tile: creator.id, kind: "claude", state: .working,
+                                        message: nil, seq: nil, source: nil)
+            guard let tile = f.canvas.tiles[creator.id], let author = tile.author,
+                  let state = tile.chromeState.terminal else { throw Failure("native terminal chrome missing") }
+            tile.syncTitle()
+            guard let title = descendants(tile).compactMap({ $0 as? NSTextField }).first(where: {
+                $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+            }), let bar = title.superview else { throw Failure("native terminal title missing") }
+            let labels = descendants(bar).compactMap { $0 as? NSTextField }
+            guard let status = labels.first(where: { $0.stringValue == state.text }),
+                  let typing = labels.first(where: { $0.stringValue == "typing" }),
+                  let authorLabel = labels.first(where: { $0.stringValue == author }) else {
+                throw Failure("native terminal second row missing")
+            }
+            try require(f.canvas.focusedTile == creator.id && tile.chromeState.typing,
+                        "the terminal regression must exercise actual keyboard ownership")
+            try requireTitleAbove(title, [status, typing, authorLabel])
+        }
+    }
+
+    private static func exerciseFoldedAttentionOverflow(_ f: Fixture) async throws {
+        let originalScale = ChromeText.scale
+        defer { ChromeText.configure(originalScale) }
+        func show(_ frame: Frame, zoom: Double) {
+            f.canvas.show(Viewport(rect: Frame(x: frame.x - 60, y: frame.y - 240, w: 1200, h: 820), zoom: zoom))
+        }
+        func hover(_ tile: TileFrameView, entering: Bool) throws {
+            tile.updateTrackingAreas()
+            guard let area = tile.trackingAreas.first(where: { ($0.owner as? NSView) === tile }),
+                  let owner = area.owner as? NSObject else { throw Failure("native tile tracking owner missing") }
+            let at = tile.convert(NSPoint(x: entering ? tile.bounds.midX : -10, y: entering ? 17 : -10), to: nil)
+            guard let event = NSEvent.enterExitEvent(with: entering ? .mouseEntered : .mouseExited, location: at,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: f.window.windowNumber,
+                context: nil, eventNumber: 0, trackingNumber: unsafeBitCast(area, to: Int.self), userData: nil) else {
+                throw Failure("native tracking event unavailable")
+            }
+            owner.perform(entering ? #selector(NSResponder.mouseEntered(with:)) : #selector(NSResponder.mouseExited(with:)), with: event)
+        }
+        func titleLabel(_ object: CanvasObject) throws -> NSTextField {
+            guard let tile = f.canvas.tiles[object.id] else { throw Failure("native tile missing") }
+            tile.syncTitle()
+            guard let title = descendants(tile).compactMap({ $0 as? NSTextField }).first(where: {
+                $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+            }) else { throw Failure("native title missing") }
+            return title
+        }
+        let narrow = try await f.create(.note, x: 30, y: 100, width: 280, height: 250)
+        let wide = try await f.create(.note, x: 350, y: 100, width: 780, height: 250)
+        let terminal = try await f.create(.terminal, x: 30, y: 430, width: 460, height: 240)
+        let storedAuthor = "Creation-time author with a complete long stored name"
+        _ = try f.board.update(terminal.id, props: .object(["name": .string(storedAuthor)]))
+        let code = f.board.create(type: .code, props: .object(["path": "fixture.swift"]),
+                                  frame: Frame(x: 530, y: 430, w: 640, h: 240), caller: terminal.id)
+        try await f.ready(code.id)
+        _ = try f.board.update(terminal.id, props: .object(["name": "Renamed creator"]))
+        try require(code.authorName == storedAuthor && (f.canvas.tiles[code.id]?.content.headerHeight ?? 0) > 0,
+                    "the fixture must capture its creator and have real content-header controls")
+        show(Frame(x: 1400, y: 100, w: 900, h: 290), zoom: 1)
+        let browser = try await f.create(.browser, x: 1400, y: 100, width: 900, height: 290)
+        show(Frame(x: 1400, y: 800, w: 960, h: 290), zoom: 1)
+        let changes = try await f.create(.changes, x: 1400, y: 800, width: 960, height: 290)
+        let storedFrames = [narrow, wide, terminal, code, browser, changes].map(\.frame)
+
+        func marker(for object: CanvasObject) throws -> AttentionMarker {
+            guard let marker = descendants(f.canvas).compactMap({ $0 as? AttentionMarker })
+                .first(where: { $0.objectID == object.id }) else {
+                throw Failure("marked tile must retain its actual native attention marker")
+            }
+            return marker
+        }
+
+        func requireChrome(_ object: CanvasObject, marker expected: AttentionMarker, inline: Bool,
+                           typing: Bool, working: Bool = false) throws -> NSRect {
+            guard let tile = f.canvas.tiles[object.id] else { throw Failure("missing native chrome") }
+            tile.syncTitle()
+            let labels = descendants(tile).compactMap { $0 as? NSTextField }
+            guard let title = labels.first(where: {
+                $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+            }), let bar = title.superview,
+                  let bubble = expected.subviews.first(where: { $0.toolTip != nil }) else {
+                throw Failure("native title bar and attention bubble must exist")
+            }
+            let actualMarker = try marker(for: object)
+            try require(actualMarker === expected && !expected.isHiddenOrHasHiddenAncestor,
+                        "inline and outside placement must retain the same visible marker")
+            try require(!title.isHiddenOrHasHiddenAncestor && !title.stringValue.isEmpty && title.frame.width >= 32,
+                        "folded chrome must preserve at least 32 points of readable title")
+            try require(tile.chromeState.typing == typing && (f.canvas.focusedTile == object.id) == typing,
+                        "typing chrome must agree with the actual keyboard owner")
+            let rect = bubble.convert(bubble.bounds, to: nil)
+            let titleRect = title.convert(title.bounds, to: nil)
+            let header = bar.convert(bar.bounds, to: nil)
+            if ChromeText.scale >= 1.3 {
+                try require(abs(titleRect.midY - header.midY) <= 1,
+                            "the folded title must remain centered in the actual bar")
+            }
+            var occupied = ChromeText.scale >= 1.3 ? [title.frame] : []
+            for text in (typing ? ["typing"] : []) + (working ? ["working"] : []) {
+                guard let label = labels.first(where: { $0.superview === bar && $0.stringValue == text }),
+                      let font = label.font else { throw Failure("missing native \(text) label") }
+                let ink = (text as NSString).size(withAttributes: [.font: font])
+                try require(!label.isHiddenOrHasHiddenAncestor && label.bounds.width >= ink.width
+                            && label.bounds.height >= ink.height && bar.bounds.contains(label.frame),
+                            "\(text) must fit its native label without clipping or disappearing")
+                try require(occupied.allSatisfy { !$0.intersects(label.frame) },
+                            "title and named states must not cover each other")
+                try require(!label.convert(label.bounds, to: nil).intersects(rect),
+                            "attention must not cover \(text)")
+                let labelRect = label.convert(label.bounds, to: nil)
+                try require(ChromeText.scale >= 1.3 ? abs(titleRect.midY - labelRect.midY) <= 1 : titleRect.midY > labelRect.midY,
+                            "actual folded fields must share the title row; two-track fields must appear below it")
+                occupied.append(label.frame)
+            }
+            let minimumPill = min(expected.naturalWidth, inline ? 160 : PillLayout.shortestBubble)
+            try require(rect.width >= minimumPill - 0.5
+                        && rect.height >= AttentionMarker.bubbleHeight - 0.5,
+                        "attention must retain its existing screen-sized hit target")
+            try require(inline ? header.contains(rect) : !header.intersects(rect),
+                        "attention must stay inline only when the whole pill fits")
+            try require(!title.convert(title.bounds, to: nil).intersects(rect),
+                        "attention must not erase the title")
+            for control in descendants(bar).filter({ ($0 is NSControl) && !($0 is NSTextField)
+                && !$0.isHiddenOrHasHiddenAncestor && !$0.bounds.isEmpty }) {
+                try require(!control.convert(control.bounds, to: nil).intersects(rect),
+                            "attention must not cover close or content zoom controls")
+            }
+            let contentHeader = tile.content.convert(NSRect(x: 0, y: 0, width: tile.content.bounds.width,
+                                                            height: tile.content.headerHeight), to: nil)
+            try require(contentHeader.isEmpty || !contentHeader.intersects(rect),
+                        "attention must not cover content header controls")
+            for control in descendants(tile.content).filter({ $0 is NSControl && !$0.isHiddenOrHasHiddenAncestor && !$0.bounds.isEmpty }) {
+                try require(!control.convert(control.bounds, to: nil).intersects(rect),
+                            "attention must not cover a visible content control")
+            }
+            try require(f.canvas.bounds.contains(f.canvas.convert(rect, from: nil)),
+                        "the whole attention reason must remain inside the visible canvas")
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            try require(f.hit(center) === bubble, "the actual attention bubble must remain clickable")
+            guard let author = object.authorName else { throw Failure("fixture must have a creation-time author") }
+            try require(tile.author == author && tile.accessibilityLabel()?.contains(author) == true,
+                        "the complete stored author must remain accessible after its creator is renamed")
+            if ChromeText.scale >= 1.3 {
+                try require(title.toolTip?.contains(author) == true,
+                            "folded title hover must retain the complete stored author")
+            }
+            return rect
+        }
+
+        for scale in [1.3, 1.5] {
+            ChromeText.configure(scale)
+            for zoom in [1.0, 0.5] {
+                show(narrow.frame, zoom: zoom)
+                try await f.ready(narrow.id)
+                try await enter(narrow, in: f)
+                guard let editor = f.window.firstResponder as? NSTextView,
+                      editor.isEditable, let tile = f.canvas.tiles[narrow.id],
+                      editor.isDescendant(of: tile) else {
+                    throw Failure("narrow note must have a real editable native first responder")
+                }
+                try await wait("focused narrow note must expose its actual native editor") {
+                    editor.isEditable && !editor.isHiddenOrHasHiddenAncestor && f.canvas.focusedTile == narrow.id
+                }
+                try f.board.raiseAttention(narrow.id, message: "Review this note before continuing", caller: nil)
+                let noteMarker = try marker(for: narrow)
+                let initial = try requireChrome(narrow, marker: noteMarker, inline: false, typing: true)
+                for _ in 0..<4 {
+                    f.canvas.pan(by: CGSize(width: -8, height: -6))
+                    f.canvas.pan(by: CGSize(width: 8, height: 6))
+                    f.window.layoutIfNeeded()
+                    f.window.displayIfNeeded()
+                    let repeated = try requireChrome(narrow, marker: noteMarker, inline: false, typing: true)
+                    try require(repeated == initial, "repeated native layout must not oscillate attention placement")
+                }
+                f.canvas.pan(by: CGSize(width: -18, height: -12))
+                _ = try requireChrome(narrow, marker: noteMarker, inline: false, typing: true)
+                f.canvas.pan(by: CGSize(width: 18, height: 12))
+                try require(f.window.firstResponder === editor, "pan and native layout must retain actual note editing")
+                try require(f.window.makeFirstResponder(f.canvas.document), "board must accept keyboard ownership")
+                f.canvas.setSelection([])
+                try hover(tile, entering: false)
+                _ = try requireChrome(narrow, marker: noteMarker, inline: false, typing: false)
+                show(narrow.frame, zoom: zoom == 1 ? 0.5 : 1)
+                _ = try requireChrome(narrow, marker: noteMarker, inline: false, typing: false)
+                let restingTitle = try titleLabel(narrow)
+                let markedFrame = restingTitle.frame
+                f.board.clearAttention(narrow.id)
+                try require(restingTitle.frame == markedFrame, "an outside pill must not consume the title's control room")
+                show(narrow.frame, zoom: zoom)
+
+                show(wide.frame, zoom: zoom)
+                try await f.ready(wide.id)
+                try await enter(wide, in: f)
+                try f.board.raiseAttention(wide.id, message: "Review this note before continuing", caller: nil)
+                let wideMarker = try marker(for: wide)
+                let widePosition = try requireChrome(wide, marker: wideMarker, inline: zoom == 1, typing: true)
+                guard let wideTile = f.canvas.tiles[wide.id] else { throw Failure("wide native tile missing") }
+                f.canvas.setSelection([])
+                try hover(wideTile, entering: false)
+                let collapsed = try requireChrome(wide, marker: wideMarker, inline: zoom == 1, typing: true)
+                try require(collapsed == widePosition,
+                            "collapsing controls must not move the inline pill away from the pointer")
+                try hover(wideTile, entering: true)
+                let expanded = try requireChrome(wide, marker: wideMarker, inline: zoom == 1, typing: true)
+                try require(expanded == widePosition,
+                            "expanding controls must not move the inline pill away from the pointer")
+                try hover(wideTile, entering: false)
+                if zoom == 1 {
+                    f.canvas.show(Viewport(rect: Frame(x: wide.frame.x - 60, y: wide.frame.y + 60, w: 1200, h: 820), zoom: zoom))
+                    try require(wideTile.visibleRect.minY >= TileFrameView.titleHeight && wideTile.visibleRect.height > 0,
+                                "the wide note's bar must be clipped while its body remains visible")
+                    _ = try requireChrome(wide, marker: wideMarker, inline: false, typing: true)
+                    show(wide.frame, zoom: zoom)
+                    _ = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
+                    if scale == 1.5 {
+                        ChromeText.step(bigger: false)
+                        ChromeText.step(bigger: false)
+                        try require(ChromeText.scale == 1.15, "the real decrease API must restore two tracks")
+                        _ = try requireChrome(wide, marker: wideMarker, inline: false, typing: true)
+                        try require(descendants(wideTile).compactMap { $0 as? NSTextField }.contains {
+                            $0.stringValue == wideTile.author && !$0.isHiddenOrHasHiddenAncestor && $0.frame.width > 0
+                        }, "leaving inline placement must restore the visible author")
+                        ChromeText.step(bigger: true)
+                        ChromeText.step(bigger: true)
+                        try require(ChromeText.scale == 1.5, "the real increase API must restore the folded level")
+                        let restored = try requireChrome(wide, marker: wideMarker, inline: true, typing: true)
+                        try require(restored == widePosition, "the same marker must return to its inline slot")
+                    }
+                }
+                f.board.clearAttention(wide.id)
+
+                show(code.frame, zoom: zoom)
+                try await f.ready(code.id)
+                try await enter(code, in: f)
+                try f.board.raiseAttention(code.id, message: "Review the code header controls", caller: nil)
+                let codeMarker = try marker(for: code)
+                _ = try requireChrome(code, marker: codeMarker, inline: zoom == 1, typing: true)
+                f.board.clearAttention(code.id)
+
+                for object in [browser, changes] {
+                    show(object.frame, zoom: zoom)
+                    try await f.ready(object.id)
+                    try await enter(object, in: f)
+                    guard let frame = f.canvas.tiles[object.id] else { throw Failure("header tile missing") }
+                    if object.type == .changes {
+                        try await wait("the changes tile must expose a real filter control") {
+                            descendants(frame.content).contains { $0 is NSSearchField && !$0.isHiddenOrHasHiddenAncestor }
+                        }
+                    }
+                    try f.board.raiseAttention(object.id, message: "Review the header controls", caller: nil)
+                    let headerMarker = try marker(for: object)
+                    _ = try requireChrome(object, marker: headerMarker, inline: zoom == 1, typing: true)
+                    if object.type == .browser {
+                        try require(f.window.makeFirstResponder(f.canvas.document), "the browser must release keyboard ownership")
+                        f.canvas.setSelection([])
+                        try hover(frame, entering: false)
+                        guard let popup = descendants(frame).compactMap({ $0 as? DrawingMachineControl }).first else {
+                            throw Failure("browser drawing-machine control missing")
+                        }
+                        let at = popup.convert(NSPoint(x: popup.bounds.midX, y: popup.bounds.midY), to: nil)
+                        let hit = f.hit(at)
+                        try require(hit === popup || hit?.isDescendant(of: popup) == true,
+                                    "the drawing-machine popup must hit its actual frame without a move first")
+                    }
+                    f.board.clearAttention(object.id)
+                }
+                show(terminal.frame, zoom: zoom)
+                try await f.ready(terminal.id)
+                try await enter(terminal, in: f)
+                try await assertInput(terminal, in: f, marker: "x")
+                let terminalResponder = f.window.firstResponder
+                try f.board.reportLifecycle(tile: terminal.id, kind: "claude", state: .working,
+                                            message: nil, seq: nil, source: nil)
+                try f.board.raiseAttention(terminal.id, message: "Review this terminal before continuing", caller: nil)
+                let terminalMarker = try marker(for: terminal)
+                let terminalInitial = try requireChrome(terminal, marker: terminalMarker, inline: false, typing: true, working: true)
+                if zoom == 1 {
+                    _ = try f.board.update(terminal.id, props: .object(["lifecycle": .null]))
+                    try require(f.canvas.tiles[terminal.id]?.chromeState.terminal == nil,
+                                "clearing reported lifecycle must remove the actual terminal status")
+                    _ = try requireChrome(terminal, marker: terminalMarker, inline: true, typing: true)
+                    try f.board.reportLifecycle(tile: terminal.id, kind: "claude", state: .working,
+                                                message: nil, seq: nil, source: nil)
+                    _ = try requireChrome(terminal, marker: terminalMarker, inline: false, typing: true, working: true)
+                }
+                for _ in 0..<4 {
+                    f.canvas.pan(by: CGSize(width: -8, height: -6))
+                    f.canvas.pan(by: CGSize(width: 8, height: 6))
+                    f.window.layoutIfNeeded()
+                    let repeated = try requireChrome(terminal, marker: terminalMarker, inline: false, typing: true, working: true)
+                    try require(repeated == terminalInitial, "repeated native terminal layout must keep a stable attention frame")
+                }
+                if scale == 1.5 && zoom == 0.5 {
+                    ChromeText.step(bigger: false)
+                    ChromeText.step(bigger: false)
+                    try require(ChromeText.scale == 1.15, "the real Chrome Text decrease API must restore 115%")
+                    _ = try requireChrome(terminal, marker: terminalMarker, inline: false, typing: true, working: true)
+                    guard let terminalTile = f.canvas.tiles[terminal.id], let author = terminalTile.author else {
+                        throw Failure("115% reset must retain the terminal author")
+                    }
+                    try require(descendants(terminalTile).compactMap { $0 as? NSTextField }.contains {
+                        $0.stringValue == author && !$0.isHiddenOrHasHiddenAncestor && $0.frame.width > 0
+                    }, "115% reset must restore the visible author slot")
+                }
+                try require(f.window.firstResponder === terminalResponder,
+                            "status, zoom and Chrome Text changes must preserve the native terminal responder")
+                f.board.clearAttention(terminal.id)
+            }
+        }
+        try require([narrow, wide, terminal, code, browser, changes].compactMap { f.board.objects[$0.id]?.frame } == storedFrames,
+                    "Chrome Text and attention placement must never change stored tile geometry")
+    }
+
 
 
     private static func exerciseQuestionHeldReturn(_ f: Fixture) async throws {
@@ -2564,7 +3028,13 @@ private enum SelectionTyping {
                 return
             }
         }
-        if name.hasPrefix("damage-") {
+        if name == "chrome-typing-rekey-focus" {
+            try await exerciseChromeTypingRekeyFocus(f)
+        } else if name == "chrome-folded-attention-overflow" {
+            try await exerciseFoldedAttentionOverflow(f)
+        } else if name == "chrome-two-track-priority" {
+            try await exerciseTwoTrackPriority(f)
+        } else if name.hasPrefix("damage-") {
             try await exerciseTerminalDamage(name, f)
         } else if name.hasPrefix("shift-body-") {
             let single = name.hasSuffix("-single")

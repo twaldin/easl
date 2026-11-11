@@ -372,6 +372,7 @@ public enum RepoBoardMigration {
                     else { key = "\(legacy.isDetached ? "detached" : "worktree"):\(label(of: legacy))" }
                     region = CanvasObject(id: IDs.make("obj"), type: .group, frame: frame, z: (objects.map(\.z).max() ?? 0) + 1, createdBy: .user, createdAt: now,
                                           props: .object(["members": .array(members.map(JSONValue.string)), "title": .string(label(of: legacy)), "key": .string(key)]))
+                    region?.authorName = "you"
                 }
                 entry.offset = [dx, dy]
             }

@@ -35,13 +35,14 @@ struct KeyboardFocusTests {
         #expect(part(100, 13) == .handle, "the title")
         #expect(part(100, 2) == .handle, "the bar above the title")
         #expect(part(100, 24) == .handle, "and below it")
-        #expect(part(15, 13) == .handle, "the lifecycle dot")
+        #expect(part(15, 13) == .handle)
         #expect(part(930, 13) == .handle, "past the title, where a command's status sits")
         #expect(part(984, 13) == .close)
         #expect(part(996, 13) == .handle, "beside the ✕")
         #expect(part(930, 13, zoom: 72) == .zoomControl, "− % + while hovered or selected")
         #expect(part(890, 13, zoom: 72) == .handle, "just before it")
-        #expect(part(100, 30) == nil, "the content")
+        #expect(part(100, 30) == .handle, "the metadata track")
+        #expect(part(100, 34) == nil, "the content")
     }
 
     @Test func theMachineSelectorIsNotATitleDragHandle() {

@@ -125,6 +125,7 @@ public struct CanvasObject: Codable, Equatable, Sendable {
     public var rev: Int
     public var parent: ObjectID?
     public var createdBy: Actor
+    public var authorName: String? = nil
     public var updatedBy: Actor?
     public var createdAt: Date
     public var updatedAt: Date

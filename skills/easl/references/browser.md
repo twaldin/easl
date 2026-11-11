@@ -14,9 +14,9 @@ Apply that only to your own newly created tiles, not to a user's browser you att
 
 - To drive a tile you didn't open (the user's, or one made with `object.create`), open it by id: `browser.open({name: "game", url: "canvas:obj_…"})` drives that tile from its current page instead of opening a new one, and `browser.close` lets go of it (the tile stays). Use a tab name you haven't opened yet.
   To reload any browser tile after an edit: `easl object.reload --id <tile>` (waits for the load), then `easl get <tile> --since <cursor>`; never flip `props.url` to a dummy query (it fills the user's Back history).
-- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
+- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 66 (34 pt title bar, 32 pt address bar), at any zoom.
   The tool's `viewport`, `tab.setViewport`, `tab.emulate` and `tab.devices()` don't reach it. To test a width, resize the tile
-  (`easl object.update <id> --json '{"frame":{"w":390,"h":902}}'` for a 390×844 viewport); the user sees the same tile.
+  (`easl object.update <id> --json '{"frame":{"w":390,"h":910}}'` for a 390×844 viewport); the user sees the same tile.
   A frame grows right and down from its corner, over whatever is there: grow away from the user's terminals (give `x`/`y` too, e.g. `x` = its right edge − the new width when a terminal sits to its right),
   or resize and then `canvas.layout.place(id=tile, near=<your terminal>, side="left")`. The update result's `overlaps` names what the new frame newly covers; never leave it covering a terminal.
 - `tab.evaluate` must return plain values (omp rejects functions that return a promise on this backend); poll with `waitForFunction` for async state.

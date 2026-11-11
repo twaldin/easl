@@ -105,6 +105,28 @@ struct PillLayoutTests {
         #expect(placed.bubbles["tile"] == CGRect(x: 90, y: 698, width: 324, height: 28), "below the ring, left-aligned with it")
     }
 
+    @Test func outsidePillsAvoidInlineBubblesAndBlockedPrompts() throws {
+        let terminal = CGRect(x: 330, y: 100, width: 400, height: 400)
+        let note = CGRect(x: 100, y: 512, width: 133, height: 43)
+        let neighbour = CGRect(x: 240, y: 512, width: 460, height: 300)
+        let ring = terminal.insetBy(dx: -10, dy: -10)
+        let inline = CGRect(x: 400, y: 515, width: 160, height: 28)
+        let tiles = [("terminal", terminal), ("note", note), ("neighbour", neighbour)].map {
+            PillLayout.Tile(id: $0.0, rect: $0.1, header: 34)
+        }
+        let placed = PillLayout.place(markers: [marker("note", note, header: 34)],
+                                      edges: [.init(id: "off", target: CGPoint(x: 700, y: -3000), size: CGSize(width: 200, height: 28))],
+                                      tiles: tiles, occupied: [inline, ring], clear: clear)
+        let bubble = try #require(placed.bubbles["note"])
+        let edge = try #require(placed.edges["off"])
+        for rect in [bubble, edge] {
+            #expect(!rect.intersects(ring))
+            #expect(!rect.intersects(inline))
+            #expect(clear.contains(rect))
+        }
+        assertApart([bubble, edge, inline])
+    }
+
     @Test func noBubbleCoversABlockedTerminalButItsOwn() {
         // Shot 15 of the codex2 study: a marked note below a blocked terminal's bottom-left corner,
         // a neighbour right of the note. Above the note, its bubble would hide 60 pt of the

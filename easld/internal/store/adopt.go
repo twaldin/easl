@@ -376,8 +376,10 @@ func mergePathBoards(boards []pathBoard, existing *Snapshot, existingModified ti
 				for i, id := range members {
 					list[i] = id
 				}
+				author := "you"
 				region = &model.Object{
 					ID: model.NewID("obj"), Type: model.Group, Rev: 1, CreatedBy: model.Actor{Kind: "user"}, CreatedAt: now, UpdatedAt: now,
+					AuthorName: &author,
 					Frame: model.Frame{X: bounds.X + dx - inset, Y: bounds.Y + dy - inset - route.GroupTitleHeight,
 						W: bounds.W + 2*inset, H: bounds.H + 2*inset + route.GroupTitleHeight},
 					Z:     maxZ(objects, 0) + 1,

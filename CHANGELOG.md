@@ -9,11 +9,16 @@ Each version's section is its GitHub release's notes.
 - HTML manifests omit full state and show key counts and pending submission IDs. `object.get` still returns full state.
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
+- Every tile shares a 34 pt title bar with a type glyph even for custom titles, named states, and a trailing creation-time author. Typing follows keyboard ownership; lifecycle and command states stay on terminals. Needs-you reasons use a static screen-sized pill.
+- ChromeText 100% and 115% show the title on the top track, with state and author below it. At 130% and 150%, title and state fold onto one line; the author moves to a hover tooltip and remains complete in accessibility. A needs-you pill stays inline only when its full screen-sized rectangle fits inside the bar and visible clear area beside title, states and potential hover controls. Otherwise the same marker uses existing outside-bar placement without taking unused control space from the text. At 50% board zoom it stays outside on every tile type. API renders always use scale 1 and two tracks.
+- At ChromeText 100% and 115%, clipped live state or typing takes priority over the trailing author. Already-fitting bars are unchanged. The author tail-truncates with full-name hover and accessibility; when live labels reclaim author space, the title bar also retains the full-name tooltip.
+- Both hosts store immutable `authorName` snapshots. User-made tiles say `you`; legacy tiles retain live author resolution without backfill. Stored frames stay unchanged with bodies 8 pt shorter; measurement, fit, and newly counted question geometry use 34 pt. The historical format-1 migration still adds 26 pt.
 
 ### Compatibility
 
 - Update every Mac that views an easld-hosted board before updating that easld. A viewer older than the host deletes HTML state keys by omission, so cleared keys can return on reread.
 - A 0.3.10 viewer on 0.3.9 easld can read cleared keys as `null`. The state APIs preserve nulls, and `<canvas-decisions>` treats them as unset. Custom pages must accept both `null` and `undefined`. Agent state writes still replace the whole state until easld updates.
+- Shared chrome requires updating every drawing and viewing Mac before easld. A 0.3.9 viewer on new easld keeps its 26 pt bar and old author marks, ignoring snapshots. A new viewer on 0.3.9 easld uses 34 pt chrome and legacy author resolution without backfill. The 8 pt body-geometry difference at 1x affects fit, routing, and mentions in both directions. No compatibility code is added.
 
 ## 0.3.9
 
