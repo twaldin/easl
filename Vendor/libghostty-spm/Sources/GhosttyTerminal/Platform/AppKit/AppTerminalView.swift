@@ -20,9 +20,9 @@
             didSet {
                 nativeFrameObservation = layer?.observe(\.contents) { [weak self] layer, _ in
                     MainActor.assumeIsolated {
-                        guard let self, self.layer === layer, core.surface != nil,
+                        guard let self, self.layer === layer, self.core.surface != nil,
                               layer.contents != nil else { return }
-                        enforceMetalLayerScale()
+                        self.enforceMetalLayerScale()
                         // A synchronous draw still holds Ghostty's renderer lock here.
                         DispatchQueue.main.async { [weak self] in self?.surfaceDidDraw() }
                     }
