@@ -15,6 +15,7 @@ private final class Mailbox: TerminalSurfaceTitleDelegate, TerminalSurfacePwdDel
     var rang = false
     var closed = false
     var grid: TerminalGridMetrics?
+    var ioViewport: InMemoryTerminalViewport?
     func terminalDidChangeTitle(_ title: String) { self.title = title }
     func terminalDidChangeWorkingDirectory(_ path: String) { cwd = path }
     func terminalDidRingBell() { rang = true }
@@ -48,6 +49,21 @@ private enum TerminalWakeup {
         session.receive("\(escape)[?25l\(escape)[0;97;\(background)m\(escape)[2J\(escape)[H\(marker)")
     }
 
+    static func session(_ mailbox: Mailbox) -> InMemoryTerminalSession {
+        InMemoryTerminalSession(write: { _ in }, resize: { viewport in
+            Task { @MainActor in mailbox.ioViewport = viewport }
+        })
+    }
+
+    static func sized(_ view: FrameView, _ mailbox: Mailbox) async throws {
+        let scale = view.window!.backingScaleFactor
+        let width = UInt32(view.bounds.width * scale)
+        let height = UInt32(view.bounds.height * scale)
+        try await eventually("IO viewport \(width)x\(height)") {
+            mailbox.ioViewport?.widthPixels == width && mailbox.ioViewport?.heightPixels == height
+        }
+    }
+
     static func capture(_ phase: String, window: NSWindow, active: FrameView,
                         marker: String, color: [Int], width: CGFloat = 600, exitText: Bool = false) async throws {
         var request: [String: Any] = ["phase": phase, "pid": ProcessInfo.processInfo.processIdentifier,
@@ -73,9 +89,9 @@ private enum TerminalWakeup {
             $0.withCustom("bell-features", "no-audio")
         }, theme: TerminalTheme())
         try check(controller.lastConfigurationIssue == nil, "invalid native test configuration")
-        let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
-        let quietSession = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
-        let mailbox = Mailbox()
+        let mailbox = Mailbox(), quietMailbox = Mailbox()
+        let session = Self.session(mailbox)
+        let quietSession = Self.session(quietMailbox)
         let active = FrameView(frame: NSRect(x: 0, y: 0, width: 600, height: 480))
         let quiet = FrameView(frame: NSRect(x: 640, y: 0, width: 400, height: 480))
         active.delegate = mailbox
@@ -96,6 +112,8 @@ private enum TerminalWakeup {
             window.close()
         }
         try await eventually("two real surfaces") { active.surface != nil && quiet.surface != nil && mailbox.grid != nil }
+        try await sized(active, mailbox)
+        try await sized(quiet, quietMailbox)
         paint(quietSession, color: "20;40;180", marker: "QUIET_SIBLING")
         paint(session, color: "180;20;20", marker: "INITIAL_RED")
         try await eventually("initial marker") { session.readViewportText()?.contains("INITIAL_RED") == true }
@@ -139,6 +157,7 @@ private enum TerminalWakeup {
 
         let oldColumns = mailbox.grid!.columns
         active.setFrameSize(NSSize(width: 520, height: 480))
+        try await sized(active, mailbox)
         try await eventually("layout grid freshness") { mailbox.grid!.columns < oldColumns }
         try check(window.makeFirstResponder(quiet), "quiet focus rejected")
         try check(window.makeFirstResponder(active), "active focus rejected")
@@ -159,7 +178,8 @@ private enum TerminalWakeup {
         try await eventually("attached hidden child exit") { mailbox.closed && active.surface?.isProcessRunning == false }
         active.controller = nil
         try check(active.surface == nil && session.readViewportText() == nil, "teardown retained session surface")
-        let replacement = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        let replacement = Self.session(mailbox)
+        mailbox.ioViewport = nil
         active.configuration = TerminalSurfaceOptions(backend: .inMemory(replacement))
         paint(replacement, color: "20;160;180", marker: "REATTACHED_CYAN")
         active.isHidden = false
@@ -171,6 +191,8 @@ private enum TerminalWakeup {
         try await eventually("reattached buffered output and frame") {
             active.deliveredFrames > beforeReattach && replacement.readViewportText()?.contains("REATTACHED_CYAN") == true
         }
+        try await sized(active, mailbox)
+        paint(replacement, color: "20;160;180", marker: "REATTACHED_CYAN")
         try await capture("07-reattach", window: window, active: active, marker: "REATTACHED_CYAN", color: [20, 160, 180], width: 520)
         try check(quietSession.readViewportText()?.contains("QUIET_SIBLING") == true, "lifecycle work changed quiet sibling")
         paint(replacement, color: nil, marker: "VISIBLE_EXIT")
@@ -183,8 +205,10 @@ private enum TerminalWakeup {
         }
         try await capture("08-visible-exit", window: window, active: active,
                           marker: "Press any key to close the window.", color: [120, 32, 180], width: 520, exitText: true)
-        let normalExit = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
+        let normalExit = Self.session(mailbox)
+        mailbox.ioViewport = nil
         active.configuration = TerminalSurfaceOptions(backend: .inMemory(normalExit))
+        try await sized(active, mailbox)
         paint(normalExit, color: nil, marker: "NORMAL_EXIT")
         try await eventually("normal exit control") { normalExit.readViewportText()?.contains("NORMAL_EXIT") == true }
         try await Task.sleep(for: .seconds(1))
