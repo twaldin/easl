@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Native AppKit behavior + fresh own-window pixels in an isolated GUI guest.
 
-Prerequisites: authorized CuaDriver and Pillow. Build a testing-enabled native artifact:
-  swift build --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
-  python3 Tests/TerminalWakeup/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output /absolute/new/evidence
+Prerequisites: authorized CuaDriver, perf-window, and the existing BrowserScrolling pixel reader.
+Build Easl and pass --bin-path, or compile once on a build Mac with --compile-only and
+run its retained --executable in the guest. Pass --window-helper, --pixel-helper, and --output.
 
-Viewport marker assertions establish parsed content; native captures independently check
-phase-specific background pixels, foreground ink, and the unchanged blue sibling.
-This is not OCR or key-to-pixel latency proof; scripts/terminal-echo owns the latter.
+Viewport reads check parsed content; own-window captures check phase colors, marker OCR,
+and unchanged sibling pixels. scripts/terminal-echo owns key-to-pixel latency proof.
 """
 import argparse
 import hashlib
@@ -57,35 +56,46 @@ def compile_harness(root, build):
     return executable, command
 
 
-def pixel_evidence(path, request):
-    from PIL import Image
-    with Image.open(path) as source:
-        image = source.convert("RGB")
-    sx, sy = image.width / request["width"], image.height / request["height"]
+def pixel_evidence(path, request, receipt, helper):
+    size = receipt["screenshot_width"], receipt["screenshot_height"]
+    sx, sy = size[0] / request["width"], size[1] / request["height"]
     if abs(sx - sy) > 0.02 or sx < 0.5:
-        raise RuntimeError(f"Unexpected own-window capture dimensions: {image.size}")
-
-    def region(left, top, right, bottom):
-        return image.crop(tuple(round(value * scale) for value, scale in
-                               zip((left, top, right, bottom), (sx, sy, sx, sy))))
-
-    def matching_fraction(crop, expected):
-        pixels = list(crop.getdata())
-        return sum(max(abs(a - b) for a, b in zip(pixel, expected)) <= 18
-                   for pixel in pixels) / len(pixels)
-
-    active = region(15, 80, request["activeWidth"] - 15, 440)
-    quiet = region(660, 80, 1020, 440)
-    # The marker occupies the first terminal row; a blank colored surface is not sufficient.
-    glyphs = region(0, 0, min(400, request["activeWidth"]), 65)
-    white = sum(min(pixel) > 210 for pixel in glyphs.getdata())
-    result = {"size": image.size, "activeColorFraction": matching_fraction(active, request["color"]),
-              "quietBlueFraction": matching_fraction(quiet, [20, 40, 180]), "markerInkPixels": white}
+        raise RuntimeError(f"Unexpected own-window capture dimensions: {size}")
+    regions = [
+        ("active", 15, 80, request["activeWidth"] - 15, 440, 4),
+        ("quiet", 660, 80, 1020, 440, 4),
+        ("glyphs", 0, 0, min(400, request["activeWidth"]), 65, 1),
+    ]
     if request.get("exitText"):
-        result["exitInkPixels"] = sum(r > 180 and r > g * 1.3 and r > b * 1.3 for r, g, b in
-                                     region(0, 0, request["activeWidth"], 440).getdata())
+        regions.append(("exit", 0, 0, request["activeWidth"], 440, 2))
+    points, spans = [], {}
+    for name, left, top, right, bottom, step in regions:
+        start = len(points)
+        points.extend([x, y] for y in range(top, bottom, step) for x in range(left, int(right), step))
+        spans[name] = start, len(points)
+    fields = {"contentTop": 0, "scale": sx, "points": points}
+    path.with_suffix(".pixel-request.json").write_text(json.dumps(fields) + "\n")
+    sampled = subprocess.run([str(helper), str(path)], input=json.dumps(fields),
+                             capture_output=True, text=True, timeout=10)
+    path.with_suffix(".pixel-samples.json").write_text(sampled.stdout)
+    path.with_suffix(".pixel-samples.stderr").write_text(sampled.stderr)
+    sampled.check_returncode()
+    colors = json.loads(sampled.stdout)
+    if len(colors) != len(points):
+        raise RuntimeError("Incomplete native pixel samples")
+    def pixels(name):
+        start, end = spans[name]
+        return colors[start:end]
+    def matching_fraction(name, expected):
+        samples = pixels(name)
+        return sum(max(abs(a - b) for a, b in zip(pixel, expected)) <= 18
+                   for pixel in samples) / len(samples)
+    white = sum(min(pixel) > 210 for pixel in pixels("glyphs"))
+    result = {"size": size, "activeColorFraction": matching_fraction("active", request["color"]),
+              "quietBlueFraction": matching_fraction("quiet", [20, 40, 180]), "markerInkPixels": white}
     result["matches"] = result["activeColorFraction"] > 0.95 and result["quietBlueFraction"] > 0.95 and white > 20
     if request.get("exitText"):
+        result["exitInkPixels"] = sum(r > 180 and r > g * 1.3 and r > b * 1.3 for r, g, b in pixels("exit"))
         result["matches"] = result["matches"] and result["exitInkPixels"] > 50
     return result
 
@@ -96,6 +106,7 @@ def main():
     parser.add_argument("--executable", type=Path, help="Run an already compiled stand-in without rebuilding it")
     parser.add_argument("--compile-only", action="store_true", help="Compile on a build Mac without launching a GUI")
     parser.add_argument("--window-helper", type=Path, help="Existing perf-window helper for native marker OCR")
+    parser.add_argument("--pixel-helper", type=Path, help="Existing BrowserScrolling/Pixels.swift reader")
     parser.add_argument("--output", required=True, type=Path, help="New evidence directory; never overwrite a prior run")
     args = parser.parse_args()
     if platform.system() != "Darwin":
@@ -107,8 +118,8 @@ def main():
     model = subprocess.check_output(["sysctl", "-n", "hw.model"], text=True).strip()
     if not args.compile_only and not model.startswith("VirtualMac"):
         parser.error("GUI execution requires the claimed VirtualMac guest")
-    if not args.compile_only and not args.window_helper:
-        parser.error("Native pixel proof requires --window-helper")
+    if not args.compile_only and not (args.window_helper and args.pixel_helper):
+        parser.error("Native pixel proof requires --window-helper and --pixel-helper")
     if not args.compile_only and not Path(DRIVER).is_file():
         parser.error("CuaDriver must be installed and authorized in the GUI guest")
     root = Path(__file__).resolve().parents[2]
@@ -176,7 +187,7 @@ def main():
                                 raise RuntimeError("Native capture reused an earlier capture/snapshot identity")
                             captures.add(receipt["capture_id"])
                             snapshots.add(receipt["snapshot_id"])
-                            pixels = pixel_evidence(screenshot, request)
+                            pixels = pixel_evidence(screenshot, request, receipt, args.pixel_helper)
                             recognized = subprocess.run([str(args.window_helper), "--drawn", str(screenshot)],
                                                         capture_output=True, text=True, timeout=10)
                             stem.with_suffix(".ocr.json").write_text(recognized.stdout)
