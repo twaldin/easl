@@ -56,21 +56,18 @@ public final class TerminalController {
     var renderedConfigContents: String = TerminalController.defaultRenderedConfig
 
     public internal(set) var lastConfigurationIssue: String?
-    /// One surface's interest in a wakeup. Every surface shares this
-    /// controller, so a single handler is not enough.
+    /// Attached surfaces keep the app mailbox draining even while hidden.
     struct WakeupObserver {
         let shouldProcess: () -> Bool
-        let onWakeup: () -> Void
+        #if canImport(UIKit)
+            let onWakeup: () -> Void
+        #endif
     }
 
     private var wakeupObservers: [ObjectIdentifier: WakeupObserver] = [:]
 
-    func addWakeupObserver(
-        _ key: ObjectIdentifier,
-        shouldProcess: @escaping () -> Bool,
-        onWakeup: @escaping () -> Void
-    ) {
-        wakeupObservers[key] = WakeupObserver(shouldProcess: shouldProcess, onWakeup: onWakeup)
+    func addWakeupObserver(_ key: ObjectIdentifier, _ observer: WakeupObserver) {
+        wakeupObservers[key] = observer
     }
 
     func removeWakeupObserver(_ key: ObjectIdentifier) {
@@ -311,7 +308,7 @@ public final class TerminalController {
     }
 
     func handleWakeup() {
-        let observers = Array(wakeupObservers.values)
+        let observers = wakeupObservers.values
         // One detached surface must not stop the tick for the others.
         guard observers.isEmpty || observers.contains(where: { $0.shouldProcess() }) else {
             TerminalDebugLog.log(.lifecycle, "wakeup suspended")
@@ -319,7 +316,9 @@ public final class TerminalController {
         }
 
         tick()
-        for observer in observers { observer.onWakeup() }
+        #if canImport(UIKit)
+            for observer in observers { observer.onWakeup() }
+        #endif
     }
 
     private static func initializeRuntimeIfNeeded() {

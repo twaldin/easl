@@ -226,16 +226,20 @@ final class TerminalSurfaceCoordinator {
         // thread on its next push. Only a detached surface or a
         // backgrounded app suspends ticks — visibility gates rendering
         // alone (canRenderFrame).
-        controller.addWakeupObserver(
-            ObjectIdentifier(self),
-            shouldProcess: { [weak self] in
-                guard let self else { return false }
-                return isApplicationActive && isAttached()
-            },
-            onWakeup: { [weak self] in
-                self?.requestImmediateTick()
-            }
-        )
+        let shouldProcess: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return isApplicationActive && isAttached()
+        }
+        #if canImport(UIKit)
+            controller.addWakeupObserver(
+                ObjectIdentifier(self),
+                .init(shouldProcess: shouldProcess, onWakeup: { [weak self] in
+                    self?.requestImmediateTick()
+                })
+            )
+        #else
+            controller.addWakeupObserver(ObjectIdentifier(self), .init(shouldProcess: shouldProcess))
+        #endif
         TerminalDebugLog.log(.lifecycle, "surface rebuild succeeded")
         (delegate as? any TerminalSurfaceLifecycleDelegate)?
             .terminalDidAttachSurface(newSurface)

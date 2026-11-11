@@ -479,8 +479,8 @@ final class CanvasTerminalView: TerminalView {
 
     static func forgetRefocus() { refocusTarget = nil }
 
-    /// Redraws, for `easl metrics` (`terminal.draw`) and DevPerf spans: a terminal nobody is
-    /// watching should show few (`IdleRedraw`). Counted here, handed to Metrics once a second.
+    /// Completed frames delivered to the native layer, not screen presentations.
+    /// Batched once a second for `easl metrics` (`terminal.draw`) and DevPerf.
     override func surfaceDidDraw() {
         MainMetricsBatch.shared.draws += 1
         DevPerf.count("terminal.draw")

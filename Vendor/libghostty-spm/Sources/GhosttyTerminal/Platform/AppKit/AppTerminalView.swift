@@ -14,6 +14,21 @@
         let core = TerminalSurfaceCoordinator()
         var metalLayer: CAMetalLayer?
         var inputHandler: TerminalKeyEventHandler?
+        private var nativeFrameObservation: NSKeyValueObservation?
+
+        override open var layer: CALayer? {
+            didSet {
+                nativeFrameObservation = layer?.observe(\.contents) { [weak self] layer, _ in
+                    MainActor.assumeIsolated {
+                        guard let self, self.layer === layer, core.surface != nil,
+                              layer.contents != nil else { return }
+                        enforceMetalLayerScale()
+                        // A synchronous draw still holds Ghostty's renderer lock here.
+                        DispatchQueue.main.async { [weak self] in self?.surfaceDidDraw() }
+                    }
+                }
+            }
+        }
 
         // Grouped view state, one struct per concern — same convention as
         // the UIKit twin: each state type is defined in the extension file
@@ -42,7 +57,7 @@
             core.setDisplayVisible(visible)
         }
 
-        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
+        /// A completed native frame reached the view's layer, not necessarily the screen.
         open func surfaceDidDraw() {}
 
         /// Adjusts this surface's resize coalescing window without rebuilding
@@ -111,10 +126,6 @@
             }
             core.onMetricsUpdate = { [weak self] in
                 self?.updateMetalLayerMetrics()
-            }
-            core.onPostRender = { [weak self] in
-                self?.enforceMetalLayerScale()
-                self?.surfaceDidDraw()
             }
         }
 
