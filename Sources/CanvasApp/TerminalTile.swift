@@ -1339,6 +1339,20 @@ final class TerminalTile: NSView, TileContent {
     private var isLive = true
     private var windowObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
+    var developmentTerminalState: JSONValue {
+        let attached = terminal.window != nil && surface != nil
+        let renderable = attached && countedDrawable && !terminal.isHiddenOrHasHiddenAncestor
+        return .object([
+            "object": .string(objectID),
+            "mounted": .bool(window != nil),
+            "live": .bool(isLive),
+            "surface": .bool(surface != nil),
+            "running": .bool(surface?.isProcessRunning == true),
+            "renderable": .bool(renderable),
+            "hidden": .bool(!renderable),
+        ])
+    }
+
     func setLive(_ live: Bool) {
         isLive = live
         updateSurfaceVisibility()

@@ -264,6 +264,9 @@ enum DevInput {
             }
             let windows: [JSONValue] = NSApp.windows.compactMap { window in
                 guard let controller = window.windowController as? CanvasWindowController else { return nil }
+                let terminals: [JSONValue] = controller.canvas.tiles.values.compactMap {
+                    ($0.content as? TerminalTile)?.developmentTerminalState
+                }
                 return .object([
                     "window": .number(Double(window.windowNumber)),
                     "contentTop": .number(window.frame.height - (window.contentView?.frame.height ?? 0)),
@@ -276,6 +279,7 @@ enum DevInput {
                     "viewport": controller.canvas.viewport.json,
                     "responder": .string(window.firstResponder.map { String(describing: type(of: $0)) } ?? ""),
                     "selectedTextHashes": .array(window.contentView.map { selectedText(in: $0).map { .string(fingerprint(Data($0.utf8))) } } ?? []),
+                    "terminalCensus": .array(terminals),
                     "objects": .array(controller.board.snapshot.objects.sorted { $0.id < $1.id }.compactMap { object in
                         guard let data = try? encoder.encode(object) else { return nil }
                         return .object(["id": .string(object.id), "hash": .string(fingerprint(data))])
