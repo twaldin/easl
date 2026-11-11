@@ -444,10 +444,15 @@ final class TileFrameView: NSView {
                                              terminal: chromeObject.type == .terminal, scale: ChromeText.scale,
                                              state: chromeState.terminal != nil, typing: chromeState.typing,
                                              stateMinimum: stateMinimum, typingMinimum: typingMinimum, needsYou: needsYou)
-        titleLabel.frame = frames.title
-        statusLabel.frame = frames.state
-        typingLabel.frame = frames.typing
-        authorLabel.frame = frames.author
+        func textFrame(_ frame: NSRect) -> NSRect {
+            // Two-track frames are top-down; keep the folded row's existing native rounding.
+            guard TileChromeLayout.mode(scale: ChromeText.scale) == .twoTrack else { return frame }
+            return NSRect(x: frame.minX, y: titleBar.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+        }
+        titleLabel.frame = textFrame(frames.title)
+        statusLabel.frame = textFrame(frames.state)
+        typingLabel.frame = textFrame(frames.typing)
+        authorLabel.frame = textFrame(frames.author)
         authorLabel.isHidden = author == nil || TileChromeLayout.mode(scale: ChromeText.scale) == .folded
         if authorInTitle != frames.authorInTitle {
             authorInTitle = frames.authorInTitle

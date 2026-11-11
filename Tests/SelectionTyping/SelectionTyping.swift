@@ -2596,7 +2596,7 @@ private enum SelectionTyping {
     private static func exerciseTwoTrackPriority(_ f: Fixture) async throws {
         let originalScale = ChromeText.scale
         defer { ChromeText.configure(originalScale) }
-        let creator = try await f.create(.terminal, x: 30, y: 430, width: 450, height: 240)
+        let creator = try await f.create(.terminal, x: 350, y: 430, width: 600, height: 240)
         let author = "A complete stored author name beyond the trailing slot"
         _ = try f.board.update(creator.id, props: .object(["name": .string(author)]))
         let narrow = f.board.create(type: .note, props: .object(["markdown": "Narrow typing proof"]),
@@ -2623,6 +2623,18 @@ private enum SelectionTyping {
             let blank = try pixels(label)
             try require(shown != blank, "the real typing field must paint visible native ink")
         }
+        func requireTitleAbove(_ title: NSTextField, _ secondRow: [NSTextField]) throws {
+            try require(!title.isHiddenOrHasHiddenAncestor && title.bounds.width > 0,
+                        "the actual title must remain visible")
+            let titleRect = title.convert(title.bounds, to: nil)
+            for label in secondRow {
+                try require(!label.isHiddenOrHasHiddenAncestor && label.bounds.width > 0,
+                            "the actual second-row field must remain visible")
+                let labelRect = label.convert(label.bounds, to: nil)
+                try require(titleRect.midY > labelRect.midY,
+                            "the actual title must appear above the second row in window coordinates")
+            }
+        }
         for scale in [1.0, 1.15] {
             ChromeText.configure(scale)
             for object in [narrow, inBand, wide] {
@@ -2639,6 +2651,7 @@ private enum SelectionTyping {
                       let authorLabel = labels.first(where: { $0.stringValue == author }) else {
                     throw Failure("native typing and stored author fields missing")
                 }
+                try requireTitleAbove(title, [authorLabel])
                 let frames = labels.map(\.frame)
                 let fonts = labels.map(\.font)
                 let titleFrame = title.frame
@@ -2650,6 +2663,7 @@ private enum SelectionTyping {
                             "a note must show only its real keyboard-owned typing state")
                 try require(!typing.isHiddenOrHasHiddenAncestor && typing.frame.width > 0 && bar.bounds.contains(typing.frame),
                             "the minimum selected note must retain a visible typing slot")
+                try requireTitleAbove(title, [typing])
                 try require(!typing.frame.intersects(authorLabel.frame), "typing must not overlap its trailing author")
                 try require(title.frame == titleFrame && bar.bounds.height == 34 && labels.map(\.font) == fonts,
                             "the correction must leave the title track, fonts and bar height unchanged")
@@ -2671,6 +2685,26 @@ private enum SelectionTyping {
                 }
                 try require(f.board.objects[object.id]?.frame == object.frame, "typing pressure must not change stored geometry")
             }
+            f.canvas.show(Viewport(rect: Frame(x: creator.frame.x - 60, y: creator.frame.y - 160, w: 1200, h: 820), zoom: 1))
+            try await f.ready(creator.id)
+            try await enter(creator, in: f)
+            try f.board.reportLifecycle(tile: creator.id, kind: "claude", state: .working,
+                                        message: nil, seq: nil, source: nil)
+            guard let tile = f.canvas.tiles[creator.id], let author = tile.author,
+                  let state = tile.chromeState.terminal else { throw Failure("native terminal chrome missing") }
+            tile.syncTitle()
+            guard let title = descendants(tile).compactMap({ $0 as? NSTextField }).first(where: {
+                $0.stringValue == tile.title && $0.superview?.bounds.height == TileFrameView.titleHeight
+            }), let bar = title.superview else { throw Failure("native terminal title missing") }
+            let labels = descendants(bar).compactMap { $0 as? NSTextField }
+            guard let status = labels.first(where: { $0.stringValue == state.text }),
+                  let typing = labels.first(where: { $0.stringValue == "typing" }),
+                  let authorLabel = labels.first(where: { $0.stringValue == author }) else {
+                throw Failure("native terminal second row missing")
+            }
+            try require(f.canvas.focusedTile == creator.id && tile.chromeState.typing,
+                        "the terminal regression must exercise actual keyboard ownership")
+            try requireTitleAbove(title, [status, typing, authorLabel])
         }
     }
 
@@ -2744,6 +2778,12 @@ private enum SelectionTyping {
             try require(tile.chromeState.typing == typing && (f.canvas.focusedTile == object.id) == typing,
                         "typing chrome must agree with the actual keyboard owner")
             let rect = bubble.convert(bubble.bounds, to: nil)
+            let titleRect = title.convert(title.bounds, to: nil)
+            let header = bar.convert(bar.bounds, to: nil)
+            if ChromeText.scale >= 1.3 {
+                try require(abs(titleRect.midY - header.midY) <= 1,
+                            "the folded title must remain centered in the actual bar")
+            }
             var occupied = ChromeText.scale >= 1.3 ? [title.frame] : []
             for text in (typing ? ["typing"] : []) + (working ? ["working"] : []) {
                 guard let label = labels.first(where: { $0.superview === bar && $0.stringValue == text }),
@@ -2756,9 +2796,11 @@ private enum SelectionTyping {
                             "title and named states must not cover each other")
                 try require(!label.convert(label.bounds, to: nil).intersects(rect),
                             "attention must not cover \(text)")
+                let labelRect = label.convert(label.bounds, to: nil)
+                try require(ChromeText.scale >= 1.3 ? abs(titleRect.midY - labelRect.midY) <= 1 : titleRect.midY > labelRect.midY,
+                            "actual folded fields must share the title row; two-track fields must appear below it")
                 occupied.append(label.frame)
             }
-            let header = bar.convert(bar.bounds, to: nil)
             let minimumPill = min(expected.naturalWidth, inline ? 160 : PillLayout.shortestBubble)
             try require(rect.width >= minimumPill - 0.5
                         && rect.height >= AttentionMarker.bubbleHeight - 0.5,

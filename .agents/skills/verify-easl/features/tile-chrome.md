@@ -36,5 +36,6 @@ Preconditions: isolated guest app homes, disposable board roots, and a scratch e
 - `Sources/CanvasCore/TileChrome.swift` owns state applicability, classifier text, type symbols, and role names. `Sources/CanvasApp/TileChrome.swift` maps roles to native semantic colors and fonts without configuration.
 - `AuthorMark.swift`, `Board.swift`, and `easld/internal/board/board.go` distinguish creation snapshots from legacy live lookup. Never backfill legacy names or hand-edit conformance fixtures.
 - ChromeText scales text, not the 34 pt bar. Board zoom does not select the folded layout.
-- Record conformance fixtures only from the Mac development app in the guest, following `docs/testing.md`; scratch-easld recordings are not authoritative.
+- Check row order in real window coordinates: at 100% and 115%, the title must be visually above author, typing and terminal state. Pure shared-frame tests cannot catch an unflipped AppKit container reversing those rows. Folded text and attention/control hit frames must remain unchanged.
+- Preserve each scenario's producer in `recordedOn`: app-compatible cases come from the exact-head guest Mac app with two app replays; documented protocol cases come from fresh real easld, and owned cases use `--own-terminals` with the existing `zmxtest`. Never substitute daemon output for app fixtures.
 - Performance qualification is separate. Follow [the performance procedure](../performance.md) and the lane's paired workload; do not infer idle CPU, wakeups, or main-thread stretch results from screenshots.
