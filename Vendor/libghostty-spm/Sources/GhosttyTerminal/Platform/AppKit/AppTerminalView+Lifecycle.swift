@@ -57,8 +57,10 @@
         override open func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             removeWindowObservers()
-            // Leave the previous window's frame clock; AppKit can move a view between windows directly.
-            core.stopDisplayLink()
+            if #available(macOS 14, *), window != nil {
+                // Leave the previous window's frame clock; AppKit can move a view between windows directly.
+                core.stopDisplayLink()
+            }
             if window != nil {
                 // SwiftUI/AppKit can temporarily detach and reattach the terminal view while
                 // diffing the view hierarchy. Rebuilding on every reattach discards Ghostty's
@@ -107,8 +109,20 @@
                     (delegate as? TerminalViewState)?.replayPendingFocusIfNeeded()
                 }
             } else {
+                core.stopDisplayLink()
                 core.setFocus(false)
             }
+        }
+
+        // The window's frame clock, unlike a view's own link, would still tick a hidden view.
+        override open func viewDidHide() {
+            super.viewDidHide()
+            if #available(macOS 14, *) { core.stopDisplayLink() }
+        }
+
+        override open func viewDidUnhide() {
+            super.viewDidUnhide()
+            if #available(macOS 14, *) { core.requestImmediateTick() }
         }
 
         // Window key state is not a first-responder change: reporting it

@@ -187,7 +187,8 @@
     }
 
     /// A terminal's membership in its window's `WindowFrameClock` (`TerminalFrameLink`): resuming
-    /// joins the clock of the window the view is in, pausing leaves it.
+    /// joins the clock of the window the view is in, pausing leaves it. A hidden view does not join,
+    /// as a view's own link does not fire while hidden; the view leaves on hide and asks on unhide.
     @available(macOS 14, *)
     @MainActor
     final class WindowFrameLink: TerminalFrameLink {
@@ -206,7 +207,7 @@
                 if newValue {
                     clock?.leave(self)
                     clock = nil
-                } else if clock == nil, let window = view?.window {
+                } else if clock == nil, let view, !view.isHiddenOrHasHiddenAncestor, let window = view.window {
                     let clock = WindowFrameClock.of(window)
                     self.clock = clock
                     clock.join(self)
