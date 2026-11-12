@@ -30,7 +30,14 @@ final class BrowserSurfaceHost: NSObject {
     func handle(_ request: SurfaceRequest, from peer: some SurfacePeer) async throws -> JSONValue {
         switch request {
         case .stream(let id, let scale, let format):
-            return try await open(id, scale: scale, format: format, for: peer)
+            do {
+                return try await open(id, scale: scale, format: format, for: peer)
+            } catch let refusal as SurfaceRefusal {
+                BrowserStreamDiagnostic.log(BrowserStreamDiagnostic.safeRecord(side: .host, event: .rejected, reason: refusal.reason,
+                    tile: id, local: ClientIdentity.thisMac.id, route: peer.owner.diagnosticRoute,
+                    operation: refusal.operation, failure: refusal.failure))
+                throw refusal.failure
+            }
         case .ack(let stream, let frame):
             try owned(stream, by: peer).ack(frame)
             return .object([:])
@@ -56,18 +63,30 @@ final class BrowserSurfaceHost: NSObject {
     private func open(_ id: ObjectID, scale: Double, format: SurfaceFormat, for peer: some SurfacePeer) async throws -> JSONValue {
         let (board, tile) = try peer.tile(id)
         guard peer.hears("surface.frame", on: board) else {
-            throw ApiRouter.Failure("invalid_params", "subscribe this connection to surface.frame on board \(board) (events.subscribe) before surface.stream")
+            throw SurfaceRefusal(.frame_subscription_missing, ApiRouter.Failure("invalid_params", "subscribe this connection to surface.frame on board \(board) (events.subscribe) before surface.stream"))
         }
         guard PageScript.isAvailable else {
-            throw ApiRouter.Failure("unsupported", "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture")
+            throw SurfaceRefusal(.page_helper_unsupported, ApiRouter.Failure("unsupported", "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture"))
         }
         await tile.markDriven()
-        guard peer.isOpen, let now = try? peer.tile(id), now.tile === tile, now.board == board, tile.window != nil else {
-            throw ApiRouter.Failure("unavailable", "browser tile \(id) closed while its stream opened")
+        func changed(_ reason: BrowserStreamDiagnostic.Reason) -> SurfaceRefusal {
+            SurfaceRefusal(reason, ApiRouter.Failure("unavailable", "browser tile \(id) closed while its stream opened"), operation: .driven)
         }
-        guard let webView = tile.webView, webView.bounds.width >= 1, webView.bounds.height >= 1 else {
-            throw ApiRouter.Failure("unavailable", "browser tile \(id) has no page area to stream")
+        guard peer.isOpen else { throw changed(.peer_closed) }
+        let now: (board: BoardID, tile: BrowserTile)
+        do throws(SurfaceRefusal) {
+            now = try peer.tile(id)
+        } catch {
+            throw changed(error.reason)
         }
+        guard now.tile === tile else { throw changed(.tile_remounted) }
+        guard now.board == board else { throw changed(.board_changed) }
+        guard tile.window != nil else { throw changed(.tile_off_window) }
+        func noArea(_ reason: BrowserStreamDiagnostic.Reason) -> SurfaceRefusal {
+            SurfaceRefusal(reason, ApiRouter.Failure("unavailable", "browser tile \(id) has no page area to stream"), operation: .driven)
+        }
+        guard let webView = tile.webView else { throw noArea(.webview_missing) }
+        guard webView.bounds.width >= 1, webView.bounds.height >= 1 else { throw noArea(.page_area_unavailable) }
         let size = webView.bounds.size
         let surface = surface(for: tile)
         let stream = SurfaceStream(id: IDs.make("str"), peer: peer, board: board, surface: surface,
@@ -75,7 +94,8 @@ final class BrowserSurfaceHost: NSObject {
         streams[stream.id] = stream
         surface.add(stream)
         watch()
-        NSLog("easl: browser %@ streams as %@ (%@, %.2f px/pt)", id, stream.id, format.rawValue, stream.scale)
+        BrowserStreamDiagnostic.log(BrowserStreamDiagnostic.safeRecord(side: .host, event: .admitted, tile: id, stream: stream.id,
+            local: ClientIdentity.thisMac.id, route: peer.owner.diagnosticRoute))
         return .object(["stream": .string(stream.id), "size": SurfaceEvent.size(size),
                         "scale": .number(stream.scale), "scrollGestures": .bool(peer.hears("surface.scrollUnhandled", on: board))])
     }
@@ -106,6 +126,10 @@ final class BrowserSurfaceHost: NSObject {
     /// Ends `stream`; `reason` tells a viewer still connected why this Mac ended it.
     private func close(_ stream: SurfaceStream, reason: String?) {
         guard streams.removeValue(forKey: stream.id) != nil else { return }
+        BrowserStreamDiagnostic.log(BrowserStreamDiagnostic.safeRecord(side: .host, event: .closed,
+            reason: reason != nil ? BrowserStreamDiagnostic.closeReason(reason) : (stream.peer.isOpen ? .requested_stop : .peer_closed),
+            tile: stream.tileID, stream: stream.id, local: ClientIdentity.thisMac.id,
+            route: stream.owner.diagnosticRoute, operation: .close))
         RemoteUpdateActivity.shared.end(session: stream.id)
         if let reason { stream.push("surface.notice", SurfaceEvent.notice(stream: stream.id, kind: .closed, reason: reason)) }
         let surface = stream.surface
@@ -115,7 +139,6 @@ final class BrowserSurfaceHost: NSObject {
             surface.detach()
         }
         if streams.isEmpty { unwatch() }
-        NSLog("easl: browser stream %@ ended%@", stream.id, reason.map { ": \($0)" } ?? "")
     }
 
     /// Closed peers and closed tiles, looked for while any stream is open: a stalled viewer sends

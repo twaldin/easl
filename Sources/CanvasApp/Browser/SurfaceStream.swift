@@ -10,6 +10,7 @@ final class SurfaceStream {
     private static let maxOpeningEventBytes = 256 * 1024
 
     let id: String
+    let tileID: ObjectID?
     /// Where the stream was opened from: whether it lasts, and what its viewer hears.
     let peer: any SurfacePeer
     let owner: SurfaceOwner
@@ -64,6 +65,7 @@ final class SurfaceStream {
 
     init(id: String, peer: any SurfacePeer, board: BoardID, surface: BrowserSurface, scale: Double, format: SurfaceFormat) {
         self.id = id
+        tileID = surface.tile?.objectID
         self.peer = peer
         owner = peer.owner
         self.board = board
