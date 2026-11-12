@@ -73,7 +73,7 @@ struct BrowserStreamDiagnosticTests {
         #expect(BrowserStreamDiagnostic.closeReason("drawing moved") == .drawing_moved)
         #expect(BrowserStreamDiagnostic.closeReason("drawing moved" + secret) == .close_unclassified)
         for invalid in ["obj_short", "obj_0123456789abcdefgh", "obj_0123456789ABCDEé", "obj_0123456789ABCDEFGH\n"] {
-            let record = BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .admitted, tile: invalid, route: .unknown)
+            let record = BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .admitted, tile: invalid, route: .relay)
             #expect(record.tile == "redacted")
         }
     }

@@ -52,7 +52,7 @@ struct SurfaceRefusal: Error {
 protocol SurfacePeer {
     var owner: SurfaceOwner { get }
     var isOpen: Bool { get }
-    func tile(_ id: ObjectID) throws(SurfaceRefusal) -> (board: BoardID, tile: BrowserTile)
+    func tile(_ id: ObjectID) throws -> (board: BoardID, tile: BrowserTile)
     func hears(_ event: String, on board: BoardID) -> Bool
 }
 

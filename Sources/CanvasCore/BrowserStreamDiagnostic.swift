@@ -1,9 +1,10 @@
+import Foundation
 import os
 
 public enum BrowserStreamDiagnostic {
     public enum Side: String, Sendable { case host, viewer }
     public enum Event: String, Sendable { case admitted, rejected, usable, closed, failed, transport_lost, discarded }
-    public enum Route: String, Sendable { case relay, socket, unknown }
+    public enum Route: String, Sendable { case relay, socket }
     public enum Operation: String, Sendable { case resolve, driven, stream, ack, progress, input, frame, link, close }
     public enum Reason: String, Sendable {
         case none, peer_closed, window_closed, tile_missing, tile_not_browser, drawn_elsewhere, tile_unmounted
@@ -14,6 +15,8 @@ public enum BrowserStreamDiagnostic {
         case invalid_reply, invalid_frame, superseded, reconnecting, offline, requested_stop
         case tile_closed, board_closed, drawing_moved, page_input_unavailable, encoding_failed, frame_too_large
         case setup_budget_exceeded, viewer_left, close_unclassified
+        case drawing_timeout, drawing_disconnected, tile_changed, tile_unavailable, drawing_unavailable
+        case frame_overflow, frame_gap, frame_assembly_failed, decode_failed, input_queue_full
     }
     public struct Record: Sendable {
         public let side: Side, event: Event, reason: Reason, route: Route, operation: Operation
@@ -92,18 +95,60 @@ public enum BrowserStreamDiagnostic {
         case "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture": return .page_helper_unsupported
         default: break
         }
-        if let tile, message == "\(tile) has no drawing Mac yet" { return .drawing_unassigned }
+        if let tile {
+            switch message {
+            case "\(tile) has no drawing Mac yet": return .drawing_unassigned
+            case "browser tile \(tile) is not open in a window": return .tile_unavailable
+            case "browser tile \(tile)'s page doesn't run on this Mac": return .drawing_unavailable
+            case "browser tile \(tile) closed while its stream opened": return .tile_changed
+            case "browser tile \(tile) has no page area to stream": return .page_area_unavailable
+            default: break
+            }
+            let prefix = "\(tile)'s stream ended as it opened: "
+            if message.hasPrefix(prefix) {
+                let ending = closeReason(String(message.dropFirst(prefix.count)))
+                if ending != .close_unclassified { return ending }
+            }
+        }
         if let drawingLabel {
             if message == "draws on \(drawingLabel), which is offline" { return .drawing_offline }
             if message == "draws on \(drawingLabel), which does not serve surface.stream" { return .drawing_surface_unsupported }
         }
+        if clientResponse(message, suffix: " didn't answer surface.stream within 12 s") { return .drawing_timeout }
+        if clientResponse(message, suffix: " disconnected before answering surface.stream") { return .drawing_disconnected }
+        if let boundary = message.range(of: " no longer draws ", options: .backwards),
+           clientName(message[..<boundary.lowerBound]) {
+            let fields = message[boundary.upperBound...].split(separator: " ", maxSplits: 4, omittingEmptySubsequences: false)
+            if fields.count == 5, fields[0].hasSuffix("'s"), validID(fields[0].dropLast(2), prefix: "mch"),
+               fields[1] == "pages", fields[2] == "on", fields[3] == "board",
+               fields[4].hasPrefix("brd_"), fields[4].utf8.count == 24,
+               fields[4].utf8.dropFirst(4).allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) {
+                return .tile_changed
+            }
+        }
         return code == "invalid_params" ? .invalid_request : .backend_unclassified
+    }
+
+    private static func clientResponse(_ message: String, suffix: String) -> Bool {
+        message.hasSuffix(suffix) && clientName(message.dropLast(suffix.count))
+    }
+
+    private static func clientName(_ name: Substring) -> Bool {
+        if name.hasPrefix("client ") { return validID(name.dropFirst(7), prefix: "cli") }
+        guard name.hasPrefix("easl ") || name.hasPrefix("a client on "), name.last == ")",
+              let opening = name.lastIndex(of: "("), name[..<opening].last == " " else { return false }
+        let token = name[name.index(after: opening)..<name.index(before: name.endIndex)]
+        return token.hasPrefix("client ") && validID(token.dropFirst(7), prefix: "cli")
+    }
+
+    private static func validID(_ value: some StringProtocol, prefix: String) -> Bool {
+        value.utf8.count == prefix.utf8.count + 19 && value.hasPrefix(prefix + "_") &&
+            value.utf8.dropFirst(prefix.utf8.count + 1).allSatisfy { "0123456789ABCDEFGHJKMNPQRSTVWXYZ".utf8.contains($0) }
     }
 
     private static func safeID(_ value: String?, prefix: String) -> String {
         guard let value else { return "none" }
-        guard value.utf8.count == prefix.utf8.count + 19, value.hasPrefix(prefix + "_"),
-              value.utf8.dropFirst(prefix.utf8.count + 1).allSatisfy({ "0123456789ABCDEFGHJKMNPQRSTVWXYZ".utf8.contains($0) }) else { return "redacted" }
+        guard validID(value, prefix: prefix) else { return "redacted" }
         return value
     }
 }

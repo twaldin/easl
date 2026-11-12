@@ -274,11 +274,15 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     /// Stop the stream, release held buttons when the link can still take a request, and close SSH.
     /// Input waiting in the local buffer is dropped, not resent on the next stream.
-    private func endLink() {
+    private func endLink(record: BrowserStreamDiagnostic.Record? = nil) {
         linkEpoch += 1
         let connection = owned.take()
         let stream = streamID
-        if let stream { diagnose(.closed, reason: .requested_stop, stream: stream, operation: .close) }
+        if let record {
+            BrowserStreamDiagnostic.log(record)
+        } else if let stream {
+            diagnose(.closed, reason: .requested_stop, stream: stream, operation: .close)
+        }
         let release = releaseEvents()
         dropStreamState()
         retry?.cancel()
@@ -374,7 +378,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 if let frame = SurfaceWire.frame(event.data) {
                     receive(frame)
                 } else if streamID != nil, event.data["stream"]?.string == streamID {
-                    restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+                    restartStream(reason: "Couldn't read a frame from \(remote.host.name)", cause: .invalid_frame)
                 }
             case "surface.dialog":
                 if let dialog = SurfaceWire.dialog(event.data) { receive(dialog) }
@@ -520,8 +524,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     // MARK: Frames
-    private func restartStream(reason: String) {
-        diagnose(.failed, reason: .invalid_frame, stream: streamID, operation: .frame)
+    private func restartStream(reason: String, cause: BrowserStreamDiagnostic.Reason) {
+        diagnose(.failed, reason: cause, stream: streamID, operation: .frame)
         let stream = streamID
         let connection = owned.current()
         dropStream(reason: reason)
@@ -537,7 +541,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         switch credit {
         case .owingZero:
             guard stashed.count < 2 else {
-                restartStream(reason: "Too many frames from \(remote.host.name)")
+                restartStream(reason: "Too many frames from \(remote.host.name)", cause: .frame_overflow)
                 return
             }
             stashed.append(frame)
@@ -546,11 +550,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         case .waiting where frame.supersedes.map({ $0 <= lastAcked + 1 }) == true && frame.seq > lastAcked + 1:
             accept(frame)
         case .waiting where frame.seq > lastAcked + 1:
-            restartStream(reason: "Missed a frame from \(remote.host.name)")
+            restartStream(reason: "Missed a frame from \(remote.host.name)", cause: .frame_gap)
         case .decoding(let seq) where decodingRefinement == seq && frame.supersedes.map({ $0 <= seq }) == true && frame.seq > seq:
             accept(frame)
         case .decoding(let seq) where frame.seq > seq:
-            restartStream(reason: "Missed a frame from \(remote.host.name)")
+            restartStream(reason: "Missed a frame from \(remote.host.name)", cause: .frame_gap)
         case .waiting, .decoding, .idle:
             break
         }
@@ -578,7 +582,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             }
             if let completed { beginDecode(completed) }
         } catch {
-            restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)")
+            restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)", cause: .frame_assembly_failed)
         }
     }
 
@@ -621,7 +625,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func finishDecode(_ frame: HostFrame, _ decoded: DecodedFrame) {
         guard case .decoding(frame.seq) = credit, frame.stream == streamID else { return }
         guard let cg = decoded.image else {
-            restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+            restartStream(reason: "Couldn't read a frame from \(remote.host.name)", cause: .decode_failed)
             return
         }
         decodingRefinement = nil
@@ -704,6 +708,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
         while outbound.count >= 128, dropOldestMotion() {}
         guard outbound.count < 128 else {
+            diagnose(.failed, reason: .input_queue_full, stream: streamID, operation: .input)
             endLink()
             setLinkStatus("Input queue full. Reopen the tile to continue.")
             return nil
@@ -1484,13 +1489,22 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         let idChanged = object.id != self.object.id
         let moved = relayed && DrawingMachine(object.props)?.id != DrawingMachine(self.object.props)?.id
         let zoomChanged = object.zoom != self.object.zoom
+        let closingRecord: BrowserStreamDiagnostic.Record?
+        if (idChanged || moved), wantsLive, let stream = streamID {
+            closingRecord = BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .closed,
+                reason: moved ? .drawing_moved : .tile_changed, tile: self.object.id, stream: stream,
+                local: ClientIdentity.thisMac.id, drawing: DrawingMachine(self.object.props)?.id,
+                route: relayed ? .relay : .socket, operation: .close)
+        } else {
+            closingRecord = nil
+        }
         self.object = object
         if !chrome.isEditing { chrome.setAddress(object.props["url"]?.string ?? "") }
         if zoomChanged { layoutParts() }
         refreshStatus()
         guard idChanged || moved, wantsLive else { return }
         retryDelay = 1
-        endLink()
+        endLink(record: closingRecord)
         startLink()
     }
 

@@ -74,10 +74,10 @@ final class BrowserSurfaceHost: NSObject {
         }
         guard peer.isOpen else { throw changed(.peer_closed) }
         let now: (board: BoardID, tile: BrowserTile)
-        do throws(SurfaceRefusal) {
+        do {
             now = try peer.tile(id)
         } catch {
-            throw changed(error.reason)
+            throw changed((error as? SurfaceRefusal)?.reason ?? .unknown_error)
         }
         guard now.tile === tile else { throw changed(.tile_remounted) }
         guard now.board == board else { throw changed(.board_changed) }
