@@ -151,10 +151,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     private func diagnose(_ event: BrowserStreamDiagnostic.Event, reason: BrowserStreamDiagnostic.Reason = .none,
-                          stream: String? = nil, operation: BrowserStreamDiagnostic.Operation = .stream, failure: (any Error)? = nil) {
-        let drawing = DrawingMachine(object.props)
+                          stream: String? = nil, operation: BrowserStreamDiagnostic.Operation = .stream, failure: (any Error)? = nil,
+                          identity: (tile: ObjectID, drawing: DrawingMachine?)? = nil) {
+        let drawing = if let identity { identity.drawing } else { DrawingMachine(object.props) }
         BrowserStreamDiagnostic.log(BrowserStreamDiagnostic.safeRecord(side: .viewer, event: event, reason: reason,
-            tile: object.id, stream: stream, local: ClientIdentity.thisMac.id, drawing: drawing?.id,
+            tile: identity?.tile ?? object.id, stream: stream, local: ClientIdentity.thisMac.id, drawing: drawing?.id,
             route: relayed ? .relay : .socket, operation: operation, failure: failure,
             drawingLabel: drawing.map { $0.host.isEmpty ? $0.id : $0.host }))
     }
@@ -417,6 +418,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         retry = nil
         let generation = streamEpoch
         let id = object.id
+        let requestIdentity = (tile: id, drawing: DrawingMachine(object.props))
         let scale = min(2, max(0.25, Double(window?.backingScaleFactor ?? 2)))
         runStreamTask { [weak self] in
             do {
@@ -433,7 +435,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 }
                 self.opening = false
                 guard generation == self.streamEpoch, self.wantsLive, self.owned.current() === connection else {
-                    self.diagnose(.discarded, reason: .superseded, stream: result["stream"]?.string)
+                    self.diagnose(.discarded, reason: .superseded, stream: result["stream"]?.string, identity: requestIdentity)
                     if let stream = result["stream"]?.string {
                         _ = try? await connection.request("surface.stop", .object(["stream": .string(stream)]), timeout: .seconds(2))
                     }
@@ -441,12 +443,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 }
                 guard let stream = result["stream"]?.string, stream.hasPrefix("str_"),
                       let w = result["size"]?["w"]?.number, let h = result["size"]?["h"]?.number, w > 0, h > 0 else {
-                    self.diagnose(.rejected, reason: .invalid_reply, stream: result["stream"]?.string)
+                    self.diagnose(.rejected, reason: .invalid_reply, stream: result["stream"]?.string, identity: requestIdentity)
                     self.failOpen("invalid_params")
                     return
                 }
                 self.streamID = stream
-                self.diagnose(.admitted, stream: stream)
+                self.diagnose(.admitted, stream: stream, identity: requestIdentity)
                 self.supportsScrollGestures = result["scrollGestures"]?.bool == true
                 self.pageSize = CGSize(width: w, height: h)
                 self.credit = .owingZero
@@ -458,17 +460,17 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             } catch is CancellationError {
                 self?.opening = false
             } catch let failure as EaslConnection.Failure where failure.code == "unavailable" {
-                self?.diagnose(.rejected, failure: failure)
+                self?.diagnose(.rejected, failure: failure, identity: requestIdentity)
                 guard let self, generation == self.streamEpoch else { return }
                 self.opening = false
                 if connection.state == .online { self.failOpen(failure.code) }
             } catch let failure as EaslConnection.Failure {
-                self?.diagnose(.rejected, failure: failure)
+                self?.diagnose(.rejected, failure: failure, identity: requestIdentity)
                 self?.opening = false
                 guard let self, generation == self.streamEpoch else { return }
                 self.failOpen(failure.code)
             } catch {
-                self?.diagnose(.rejected, failure: error)
+                self?.diagnose(.rejected, failure: error, identity: requestIdentity)
                 self?.opening = false
                 guard let self, generation == self.streamEpoch else { return }
                 self.failOpen("unavailable")
