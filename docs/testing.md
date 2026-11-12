@@ -620,7 +620,7 @@ scripts/dev.sh input text "hello"                   # insert into the first resp
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
-scripts/dev.sh input state                         # app.log: native windows, tabs, viewport, responder, object/selection hashes, and per-terminal mounted/live/surface/running/renderable/hidden census; no source text
+scripts/dev.sh input state                         # app.log: native windows, tabs, viewport, responder, object/selection hashes, and per-terminal mounted/live/surface/running/renderable/idlePulsed census; no source text
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
@@ -852,8 +852,8 @@ python3 Tests/TerminalWakeup/run.py \
 
 The regression links the actual terminal modules from Easl. It waits for native IO sizing before
 painting, then checks ordinary output and native frame delivery, all-hidden title/cwd/bell
-mailbox pressure, hidden exit, reveal, configuration, layout/focus, exposure, replacement,
-and unfocused exit text. Nine fresh exact-PID/window captures require marker OCR and native sRGB
+mailbox pressure, hidden exit, reveal, configuration, wrapped layout, filled/hollow focus, exposure, replacement,
+and unfocused exit text. Eleven fresh exact-PID/window captures require marker OCR and native sRGB
 pixel samples. No manual app ticks, `waitForPendingOutput`, `view.snapshot`, or Pillow are used.
 It does not measure key-to-pixel latency; use the remote terminal echo procedure above.
 

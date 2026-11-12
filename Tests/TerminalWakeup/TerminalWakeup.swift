@@ -65,12 +65,17 @@ private enum TerminalWakeup {
     }
 
     static func capture(_ phase: String, window: NSWindow, active: FrameView,
-                        marker: String, color: [Int], width: CGFloat = 600, exitText: Bool = false) async throws {
+                        marker: String, color: [Int], width: CGFloat = 600, exitText: Bool = false,
+                        cursor: CGPoint? = nil, cursorColor: [Int] = []) async throws {
         var request: [String: Any] = ["phase": phase, "pid": ProcessInfo.processInfo.processIdentifier,
             "window": window.windowNumber, "marker": marker, "color": color,
             "activeWidth": width, "width": 1040, "height": 480,
             "deliveredFrames": active.deliveredFrames]
         request["exitText"] = exitText
+        if let cursor {
+            request["cursorPoint"] = [cursor.x, cursor.y]
+            request["cursorColor"] = cursorColor
+        }
         try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
             .write(to: evidence.appendingPathComponent("\(phase).ready.json"), options: .atomic)
         try await eventually("native pixels \(phase)") {
@@ -152,21 +157,44 @@ private enum TerminalWakeup {
 
         paint(session, color: nil, marker: "CONFIG_PURPLE")
         try await eventually("default background marker") { session.readViewportText()?.contains("CONFIG_PURPLE") == true }
-        try check(controller.setTerminalConfiguration(TerminalConfiguration { $0.withBackground("7820b4") }), "config rejected")
+        try check(controller.setTerminalConfiguration(TerminalConfiguration {
+            $0.withBackground("7820b4")
+            $0.withCursorStyle(.block)
+            $0.withCursorStyleBlink(false)
+            $0.withCursorColor("ff0000")
+            $0.withWindowPaddingX(0)
+            $0.withWindowPaddingY(0)
+        }), "config rejected")
         try await capture("04-config", window: window, active: active, marker: "CONFIG_PURPLE", color: [120, 32, 180])
 
         let oldColumns = mailbox.grid!.columns
+        let beforeWrap = active.deliveredFrames
+        session.receive("\(escape)[2J\(escape)[H" + String(repeating: " ", count: Int(oldColumns) - 2) + "WRAP_FRESH")
+        try await eventually("pre-resize native frame") { active.deliveredFrames > beforeWrap }
         active.setFrameSize(NSSize(width: 520, height: 480))
         try await sized(active, mailbox)
         try await eventually("layout grid freshness") { mailbox.grid!.columns < oldColumns }
-        try check(window.makeFirstResponder(quiet), "quiet focus rejected")
+        try await capture("05-layout", window: window, active: active, marker: "WRAP_FRESH", color: [120, 32, 180], width: 520)
+
+        paint(session, color: nil, marker: "")
+        session.receive("\(escape)[3;1HFOCUS_CURSOR\(escape)[H\(escape)[?25h")
+        let cursor = CGPoint(x: active.bounds.width / CGFloat(mailbox.grid!.columns) / 2,
+                             y: active.bounds.height / CGFloat(mailbox.grid!.rows) / 2)
         try check(window.makeFirstResponder(active), "active focus rejected")
-        try await capture("05-layout-focus", window: window, active: active, marker: "CONFIG_PURPLE", color: [120, 32, 180], width: 520)
+        try await capture("05a-focus-filled", window: window, active: active, marker: "FOCUS_CURSOR",
+                          color: [120, 32, 180], width: 520, cursor: cursor, cursorColor: [255, 0, 0])
+        try check(window.makeFirstResponder(quiet), "quiet focus rejected")
+        try await capture("05b-focus-hollow", window: window, active: active, marker: "FOCUS_CURSOR",
+                          color: [120, 32, 180], width: 520, cursor: cursor, cursorColor: [120, 32, 180])
 
         window.orderOut(nil)
+        active.setSurfaceVisible(false)
+        quiet.setSurfaceVisible(false)
         paint(session, color: "160;20;120", marker: "EXPOSED_MAGENTA")
         try await eventually("unexposed output tail") { session.readViewportText()?.contains("EXPOSED_MAGENTA") == true }
         window.makeKeyAndOrderFront(nil)
+        active.setSurfaceVisible(true)
+        quiet.setSurfaceVisible(true)
         try check(window.makeFirstResponder(active), "exposed focus rejected")
         try await capture("06-exposure", window: window, active: active, marker: "EXPOSED_MAGENTA", color: [160, 20, 120], width: 520)
 
@@ -219,7 +247,7 @@ private enum TerminalWakeup {
         }
         try await capture("09-normal-exit", window: window, active: active,
                           marker: "Process exited. Press any key to close the terminal.", color: [120, 32, 180], width: 520)
-        try Data("PASS native output, hidden mailbox/backpressure/exit, reveal, config, layout/focus, reattach, frame delivery and captured pixels\n".utf8)
+        try Data("PASS native output, hidden mailbox/backpressure/exit, reveal, config, wrapped layout, filled/hollow focus, exposure, reattach, frame delivery and captured pixels\n".utf8)
             .write(to: evidence.appendingPathComponent("result.txt"), options: .atomic)
     }
 

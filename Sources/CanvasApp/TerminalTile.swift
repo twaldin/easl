@@ -1341,7 +1341,7 @@ final class TerminalTile: NSView, TileContent {
 
     var developmentTerminalState: JSONValue {
         let attached = terminal.window != nil && surface != nil
-        let renderable = attached && countedDrawable && !terminal.isHiddenOrHasHiddenAncestor
+        let renderable = attached && countedDrawable && !terminal.isHiddenOrHasHiddenAncestor && idlePulse == nil
         return .object([
             "object": .string(objectID),
             "mounted": .bool(window != nil),
@@ -1349,7 +1349,7 @@ final class TerminalTile: NSView, TileContent {
             "surface": .bool(surface != nil),
             "running": .bool(surface?.isProcessRunning == true),
             "renderable": .bool(renderable),
-            "hidden": .bool(!renderable),
+            "idlePulsed": .bool(idlePulse != nil),
         ])
     }
 

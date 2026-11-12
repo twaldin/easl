@@ -68,6 +68,9 @@ def pixel_evidence(path, request, receipt, helper):
     ]
     if request.get("exitText"):
         regions.append(("exit", 0, 0, request["activeWidth"], 440, 2))
+    if request.get("cursorPoint"):
+        x, y = (int(value) for value in request["cursorPoint"])
+        regions.append(("cursor", x - 1, y - 1, x + 2, y + 2, 1))
     points, spans = [], {}
     for name, left, top, right, bottom, step in regions:
         start = len(points)
@@ -97,6 +100,9 @@ def pixel_evidence(path, request, receipt, helper):
     if request.get("exitText"):
         result["exitInkPixels"] = sum(r > 180 and r > g * 1.3 and r > b * 1.3 for r, g, b in pixels("exit"))
         result["matches"] = result["matches"] and result["exitInkPixels"] > 50
+    if request.get("cursorPoint"):
+        result["cursorColorFraction"] = matching_fraction("cursor", request["cursorColor"])
+        result["matches"] = result["matches"] and result["cursorColorFraction"] > 0.8
     return result
 
 
@@ -208,7 +214,7 @@ def main():
                     time.sleep(0.02)
                 if process.returncode != 0:
                     raise RuntimeError(f"Native harness exited {process.returncode}; see {output / 'stderr.log'}")
-                if len(completed) != 9 or not (output / "result.txt").is_file():
+                if len(completed) != 11 or not (output / "result.txt").is_file():
                     raise RuntimeError(f"Incomplete native proof: captured {sorted(completed)}")
                 print((output / "result.txt").read_text(), end="")
             finally:

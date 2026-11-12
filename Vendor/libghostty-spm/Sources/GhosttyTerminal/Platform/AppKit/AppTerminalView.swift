@@ -187,7 +187,7 @@
     }
 
     /// The terminal view's own display link (`NSView.displayLink`): it follows the view's screen,
-    /// fires on the main run loop, and is paused between bursts of output instead of recreated
+    /// fires on the main run loop, and is paused between targeted redraws instead of recreated
     /// (`TerminalFrameLink`).
     @available(macOS 14, *)
     @MainActor
@@ -199,7 +199,7 @@
             self.tick = tick
             super.init()
             let link = view.displayLink(target: self, selector: #selector(step))
-            // As the shared link: 60 at least while output streams (30 reads as flicker).
+            // Match the shared link's cadence for targeted redraws.
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
             link.isPaused = true
             link.add(to: .main, forMode: .common)
