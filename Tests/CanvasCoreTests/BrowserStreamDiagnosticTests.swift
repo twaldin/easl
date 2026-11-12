@@ -85,12 +85,20 @@ struct BrowserStreamDiagnosticTests {
         let cases = [
             ("\(name) didn't answer surface.stream within 12 s", "drawing_timeout"),
             ("\(name) disconnected before answering surface.stream", "drawing_disconnected"),
-            ("\(name) no longer draws \(machine)'s pages on board brd_0123456789abcdef0123", "tile_changed"),
+            ("\(name) no longer draws \(machine)'s pages on board brd_0123456789abcdef0123", "drawing_link_changed"),
             ("\(tile)'s stream ended as it opened: drawing moved", "drawing_moved"),
             ("browser tile \(tile) is not open in a window", "tile_unavailable"),
             ("browser tile \(tile)'s page doesn't run on this Mac", "drawing_unavailable"),
             ("browser tile \(tile) closed while its stream opened", "tile_changed"),
             ("browser tile \(tile) has no page area to stream", "page_area_unavailable"),
+            ("\(name) didn't answer surface.ack within 6 s", "drawing_timeout"),
+            ("\(name) didn't answer surface.progress within 6 s", "drawing_timeout"),
+            ("\(name) didn't answer surface.input within 6 s", "drawing_timeout"),
+            ("\(name) disconnected before answering surface.ack", "drawing_disconnected"),
+            ("\(name) disconnected before answering surface.progress", "drawing_disconnected"),
+            ("\(name) disconnected before answering surface.input", "drawing_disconnected"),
+            ("the streamed tile closed", "tile_closed"),
+            ("this Mac hasn't delivered the stream's last 32 batches yet (a menu or drag here holds its event queue); nothing in this batch was accepted", "input_backlog"),
         ]
         for (message, expected) in cases {
             let failure = EaslConnection.Failure("unavailable", message,

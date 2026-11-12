@@ -17,6 +17,7 @@ public enum BrowserStreamDiagnostic {
         case setup_budget_exceeded, viewer_left, close_unclassified
         case drawing_timeout, drawing_disconnected, tile_changed, tile_unavailable, drawing_unavailable
         case frame_overflow, frame_gap, frame_assembly_failed, decode_failed, input_queue_full
+        case drawing_link_changed, input_backlog
     }
     public struct Record: Sendable {
         public let side: Side, event: Event, reason: Reason, route: Route, operation: Operation
@@ -31,6 +32,12 @@ public enum BrowserStreamDiagnostic {
         }
     }
     private static let logger = Logger(subsystem: "net.waldin.easl", category: "browser-stream")
+    private static let clientFailures = [
+        (" didn't answer surface.stream within 12 s", " disconnected before answering surface.stream"),
+        (" didn't answer surface.ack within 6 s", " disconnected before answering surface.ack"),
+        (" didn't answer surface.progress within 6 s", " disconnected before answering surface.progress"),
+        (" didn't answer surface.input within 6 s", " disconnected before answering surface.input"),
+    ]
 
     public static func safeRecord(side: Side, event: Event, reason: Reason = .none, tile: String?, stream: String? = nil,
                                   local: String? = nil, drawing: String? = nil, route: Route, operation: Operation = .stream,
@@ -93,6 +100,7 @@ public enum BrowserStreamDiagnostic {
         case "this connection can't carry a browser stream": return .peer_stream_unsupported
         case "this board's window closed": return .window_closed
         case "this Mac's WebKit can't run the browser relay's page helper without acting as a user gesture": return .page_helper_unsupported
+        case "the streamed tile closed": return .tile_closed
         default: break
         }
         if let tile {
@@ -114,8 +122,16 @@ public enum BrowserStreamDiagnostic {
             if message == "draws on \(drawingLabel), which is offline" { return .drawing_offline }
             if message == "draws on \(drawingLabel), which does not serve surface.stream" { return .drawing_surface_unsupported }
         }
-        if clientResponse(message, suffix: " didn't answer surface.stream within 12 s") { return .drawing_timeout }
-        if clientResponse(message, suffix: " disconnected before answering surface.stream") { return .drawing_disconnected }
+        for (timeout, disconnected) in clientFailures {
+            if clientResponse(message, suffix: timeout) { return .drawing_timeout }
+            if clientResponse(message, suffix: disconnected) { return .drawing_disconnected }
+        }
+        let backlogPrefix = "this Mac hasn't delivered the stream's last "
+        let backlogSuffix = " batches yet (a menu or drag here holds its event queue); nothing in this batch was accepted"
+        if message.hasPrefix(backlogPrefix), message.hasSuffix(backlogSuffix) {
+            let count = message.dropFirst(backlogPrefix.count).dropLast(backlogSuffix.count)
+            if !count.isEmpty, count.utf8.allSatisfy({ (48...57).contains($0) }) { return .input_backlog }
+        }
         if let boundary = message.range(of: " no longer draws ", options: .backwards),
            clientName(message[..<boundary.lowerBound]) {
             let fields = message[boundary.upperBound...].split(separator: " ", maxSplits: 4, omittingEmptySubsequences: false)
@@ -123,7 +139,7 @@ public enum BrowserStreamDiagnostic {
                fields[1] == "pages", fields[2] == "on", fields[3] == "board",
                fields[4].hasPrefix("brd_"), fields[4].utf8.count == 24,
                fields[4].utf8.dropFirst(4).allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) {
-                return .tile_changed
+                return .drawing_link_changed
             }
         }
         return code == "invalid_params" ? .invalid_request : .backend_unclassified
