@@ -129,6 +129,34 @@ What the app and easld both compute is pinned by fixtures in `Tests/Fixtures/` t
 
 `scripts/test_host_lsp_lifetime.py` runs the host language launcher as a real subprocess on Linux and macOS. The link-death regression reads the `easl/hostProcess` PID notification before killing the input link, then checks that the server is reaped. It does not prove cleanup before PID delivery. Separate retained real-SSH proof holds that notification back, verifies that the viewer receives zero bytes, and kills the SSH link before checking the host process. Other script cases check byte-for-byte LSP forwarding and isolation from unrelated environment files. The scripts run through the Python discovery command above and need Bun, as the host launcher does.
 
+### Measure browser capture main-thread work
+
+Use a queued macOS GUI guest for execution. Build the base (`80d4d0fc05b8f291163a907080d4a9fc2b9c1ee5`) and candidate separately with the same toolchain. Invoke the candidate checkout's runner for both builds, passing each build's bin path. The fixture uses existing production APIs and needs no base patch.
+
+```sh
+	BASE=/absolute/path/to/base-checkout
+	CANDIDATE="$PWD"
+	swift build --package-path "$BASE" --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	swift build --package-path "$CANDIDATE" --build-system native -c release -j 2 --product Easl -Xswiftc -enable-testing
+	BASE_BIN="$(swift build --package-path "$BASE" --build-system native -c release --show-bin-path)"
+	FIX_BIN="$(swift build --package-path "$CANDIDATE" --build-system native -c release --show-bin-path)"
+	# Headless macOS: link only. Do not launch AppKit or WebKit.
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-compile --compile-only
+	# CANDIDATE contains this runner; base must finish all phases, then fail the 15 ms gate.
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$BASE_BIN" --output /absolute/scratch/capture-base
+	python3 "$CANDIDATE/Tests/BrowserCapture/run.py" --bin-path "$FIX_BIN" --output /absolute/scratch/capture-fix --compare /absolute/scratch/capture-base
+```
+
+`BrowserCapture` streams a deterministic local image-rich page through the real socket, `BrowserSurfaceHost`, and `SurfaceStream`. The runner writes `fixture.png` with the original 512 × 512 seeded RGBA pixels before launch. The page decodes 96 copies and requires every image to have those natural dimensions before measurement. Fixture creation does not depend on browser canvas serialization, which returned the empty `data:,` URL on hosted macOS CI. The test acknowledges frames, checks decoded dimensions, the 4MP budget, viewport, scale and requested PNG or JPEG format, and requires alternating red and blue markers with image content. Each retained phase must cover a sequenced focus input in its input fence. It awaits frame events rather than polling during measurement. Exact raster-size preservation is checked against base with `--compare`, not an assumed WebKit rounding rule. This does not prove native click presentation.
+
+The default page viewport is 4800 × 3142 points. Use identical `--width`, `--height`, `--frames`, and `--format` on both builds. PNG is the default. `results.json` includes `surface.capture`, `main.stretch50`, and `main.stretch250` under the metrics counters (absent counters mean zero), frame records, and `maxMainMs`. The latter observes real busy run-loop turns with the same activity boundaries as Metrics, including turns below 50 ms. It is not snapshot wall time. The interval includes the streaming fixture's own socket and page-update work. Decoding, pixel scans, and image artifact writes run off main.
+
+Results also record the window's backing scale and display-color-space name. Pixel comparison refuses missing or different display conditions. The default 15 ms busy-turn limit comes from five interleaved release runs per arm at the fitted 4MP cap on a Swift 6.4 guest, backing scale 1 and Apple Virtual color space: base maxima 20.04–22.85 ms, candidate 5.82–6.34 ms. Separate profiles place snapshot conversion on main before the fix and on a worker afterward. This is a regression threshold for this fixture, not a universal latency SLA.
+
+CI explicitly uses `--ci-timing-report-only`: frame, focus-fence and pixel assertions remain strict, but shared-runner timing is reported rather than enforced. Normal guest runs enforce 15 ms; `--max-main-ms` overrides that limit when qualifying another measured environment. A timing failure counts as baseline proof only when `results.json` contains every requested phase and an exceeded limit. A timeout or page/frame failure does not count.
+
+Keep each phase's encoded image and RGBA artifact. `--compare` reports maximum channel error in `comparison.json` and defaults to exact pixels. Use `--max-channel-error` only with an explicitly justified tolerance. Compare the same guest, dimensions, format and phase count. Each output directory retains its own linked executable through cleanup; repeated runs never overwrite compared builds or an earlier run's binary.
+
 ### Browser response and sharp-settle gates
 
 `scripts/perf-browser-gates.py` observes an existing counter-and-marker page in an isolated native viewer. Its module help documents the fixture and JSON config. Supply the viewer's exact PID, window, current stream, and measured viewport geometry. Use the same native input helper, route, page, and compiler for before and after, retaining source and bundle hashes.
