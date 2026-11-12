@@ -150,6 +150,16 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         return remote.mirror.drawingMachines.map { !$0.contains(machine.id) } ?? false
     }
 
+    private func diagnose(_ event: BrowserStreamDiagnostic.Event, reason: BrowserStreamDiagnostic.Reason = .none,
+                          stream: String? = nil, operation: BrowserStreamDiagnostic.Operation = .stream, failure: (any Error)? = nil,
+                          identity: (tile: ObjectID, drawing: DrawingMachine?)? = nil) {
+        let drawing = if let identity { identity.drawing } else { DrawingMachine(object.props) }
+        BrowserStreamDiagnostic.log(BrowserStreamDiagnostic.safeRecord(side: .viewer, event: event, reason: reason,
+            tile: identity?.tile ?? object.id, stream: stream, local: ClientIdentity.thisMac.id, drawing: drawing?.id,
+            route: relayed ? .relay : .socket, operation: operation, failure: failure,
+            drawingLabel: drawing.map { $0.host.isEmpty ? $0.id : $0.host }))
+    }
+
     required init?(coder: NSCoder) { fatalError("unused") }
 
     nonisolated override var isFlipped: Bool { true }
@@ -265,10 +275,15 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     /// Stop the stream, release held buttons when the link can still take a request, and close SSH.
     /// Input waiting in the local buffer is dropped, not resent on the next stream.
-    private func endLink() {
+    private func endLink(record: BrowserStreamDiagnostic.Record? = nil) {
         linkEpoch += 1
         let connection = owned.take()
         let stream = streamID
+        if let record {
+            BrowserStreamDiagnostic.log(record)
+        } else if let stream {
+            diagnose(.closed, reason: .requested_stop, stream: stream, operation: .close)
+        }
         let release = releaseEvents()
         dropStreamState()
         retry?.cancel()
@@ -337,12 +352,16 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 openStream()
             case .connecting:
                 if online || streamID != nil {
+                    diagnose(.transport_lost, reason: .reconnecting, stream: streamID, operation: .link)
                     online = false
                     dropStream(reason: "Reconnecting to \(remote.host.name)…")
                 } else {
                     setLinkStatus((reached ? "Reconnecting to " : "Connecting to ") + "\(remote.host.name)…")
                 }
             case .offline:
+                if online || opening || streamID != nil {
+                    diagnose(.transport_lost, reason: .offline, stream: streamID, operation: .link)
+                }
                 online = false
                 var reason = "\(remote.host.name) is offline"
                 if let problem = owned.current()?.problem, !problem.isEmpty { reason += " (\(problem))" }
@@ -360,7 +379,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 if let frame = SurfaceWire.frame(event.data) {
                     receive(frame)
                 } else if streamID != nil, event.data["stream"]?.string == streamID {
-                    restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+                    restartStream(reason: "Couldn't read a frame from \(remote.host.name)", cause: .invalid_frame)
                 }
             case "surface.dialog":
                 if let dialog = SurfaceWire.dialog(event.data) { receive(dialog) }
@@ -399,6 +418,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         retry = nil
         let generation = streamEpoch
         let id = object.id
+        let requestIdentity = (tile: id, drawing: DrawingMachine(object.props))
         let scale = min(2, max(0.25, Double(window?.backingScaleFactor ?? 2)))
         runStreamTask { [weak self] in
             do {
@@ -415,6 +435,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 }
                 self.opening = false
                 guard generation == self.streamEpoch, self.wantsLive, self.owned.current() === connection else {
+                    self.diagnose(.discarded, reason: .superseded, stream: result["stream"]?.string, identity: requestIdentity)
                     if let stream = result["stream"]?.string {
                         _ = try? await connection.request("surface.stop", .object(["stream": .string(stream)]), timeout: .seconds(2))
                     }
@@ -422,10 +443,12 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 }
                 guard let stream = result["stream"]?.string, stream.hasPrefix("str_"),
                       let w = result["size"]?["w"]?.number, let h = result["size"]?["h"]?.number, w > 0, h > 0 else {
+                    self.diagnose(.rejected, reason: .invalid_reply, stream: result["stream"]?.string, identity: requestIdentity)
                     self.failOpen("invalid_params")
                     return
                 }
                 self.streamID = stream
+                self.diagnose(.admitted, stream: stream, identity: requestIdentity)
                 self.supportsScrollGestures = result["scrollGestures"]?.bool == true
                 self.pageSize = CGSize(width: w, height: h)
                 self.credit = .owingZero
@@ -437,14 +460,17 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             } catch is CancellationError {
                 self?.opening = false
             } catch let failure as EaslConnection.Failure where failure.code == "unavailable" {
+                self?.diagnose(.rejected, failure: failure, identity: requestIdentity)
                 guard let self, generation == self.streamEpoch else { return }
                 self.opening = false
                 if connection.state == .online { self.failOpen(failure.code) }
             } catch let failure as EaslConnection.Failure {
+                self?.diagnose(.rejected, failure: failure, identity: requestIdentity)
                 self?.opening = false
                 guard let self, generation == self.streamEpoch else { return }
                 self.failOpen(failure.code)
             } catch {
+                self?.diagnose(.rejected, failure: error, identity: requestIdentity)
                 self?.opening = false
                 guard let self, generation == self.streamEpoch else { return }
                 self.failOpen("unavailable")
@@ -454,7 +480,6 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
 
     private func failOpen(_ code: String) {
         setLinkStatus("Stream failed (\(code))")
-        if retryDelay == 1 { NSLog("easl: remote browser stream %@", code) }
         if code != "unsupported", code != "invalid_params" { scheduleRetry() }
     }
 
@@ -484,6 +509,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 return
             } catch {
                 guard generation == self.streamEpoch, self.streamID == stream else { return }
+                self.diagnose(.failed, stream: stream, operation: .ack, failure: error)
                 self.endLink()
                 self.setLinkStatus("Frame credit failed")
                 self.startLink()
@@ -500,7 +526,8 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     }
 
     // MARK: Frames
-    private func restartStream(reason: String) {
+    private func restartStream(reason: String, cause: BrowserStreamDiagnostic.Reason) {
+        diagnose(.failed, reason: cause, stream: streamID, operation: .frame)
         let stream = streamID
         let connection = owned.current()
         dropStream(reason: reason)
@@ -516,7 +543,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         switch credit {
         case .owingZero:
             guard stashed.count < 2 else {
-                restartStream(reason: "Too many frames from \(remote.host.name)")
+                restartStream(reason: "Too many frames from \(remote.host.name)", cause: .frame_overflow)
                 return
             }
             stashed.append(frame)
@@ -525,11 +552,11 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         case .waiting where frame.supersedes.map({ $0 <= lastAcked + 1 }) == true && frame.seq > lastAcked + 1:
             accept(frame)
         case .waiting where frame.seq > lastAcked + 1:
-            restartStream(reason: "Missed a frame from \(remote.host.name)")
+            restartStream(reason: "Missed a frame from \(remote.host.name)", cause: .frame_gap)
         case .decoding(let seq) where decodingRefinement == seq && frame.supersedes.map({ $0 <= seq }) == true && frame.seq > seq:
             accept(frame)
         case .decoding(let seq) where frame.seq > seq:
-            restartStream(reason: "Missed a frame from \(remote.host.name)")
+            restartStream(reason: "Missed a frame from \(remote.host.name)", cause: .frame_gap)
         case .waiting, .decoding, .idle:
             break
         }
@@ -557,7 +584,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             }
             if let completed { beginDecode(completed) }
         } catch {
-            restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)")
+            restartStream(reason: "Couldn't assemble a frame from \(remote.host.name)", cause: .frame_assembly_failed)
         }
     }
 
@@ -571,6 +598,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                 return
             } catch {
                 guard let self, generation == self.streamEpoch, self.streamID == stream else { return }
+                self.diagnose(.failed, stream: stream, operation: .progress, failure: error)
                 self.endLink()
                 self.setLinkStatus("Refresh transfer failed")
                 self.startLink()
@@ -599,7 +627,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
     private func finishDecode(_ frame: HostFrame, _ decoded: DecodedFrame) {
         guard case .decoding(frame.seq) = credit, frame.stream == streamID else { return }
         guard let cg = decoded.image else {
-            restartStream(reason: "Couldn't read a frame from \(remote.host.name)")
+            restartStream(reason: "Couldn't read a frame from \(remote.host.name)", cause: .decode_failed)
             return
         }
         decodingRefinement = nil
@@ -613,6 +641,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         image = shown
         retryDelay = 1
         picture.image = shown
+        if lastAcked == 0 { diagnose(.usable, stream: frame.stream, operation: .frame) }
         if DevInput.surfaceTrace {
             DevInput.traceSurface(stage: "image.assigned", stream: frame.stream, seq: frame.seq, input: frame.input, refresh: frame.refresh, format: frame.format.rawValue)
         }
@@ -681,6 +710,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         }
         while outbound.count >= 128, dropOldestMotion() {}
         guard outbound.count < 128 else {
+            diagnose(.failed, reason: .input_queue_full, stream: streamID, operation: .input)
             endLink()
             setLinkStatus("Input queue full. Reopen the tile to continue.")
             return nil
@@ -783,6 +813,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
                     setNotice(message)
                     continue
                 }
+                diagnose(.failed, stream: stream, operation: .input, failure: error)
                 endLink()
                 setNotice(message)
                 startLink()
@@ -1372,6 +1403,7 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
             setNotice(Self.refusedLine(notice.reason))
         case "closed":
             guard notice.stream == streamID else { return }
+            diagnose(.closed, reason: BrowserStreamDiagnostic.closeReason(notice.reason), stream: notice.stream, operation: .close)
             dropStream(reason: closedLine(notice.reason))
             // Reopen transient failures without replaying accepted input.
             if notice.reason == "drawing machine offline" || notice.reason == "drawing moved" ||
@@ -1459,13 +1491,22 @@ final class RemoteBrowserTile: NSView, TileContent, @preconcurrency NSTextInputC
         let idChanged = object.id != self.object.id
         let moved = relayed && DrawingMachine(object.props)?.id != DrawingMachine(self.object.props)?.id
         let zoomChanged = object.zoom != self.object.zoom
+        let closingRecord: BrowserStreamDiagnostic.Record?
+        if (idChanged || moved), wantsLive, let stream = streamID {
+            closingRecord = BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .closed,
+                reason: moved ? .drawing_moved : .tile_changed, tile: self.object.id, stream: stream,
+                local: ClientIdentity.thisMac.id, drawing: DrawingMachine(self.object.props)?.id,
+                route: relayed ? .relay : .socket, operation: .close)
+        } else {
+            closingRecord = nil
+        }
         self.object = object
         if !chrome.isEditing { chrome.setAddress(object.props["url"]?.string ?? "") }
         if zoomChanged { layoutParts() }
         refreshStatus()
         guard idChanged || moved, wantsLive else { return }
         retryDelay = 1
-        endLink()
+        endLink(record: closingRecord)
         startLink()
     }
 
