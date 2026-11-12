@@ -78,6 +78,33 @@ struct BrowserStreamDiagnosticTests {
         }
     }
 
+    @Test func relayAdmissionReasonsDoNotRetainClientMetadata() {
+        let secret = "PRIVATE_CLIENT_é\nhttps://private.invalid/token"
+        let tile = IDs.make("obj"), machine = IDs.make("mch")
+        let name = "easl 0.3.9 on \(secret) (client \(IDs.make("cli")))"
+        let cases = [
+            ("\(name) didn't answer surface.stream within 12 s", "drawing_timeout"),
+            ("\(name) disconnected before answering surface.stream", "drawing_disconnected"),
+            ("\(name) no longer draws \(machine)'s pages on board brd_0123456789abcdef0123", "tile_changed"),
+            ("\(tile)'s stream ended as it opened: drawing moved", "drawing_moved"),
+            ("browser tile \(tile) is not open in a window", "tile_unavailable"),
+            ("browser tile \(tile)'s page doesn't run on this Mac", "drawing_unavailable"),
+            ("browser tile \(tile) closed while its stream opened", "tile_changed"),
+            ("browser tile \(tile) has no page area to stream", "page_area_unavailable"),
+        ]
+        for (message, expected) in cases {
+            let failure = EaslConnection.Failure("unavailable", message,
+                data: .object(["detail": .string(secret)]), isHostResponse: true)
+            let record = BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .rejected,
+                tile: tile, drawing: machine, route: .relay, failure: failure)
+            #expect(record.reason.rawValue == expected)
+            #expect(!record.line.contains(secret) && !record.line.contains("PRIVATE_CLIENT"))
+            let unknown = EaslConnection.Failure("unavailable", message + secret, isHostResponse: true)
+            #expect(BrowserStreamDiagnostic.safeRecord(side: .viewer, event: .rejected,
+                tile: tile, drawing: machine, route: .relay, failure: unknown).reason == .backend_unclassified)
+        }
+    }
+
     private func surfaceFailure(_ tile: String, on connection: EaslConnection) async throws -> EaslConnection.Failure {
         var failure: EaslConnection.Failure?
         do {
