@@ -57,6 +57,8 @@
         override open func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             removeWindowObservers()
+            // Leave the previous window's frame clock; AppKit can move a view between windows directly.
+            core.stopDisplayLink()
             if window != nil {
                 // SwiftUI/AppKit can temporarily detach and reattach the terminal view while
                 // diffing the view hierarchy. Rebuilding on every reattach discards Ghostty's
@@ -105,7 +107,6 @@
                     (delegate as? TerminalViewState)?.replayPendingFocusIfNeeded()
                 }
             } else {
-                core.stopDisplayLink()
                 core.setFocus(false)
             }
         }

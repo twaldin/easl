@@ -88,7 +88,7 @@
             wantsLayer = true
             if #available(macOS 14, *) {
                 core.makeFrameLink = { [weak self] tick in
-                    self.map { ViewFrameLink(view: $0, tick: tick) }
+                    self.map { WindowFrameLink(view: $0, tick: tick) }
                 }
             }
 
@@ -186,39 +186,116 @@
         }
     }
 
-    /// The terminal view's own display link (`NSView.displayLink`): it follows the view's screen,
-    /// fires on the main run loop, and is paused between targeted redraws instead of recreated
-    /// (`TerminalFrameLink`).
+    /// A terminal's membership in its window's `WindowFrameClock` (`TerminalFrameLink`): resuming
+    /// joins the clock of the window the view is in, pausing leaves it.
     @available(macOS 14, *)
     @MainActor
-    final class ViewFrameLink: NSObject, TerminalFrameLink {
-        private var link: CADisplayLink?
-        private let tick: @MainActor () -> Void
+    final class WindowFrameLink: TerminalFrameLink {
+        private weak var view: NSView?
+        fileprivate let tick: @MainActor () -> Void
+        private var clock: WindowFrameClock?
 
         init(view: NSView, tick: @escaping @MainActor () -> Void) {
+            self.view = view
             self.tick = tick
-            super.init()
-            let link = view.displayLink(target: self, selector: #selector(step))
+        }
+
+        var isPaused: Bool {
+            get { clock == nil }
+            set {
+                if newValue {
+                    clock?.leave(self)
+                    clock = nil
+                } else if clock == nil, let window = view?.window {
+                    let clock = WindowFrameClock.of(window)
+                    self.clock = clock
+                    clock.join(self)
+                }
+            }
+        }
+
+        func invalidate() {
+            isPaused = true
+        }
+    }
+
+    /// One `NSWindow.displayLink` per window: it follows the window's screen, fires on the main
+    /// run loop, and ticks every joined terminal from one callout, so their targeted draws land in
+    /// one run-loop pass instead of one link and callout per terminal. Paused while no terminal is
+    /// joined, never recreated; the window owns it.
+    @available(macOS 14, *)
+    @MainActor
+    final class WindowFrameClock {
+        /// The link retains its target, so the target must not retain the clock.
+        @MainActor
+        private final class Target: NSObject {
+            weak var clock: WindowFrameClock?
+
+            @objc func step(_: CADisplayLink) {
+                clock?.step()
+            }
+        }
+
+        private static var key: UInt8 = 0
+        private let link: CADisplayLink
+        private var members: [WindowFrameLink] = []
+        private var isDraining = false
+        /// The drain's next index and end; `leave` shifts both with the array.
+        private var cursor = 0
+        private var end = 0
+
+        static func of(_ window: NSWindow) -> WindowFrameClock {
+            if let clock = objc_getAssociatedObject(window, &key) as? WindowFrameClock {
+                return clock
+            }
+            let clock = WindowFrameClock(window: window)
+            objc_setAssociatedObject(window, &key, clock, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            return clock
+        }
+
+        private init(window: NSWindow) {
+            let target = Target()
+            let link = window.displayLink(target: target, selector: #selector(Target.step))
             // Match the shared link's cadence for targeted redraws.
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
             link.isPaused = true
             link.add(to: .main, forMode: .common)
             self.link = link
+            target.clock = self
         }
 
-        var isPaused: Bool {
-            get { link?.isPaused ?? true }
-            set { link?.isPaused = newValue }
+        deinit {
+            MainActor.assumeIsolated {
+                link.invalidate()
+            }
         }
 
-        /// The link retains its target: invalidating it lets both go.
-        func invalidate() {
-            link?.invalidate()
-            link = nil
+        fileprivate func join(_ member: WindowFrameLink) {
+            members.append(member)
+            link.isPaused = false
         }
 
-        @objc private func step(_: CADisplayLink) {
-            tick()
+        fileprivate func leave(_ member: WindowFrameLink) {
+            guard let index = members.firstIndex(where: { $0 === member }) else { return }
+            members.remove(at: index)
+            if index < end { end -= 1 }
+            if index < cursor { cursor -= 1 }
+            if members.isEmpty { link.isPaused = true }
+        }
+
+        /// Members that join during the drain wait for the next frame; members that leave are
+        /// skipped. A nested run loop inside a tick does not restart the drain it interrupted.
+        fileprivate func step() {
+            guard !isDraining else { return }
+            isDraining = true
+            cursor = 0
+            end = members.count
+            while cursor < end {
+                let member = members[cursor]
+                cursor += 1
+                member.tick()
+            }
+            isDraining = false
         }
     }
 #endif

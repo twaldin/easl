@@ -9,10 +9,11 @@ import Foundation
 import GhosttyKit
 import MSDisplayLink
 
-/// A frame clock of the platform view's own (AppKit: `NSView.displayLink`), paused while no
-/// frame is owed and resumed when one is, never recreated. MSDisplayLink's macOS driver creates a
-/// new `CVDisplayLink` (and its thread) every time the link restarts, so a terminal that prints
-/// every few hundred milliseconds started a display-link thread per line.
+/// A frame clock the platform view supplies (AppKit: membership in its window's shared
+/// `NSWindow.displayLink`), paused while no frame is owed and resumed when one is, never recreated.
+/// MSDisplayLink's macOS driver creates a new `CVDisplayLink` (and its thread) every time the link
+/// restarts, so a terminal that prints every few hundred milliseconds started a display-link
+/// thread per line.
 @MainActor
 protocol TerminalFrameLink: AnyObject {
     var isPaused: Bool { get set }
