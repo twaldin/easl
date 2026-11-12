@@ -31,7 +31,7 @@ export function metricsText(m: Metrics): string {
   }
   const draws = c("terminal.draw"), drawsTotal = c("terminal.draw", "total");
   if (drawsTotal.n) {
-    // The wrapper's terminal redraws: a board nobody is watching should show few (IdleRedraw, ~2 per terminal per second).
+    // Completed frames delivered to terminal layers, not screen presentations.
     lines.push(`draws    ${(draws.n / 60).toFixed(1)}/s over 60 s (total ${drawsTotal.n}); terminals live ${m.gauges["live.TerminalTile"] ?? 0}`);
   }
   for (const h of m.process.helpers ?? []) lines.push(`         ${h.name} ${h.pid}: ${h.footprintMB} MB${h.cpuPercent === undefined ? "" : `, ${h.cpuPercent}%`}`);

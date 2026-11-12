@@ -620,7 +620,7 @@ scripts/dev.sh input text "hello"                   # insert into the first resp
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
-scripts/dev.sh input state                         # app.log: window, closed/selected/minimized state, ordered native tab-group window ids, viewport, responder, and object/selection hashes; no source text
+scripts/dev.sh input state                         # app.log: native windows, tabs, viewport, responder, object/selection hashes, and per-terminal mounted/live/surface/running/renderable/idlePulsed census; no source text
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
@@ -702,7 +702,7 @@ The native regression also checks that a draft typed before deferred normalizati
 
 ### Performance probes
 
-`EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause). `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized. `input idle on|off|auto` controls both terminal redraw throttling and the automatic-update idle gate. `on` supplies 600 idle seconds, enough for the ten-minute update threshold and the one-minute redraw threshold. `off` supplies zero, and `auto` resumes sampling input across the Mac's login session. The pinned value remains until `idle off` or `idle auto`; replayed keys do not clear it. Do not use `idle on` on an instance with automatic installation enabled unless you intend to allow installation. A span's `counts` carry `terminal.draw`, the redraws. At the end of a span `app.log` gets one line per phase:
+`EASL_DEV_PERF=1` (set by `dev.sh` and `perf-replica.sh`) turns on `DevPerf` (`Sources/CanvasApp/DevPerf.swift`). Every input burst becomes a span with a `gesture` phase and a 1.5 s `settle` phase (the liveness pass, card and live flips, and the redraws they cause). `input perf [ms]` is an idle span (default 5000 ms), which also works while the window is minimized. `input idle on|off|auto` controls both terminal redraw throttling and the automatic-update idle gate. `on` supplies 600 idle seconds, enough for the ten-minute update threshold and the one-minute redraw threshold. `off` supplies zero, and `auto` resumes sampling input across the Mac's login session. The pinned value remains until `idle off` or `idle auto`; replayed keys do not clear it. Do not use `idle on` on an instance with automatic installation enabled unless you intend to allow installation. A span's `counts` carry `terminal.draw`, completed frames delivered to native terminal layers, not screen presentations. Values are not comparable with the former wrapper-only count. At the end of a span `app.log` gets one line per phase:
 
 With probes enabled, `applicationDidFinishLaunching` begins a `launch restore` span before scheduling board restoration. The first explicit perf or input-burst span ends and logs it; ending a span includes its still-open partial wake. The launch span initially has no window or display link, so zero frames does not mean no main-thread work. Bootstrap before that callback is not covered. For startup measurements, leave this single span active through held Git, completed restoration, and settle; a later idle span is not startup coverage. The lifetime `app.metrics` monitor also observes timer boundaries and is not a substitute for the same unsplit awake interval. Keep `sample`, accessibility walks, and pixel captures in separate diagnostic runs; their measured overruns remain evidence, not plain timing passes. Native tab switching and window-manager minimize/restore controls run after the board-load timing span, in the claimed GUI guest.
 
@@ -836,6 +836,32 @@ For pixel proof, use a real 1x display mode and confirm the window's backing sca
 Compare WindowServer crops of the same terminal lines against main after ⌘-scroll, a pan and ⌘0,
 then after a pinch and ⌘0. Use whole-device-pixel body sizes at 100% board and content zoom.
 Fractional body sizes can still stretch Ghostty's drawable. An in-process render is not pixel proof.
+
+### Terminal wakeup and native-frame regression
+
+Run only in the claimed GUI guest, using a frozen native build and the existing pixel helpers:
+
+```sh
+nice -n 10 swift build --build-system native -c release -j 2 --product Easl
+nice -n 10 swiftc -O scripts/perf-window.swift -o "$G/perf-window"
+nice -n 10 swiftc -O Tests/BrowserScrolling/Pixels.swift -o "$G/pixels"
+python3 Tests/TerminalWakeup/run.py \
+  --bin-path "$(swift build --build-system native -c release --show-bin-path)" \
+  --window-helper "$G/perf-window" --pixel-helper "$G/pixels" --output "$G/wakeup"
+```
+
+The regression links the actual terminal modules from Easl. It waits for native IO sizing before
+painting, then checks ordinary output and native frame delivery, all-hidden title/cwd/bell
+mailbox pressure, hidden exit, reveal, configuration, wrapped layout, filled/hollow focus, exposure, replacement,
+and unfocused exit text. Eleven fresh exact-PID/window captures require marker OCR and native sRGB
+pixel samples. No manual app ticks, `waitForPendingOutput`, `view.snapshot`, or Pillow are used.
+It does not measure key-to-pixel latency; use the remote terminal echo procedure above.
+
+For a separate build Mac, `--compile-only --bin-path … --output …` compiles without launching.
+Retain the executable and package it with the Ghostty runtime resource bundle in a test app whose
+principal class is `NSApplication`. Run that retained artifact with `--executable …` in the guest,
+using the same two helpers. Never launch the test app on the build Mac.
+
 
 ### Default board directory regression
 

@@ -14,6 +14,23 @@
         let core = TerminalSurfaceCoordinator()
         var metalLayer: CAMetalLayer?
         var inputHandler: TerminalKeyEventHandler?
+        private var nativeFrameObservation: NSKeyValueObservation?
+
+        override open var layer: CALayer? {
+            didSet {
+                nativeFrameObservation = layer?.observe(\.contents) { [weak self] layer, _ in
+                    guard layer.contents != nil else { return }
+                    let deliveredLayer = ObjectIdentifier(layer)
+                    MainActor.assumeIsolated {
+                        guard let self, self.layer.map(ObjectIdentifier.init) == deliveredLayer,
+                              self.core.surface != nil else { return }
+                        self.enforceMetalLayerScale()
+                        // A synchronous draw still holds Ghostty's renderer lock here.
+                        DispatchQueue.main.async { [weak self] in self?.surfaceDidDraw() }
+                    }
+                }
+            }
+        }
 
         // Grouped view state, one struct per concern — same convention as
         // the UIKit twin: each state type is defined in the extension file
@@ -42,7 +59,7 @@
             core.setDisplayVisible(visible)
         }
 
-        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
+        /// A completed native frame reached the view's layer, not necessarily the screen.
         open func surfaceDidDraw() {}
 
         /// Adjusts this surface's resize coalescing window without rebuilding
@@ -112,10 +129,6 @@
             core.onMetricsUpdate = { [weak self] in
                 self?.updateMetalLayerMetrics()
             }
-            core.onPostRender = { [weak self] in
-                self?.enforceMetalLayerScale()
-                self?.surfaceDidDraw()
-            }
         }
 
         // Upstream's rule: Copy is offered whenever ghostty has a selection.
@@ -174,7 +187,7 @@
     }
 
     /// The terminal view's own display link (`NSView.displayLink`): it follows the view's screen,
-    /// fires on the main run loop, and is paused between bursts of output instead of recreated
+    /// fires on the main run loop, and is paused between targeted redraws instead of recreated
     /// (`TerminalFrameLink`).
     @available(macOS 14, *)
     @MainActor
@@ -186,7 +199,7 @@
             self.tick = tick
             super.init()
             let link = view.displayLink(target: self, selector: #selector(step))
-            // As the shared link: 60 at least while output streams (30 reads as flicker).
+            // Match the shared link's cadence for targeted redraws.
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
             link.isPaused = true
             link.add(to: .main, forMode: .common)
