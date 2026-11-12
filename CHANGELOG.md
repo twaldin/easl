@@ -9,6 +9,7 @@ Each version's section is its GitHub release's notes.
 - HTML manifests omit full state and show key counts and pending submission IDs. `object.get` still returns full state.
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
+- Terminal application wakeups drain notifications without redrawing every visible terminal. Native output rendering and targeted layout, focus, configuration, reveal, and child-exit draws remain active.
 
 ### Compatibility
 

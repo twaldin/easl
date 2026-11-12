@@ -1,17 +1,41 @@
 diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
 --- a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
 +++ b/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift
-@@ -42,6 +42,9 @@
+@@ -14,6 +14,23 @@
+         let core = TerminalSurfaceCoordinator()
+         var metalLayer: CAMetalLayer?
+         var inputHandler: TerminalKeyEventHandler?
++        private var nativeFrameObservation: NSKeyValueObservation?
++
++        override open var layer: CALayer? {
++            didSet {
++                nativeFrameObservation = layer?.observe(\.contents) { [weak self] layer, _ in
++                    guard layer.contents != nil else { return }
++                    let deliveredLayer = ObjectIdentifier(layer)
++                    MainActor.assumeIsolated {
++                        guard let self, self.layer.map(ObjectIdentifier.init) == deliveredLayer,
++                              self.core.surface != nil else { return }
++                        self.enforceMetalLayerScale()
++                        // A synchronous draw still holds Ghostty's renderer lock here.
++                        DispatchQueue.main.async { [weak self] in self?.surfaceDidDraw() }
++                    }
++                }
++            }
++        }
+ 
+         // Grouped view state, one struct per concern — same convention as
+         // the UIKit twin: each state type is defined in the extension file
+@@ -42,6 +59,9 @@
              core.setDisplayVisible(visible)
          }
  
-+        /// A frame was drawn (`TerminalSurfaceCoordinator.tick`): a host counts redraws here.
++        /// A completed native frame reached the view's layer, not necessarily the screen.
 +        open func surfaceDidDraw() {}
 +
          /// Adjusts this surface's resize coalescing window without rebuilding
          /// it. Overrides `TerminalSurfaceOptions.resizeThrottleMilliseconds`,
          /// which is the declarative home for the same policy and the one every
-@@ -66,6 +69,11 @@
+@@ -66,6 +86,11 @@
  
          func commonInit() {
              wantsLayer = true
@@ -23,15 +47,17 @@ diff --git a/Sources/GhosttyTerminal/Platform/AppKit/AppTerminalView.swift b/Sou
  
              let metal = CAMetalLayer()
              metal.device = MTLCreateSystemDefaultDevice()
-@@ -106,6 +114,7 @@
+@@ -104,9 +129,6 @@
+             core.onMetricsUpdate = { [weak self] in
+                 self?.updateMetalLayerMetrics()
              }
-             core.onPostRender = { [weak self] in
-                 self?.enforceMetalLayerScale()
-+                self?.surfaceDidDraw()
-             }
+-            core.onPostRender = { [weak self] in
+-                self?.enforceMetalLayerScale()
+-            }
          }
  
-@@ -163,4 +172,40 @@
+         // Upstream's rule: Copy is offered whenever ghostty has a selection.
+@@ -163,4 +185,40 @@
              NotificationCenter.default.removeObserver(self)
          }
      }

@@ -21,9 +21,9 @@ protocol TerminalFrameLink: AnyObject {
 
 /// Shared terminal state and logic used by both UIKit and AppKit views.
 ///
-/// Platform views own a `TerminalSurfaceCoordinator` instance and set platform-specific
-/// hooks via closures. The core handles surface lifecycle, metrics
-/// synchronization, and frame rendering via scheduled wakeups.
+/// Platform views own a coordinator and set platform hooks via closures.
+/// The core handles lifecycle, metric synchronization, and targeted redraws.
+/// AppKit output uses Ghostty's asynchronous renderer independently of this clock.
 @MainActor
 final class TerminalSurfaceCoordinator {
     weak var delegate: (any TerminalSurfaceViewDelegate)? {

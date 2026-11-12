@@ -28,7 +28,7 @@ DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
 def compile_harness(root, build):
     link_file = build / "Easl.product/Objects.LinkFileList"
     if not link_file.is_file() or not (build / "description.json").is_file():
-        raise RuntimeError("Build Easl with --build-system native -Xswiftc -enable-testing first")
+        raise RuntimeError("Build Easl with --build-system native first")
     objects = [Path(p) for p in shlex.split(link_file.read_text())]
     modules = {"GhosttyTerminal.build", "GhosttyKit.build", "MSDisplayLink.build"}
     objects = [p for p in objects if modules.intersection(p.parts)]

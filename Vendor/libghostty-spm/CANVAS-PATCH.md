@@ -27,16 +27,17 @@ the Canvas repo root (`git apply` in an upstream checkout).
 
 ### Frame link per terminal view
 
-`TerminalSurfaceCoordinator` paces draws with MSDisplayLink, held while frames are owed and
-released after 30 idle frames. On macOS MSDisplayLink's driver creates a new `CVDisplayLink`, and
-with it a new thread, every time the link starts again, so a visible terminal printing a line every
-few hundred milliseconds started one per line (133 display-link threads in 5 s on a real board).
-The coordinator now takes a frame clock from its platform view (`makeFrameLink`,
-`TerminalFrameLink`): `AppTerminalView` gives it its own `NSView.displayLink` (macOS 14+), which
-fires on the main run loop, follows the view's screen, and is paused when idle and resumed when a
-frame is owed, never recreated. UIKit, and macOS 13, keep MSDisplayLink. `AppTerminalView.surfaceDidDraw()`
-is called after each drawn frame for the host to count (easl's `terminal.draw` metric). Diff:
-`patches/libghostty-spm-frame-link.patch`.
+`TerminalSurfaceCoordinator` paces UIKit wakeups and targeted redraws with MSDisplayLink, held
+while frames are owed and released after 30 idle frames. On macOS its driver creates a new
+`CVDisplayLink` and thread whenever the link restarts. `AppTerminalView` instead supplies its
+reusable `NSView.displayLink` on macOS 14+, paused when idle. UIKit and macOS 13 keep MSDisplayLink
+for these requests.
+
+AppKit observes completed native frames assigned to the current backing layer's `contents`,
+including ordinary asynchronous output. It corrects scale inline and defers `surfaceDidDraw()`
+until the native call returns because a synchronous present still holds Ghostty's renderer lock.
+This hook counts layer deliveries, not WindowServer presentation. It replaces the AppKit
+post-tick hook; UIKit's hook is unchanged. Diff: `patches/libghostty-spm-frame-link.patch`.
 
 What this doesn't remove: libghostty's own renderer (the prebuilt xcframework) runs a
 `CVDisplayLink` of its own per surface, and upstream's `syncDisplayLink` (`src/renderer/generic.zig`)
@@ -50,6 +51,26 @@ but upstream warns of kernel panics on macOS 14.4+ with out-of-sync rendering, a
 building libghostty ourselves. The upstream fix is an idle grace period in `syncDisplayLink`: stop
 the link only after it has fired some frames (or ~0.5 s) without cell changes, instead of after the
 first idle draw.
+
+### AppKit wakeups drain without render fanout
+
+`TerminalController.handleWakeup` retains its attached/application-active processing gate and
+`ghostty_app_tick`. Hidden attached surfaces still drain title, cwd, bell, and child-exit messages
+without depending on rendering. Only UIKit retains the blanket per-surface wakeup render callback.
+AppKit ordinary output uses the pinned native asynchronous renderer; targeted configuration,
+layout, focus, visibility, and exposure requests still refresh and draw.
+
+The pinned native `Surface.childExited` writes fallback exit text after
+`GHOSTTY_ACTION_SHOW_CHILD_EXITED` without scheduling a render. AppKit requests that surface's next
+frame from the action bridge, while the action callback still returns false so Ghostty writes the
+text. This request must remain deferred until after the action returns.
+
+Diff: `patches/libghostty-spm-wakeup-drain.patch`. It applies to the pinned tag and composes with
+the resource, frame-link, and surface-lifetime patches. On a native pin change, recheck app-thread
+terminal writes that omit render scheduling and layer-delivery threading. Run
+`Tests/TerminalWakeup/run.py` for native output, all-hidden mailbox pressure, lifecycle pixels,
+and unfocused exit text. Use the existing terminal-echo fixture for actual key-to-pixel latency.
+
 
 ### Private clipboard writes
 
