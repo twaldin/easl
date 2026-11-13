@@ -20,6 +20,10 @@ Each version's section is its GitHub release's notes.
 
 easl 0.3.9 keeps omp seats in easl tiles working after Anthropic's native compaction, with the app unchanged from 0.3.8 apart from the bundled omp extension. Hosts such as deckbox, where `scripts/offload-setup.sh` installs a separate extension copy, need the new `messages.ts` too.
 
+### Changes
+
+- **The board zooms in to 400%.** Pinch, ⌘-scroll and ⌘= went no further than 100%, so seeing a tile bigger meant changing its content zoom. They now go to 400% (⌘= steps 110, 125, 150, 175, 200, 300, 400%). Zoom to Fit, Go to, walkthrough steps and mention reveals still zoom in only as far as 100%.
+
 ### Fixed
 
 - omp seats no longer fail requests after native Anthropic compaction removes every easl card from the kept history. Hidden easl guidance stays after the compaction block and its retained assistant turn and tool results.

@@ -110,7 +110,8 @@ final class CanvasDocumentView: NSView {
     }
 }
 
-/// Zoom is capped at 100%; below `liveThreshold` tiles become cards and release resources.
+/// Pinch and keyboard zoom go to 400%; automatic jumps (fit, Go to, present) stop at 100%.
+/// Below `liveThreshold` tiles become cards and release resources.
 /// The viewport only moves on user input, never in response to agents.
 @MainActor
 final class CanvasView: NSScrollView {
@@ -248,7 +249,7 @@ final class CanvasView: NSScrollView {
         autohidesScrollers = true
         allowsMagnification = true
         minMagnification = 0.1
-        maxMagnification = 1.0
+        maxMagnification = 4.0
         drawsBackground = false
         addSubview(grid, positioned: .below, relativeTo: contentView)
         addSubview(attention)
@@ -2029,12 +2030,14 @@ final class CanvasView: NSScrollView {
     static let jumpPadding: CGFloat = 20
     /// Below this, a target too tall to read when fitted whole fits its width instead.
     static let readableZoom: CGFloat = 0.5
+    /// The most a jump (fit, Go to, present, reveal) zooms in; only the user zooms past it.
+    static let jumpMaxZoom: CGFloat = 1
 
     /// Zooms (at most to 100%) so a document rect fills the viewport clear of the chrome,
     /// centered. `readable`: a tall target fits its width and shows its top instead of shrinking
     /// below `readableZoom` (objects; not Zoom to Fit, which must show everything).
     func fit(_ rect: NSRect, readable: Bool = false) {
-        apply(Layout.fit(rect, in: clearArea, padding: Self.fitPadding, zoom: minMagnification...maxMagnification,
+        apply(Layout.fit(rect, in: clearArea, padding: Self.fitPadding, zoom: minMagnification...Self.jumpMaxZoom,
                          readable: readable ? Self.readableZoom : nil))
     }
 
@@ -2195,7 +2198,7 @@ final class CanvasView: NSScrollView {
         let from = viewport
         navigationDepth += 1
         apply(Layout.revealMention(rect, readable: readable, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
-                                   zoom: minMagnification...maxMagnification))
+                                   zoom: minMagnification...Self.jumpMaxZoom))
         setSelection(Set(reveal.objects))
         navigationDepth -= 1
         guard let tile else {
@@ -2326,7 +2329,7 @@ final class CanvasView: NSScrollView {
     /// when larger than the view (`Layout.present`). A walkthrough's `stop` is fitted like Go to
     /// when the view is zoomed out below readable (`Layout.presentStop`).
     func present(_ id: ObjectID, stop: Bool = false) {
-        let padding = Self.jumpPadding / magnification, limits = minMagnification...maxMagnification
+        let padding = Self.jumpPadding / magnification, limits = minMagnification...Self.jumpMaxZoom
         guard let rect = landing(id, padding: padding) else { return }
         apply(stop ? Layout.presentStop(rect, from: currentJump, clear: clearArea, padding: padding, fitPadding: Self.fitPadding, zoom: limits, readable: Self.readableZoom)
                    : Layout.present(rect, from: currentJump, clear: clearArea, padding: padding, zoom: limits, readable: Self.readableZoom))
