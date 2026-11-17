@@ -16,6 +16,48 @@ import os
 public final class Metrics: @unchecked Sendable {
     public static let shared = Metrics()
 
+    #if EASL_BENCH_TURNS
+    private struct BenchTurns {
+        var buckets = [Int](repeating: 0, count: 10001)
+        var count = 0, over16 = 0, over50 = 0
+        var maximum = 0.0
+
+        mutating func record(_ ms: Double) {
+            buckets[ms >= 100 ? 10000 : Int(ms / 0.01)] += 1
+            count += 1
+            if ms >= 16 { over16 += 1 }
+            if ms >= 50 { over50 += 1 }
+            maximum = max(maximum, ms)
+        }
+
+        mutating func reset() {
+            for index in buckets.indices { buckets[index] = 0 }
+            count = 0
+            over16 = 0
+            over50 = 0
+            maximum = 0
+        }
+
+        var json: JSONValue {
+            var cumulative = 0
+            var median = 0.0
+            for index in buckets.indices {
+                cumulative += buckets[index]
+                if count > 0 && cumulative >= (count + 1) / 2 {
+                    median = index == 10000 ? maximum : Double(index + 1) * 0.01
+                    break
+                }
+            }
+            return .object([
+                "n": .number(Double(count)), "over16": .number(Double(over16)),
+                "over50": .number(Double(over50)), "maxMs": .number(maximum),
+                "p50UpperMs": count == 0 ? .null : .number(median),
+            ])
+        }
+    }
+    private var benchTurns = BenchTurns()
+    #endif
+
     /// A main-thread stretch this long or longer is logged with its cause.
     public static let logStretch = 250.0
     /// Stretches this long count as hitches in `main.stretch50`.
@@ -308,6 +350,9 @@ public final class Metrics: @unchecked Sendable {
         var line: (ms: Double, cause: String)?
         lock.lock()
         turnStart = next
+        #if EASL_BENCH_TURNS
+        if let ended { benchTurns.record(ended.ms) }
+        #endif
         stallSampler?.publish(turn: next)
         if let ended, ended.ms >= Self.hitchStretch || stallPending?.turn == ended.start {
             let ms = ended.ms
@@ -364,6 +409,9 @@ public final class Metrics: @unchecked Sendable {
     public func reset() {
         lock.lock()
         series = [:]
+        #if EASL_BENCH_TURNS
+        benchTurns.reset()
+        #endif
         offenders = [:]
         longest = nil
         since = Self.now()
@@ -413,6 +461,9 @@ public final class Metrics: @unchecked Sendable {
         let since = self.since
         let stallsSampled = self.stallsSampled
         let stallNewest = self.stallNewest
+        #if EASL_BENCH_TURNS
+        let benchTurns = self.benchTurns.json
+        #endif
         lock.unlock()
         var counters: [String: JSONValue] = [:]
         for (name, s) in series {
@@ -440,6 +491,9 @@ public final class Metrics: @unchecked Sendable {
         var stalls: [String: JSONValue] = ["sampled": .number(Double(stallsSampled))]
         if let stallNewest { stalls["newest"] = .string(stallNewest) }
         result["stalls"] = .object(stalls)
+        #if EASL_BENCH_TURNS
+        result["benchTurns"] = benchTurns
+        #endif
         return .object(result)
     }
 }
