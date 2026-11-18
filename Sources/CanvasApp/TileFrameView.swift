@@ -786,9 +786,8 @@ final class TileFrameView: NSView {
         image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
         NSGraphicsContext.restoreGraphicsState()
         rep.size = size
-        let card = NSImage(size: size)
-        card.addRepresentation(rep)
-        return card
+        guard let snapshot = rep.cgImage else { return image }
+        return NSImage(cgImage: snapshot, size: size)
     }
 
     /// Zoomed-out cards carry the agent's lifecycle color so a board of agents reads at a glance.
