@@ -11,6 +11,7 @@ Each version's section is its GitHub release's notes.
 - The HTML skill documents the existing light and dark theme variables.
 - Browser-stream diagnostics retain content-free host and viewer admission and failure records in macOS unified logs. This adds diagnostics, not a fix for remote reconnects.
 - Boards with many question tiles zoom faster by keeping inactive answer controls out of AppKit layout. Drafts, answer choices, confidence and undo stay intact.
+- Tile previews keep immutable image snapshots after drawing, at the same resolution.
 
 ### Compatibility
 
