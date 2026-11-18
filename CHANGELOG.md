@@ -2,7 +2,9 @@
 
 Each version's section is its GitHub release's notes.
 
-## 0.3.10 (unreleased)
+## 0.3.10
+
+easl 0.3.10 makes boards with many question tiles zoom faster and reduces preview memory without lowering image resolution. HTML tiles preserve saved drafts and submit selected saved fields in one undo step. Browser-stream diagnostics retain content-free failure records; they do not fix remote reconnects.
 
 - HTML tile state merges per key on agent updates, preserving saved page drafts. Null deletes one key; `state: null` clears all state. Fit measurement and local or viewer undo/redo follow the same rules.
 - `canvasKit.submit(keys)` records saved fields and clears those drafts in one undo step. Local Submit wakes the creating agent through labelled page data. Remote Submit records pending without waking anyone. Agents acknowledge application with `applied`.
