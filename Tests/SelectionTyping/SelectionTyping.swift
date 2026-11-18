@@ -2584,6 +2584,8 @@ private enum SelectionTyping {
         try await wait("returning must attach the question controls to their window") {
             f.canvas.tiles[question.id]?.isLive == true && page.window === f.window
         }
+        try require(page.enclosingScrollView?.frame == tile.bounds && tile.bounds.width == 760,
+            "reentry must lay the controls out at the inactive resize")
         try await enter(question, in: f)
         try await post([key(48, "\t", in: f.window)])
         guard let restored = f.window.firstResponder as? NSTextView else {
