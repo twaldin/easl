@@ -155,7 +155,6 @@ final class CanvasView: NSScrollView {
     private var livenessScheduled = false
     private var geometryDirty = false
     private var magnifying = false
-    private var panning = false
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
     private var monitoredMove = false
@@ -1954,9 +1953,7 @@ final class CanvasView: NSScrollView {
         switch CanvasWheel.action(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
                                   command: flags.contains(.command), shift: flags.contains(.shift)) {
         case .system:
-            let origin = contentView.bounds.origin
             super.scrollWheel(with: event)
-            if contentView.bounds.origin != origin { panning = true }
         case .pan(let dx, let dy):
             pan(by: CGSize(width: dx, height: dy))
         case .zoom(let factor):
@@ -1971,7 +1968,6 @@ final class CanvasView: NSScrollView {
     func pan(by delta: CGSize) {
         let origin = contentView.bounds.origin
         scroll(to: NSPoint(x: origin.x - delta.width / magnification, y: origin.y - delta.height / magnification))
-        if contentView.bounds.origin != origin { panning = true }
     }
 
     /// The zoom times `factor` (within the limits), keeping the document point `anchor` where it
@@ -2566,14 +2562,7 @@ final class CanvasView: NSScrollView {
     private func scheduleActivitySettle() {
         activitySettle?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.board.activity.settle()
-                if self.panning {
-                    self.panning = false
-                    self.scheduleLiveness()
-                }
-            }
+            MainActor.assumeIsolated { self?.board.activity.settle() }
         }
         activitySettle = work
         DispatchQueue.main.asyncAfter(deadline: .now() + ActivityLog.settleInterval + 0.05, execute: work)
@@ -2613,7 +2602,8 @@ final class CanvasView: NSScrollView {
             geometryDirty = false
             objectsMoved()
         }
-        if !magnifying && !panning {
+        // Mid-pinch, LOD flips wait for the gesture to end.
+        if !magnifying {
             let closed = remote?.mirror.availability == .closed
             let scale = magnification
             let holder = focusedTile
@@ -2629,7 +2619,7 @@ final class CanvasView: NSScrollView {
             }
         }
         let nearViewport = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
-        for tile in tiles.values { tile.updateProximity(to: nearViewport, admitColdCards: !magnifying && !panning) }
+        for tile in tiles.values { tile.updateProximity(to: nearViewport, admitColdCards: !magnifying) }
         layoutPills()
         updateSeen()
         updateContentInView()
