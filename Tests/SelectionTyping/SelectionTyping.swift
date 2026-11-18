@@ -2579,6 +2579,23 @@ private enum SelectionTyping {
         try await wait("leaving the question must park its native answer controls") {
             f.canvas.focusedTile == away.id && f.canvas.tiles[question.id]?.isLive == false && page.window == nil
         }
+        let responder = f.window.firstResponder
+        let selection = f.canvas.selection
+        let initialZoom = f.canvas.magnification
+        guard let content = f.window.contentView else { throw Failure("pinch fixture needs its native content view") }
+        let clip = f.canvas.contentView
+        let anchor = content.convert(NSPoint(x: clip.bounds.midX, y: clip.bounds.midY), from: clip)
+        for (phase, amount) in [("began", 0.0), ("changed", -0.2), ("changed", 0.25), ("ended", 0.0)] {
+            DevInput.replay(["pid": String(getpid()), "kind": "magnify", "window": String(f.window.windowNumber),
+                "x": "\(anchor.x)", "y": "\(content.bounds.height - anchor.y)", "phase": phase, "amount": "\(amount)"])
+            try await post([])
+            if amount < 0 {
+                try require(f.canvas.magnification < initialZoom, "the native pinch must actually zoom the away note")
+            }
+        }
+        try require(f.window.firstResponder === responder && f.canvas.selection == selection
+            && f.canvas.focusedTile == away.id, "pinching elsewhere must preserve the exact typing owner and selection")
+        try require(editor.string == "Draft", "offscreen zoom work must preserve the unsent question draft")
         _ = try f.board.update(question.id, frame: Frame(x: question.frame.x, y: question.frame.y, w: 760, h: 430))
         f.canvas.go(to: question.id)
         try await wait("returning must attach the question controls to their window") {
