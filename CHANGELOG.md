@@ -15,6 +15,10 @@ easl 0.3.10 makes boards with many question tiles zoom faster and reduces previe
 - Boards with many question tiles zoom faster by keeping inactive answer controls out of AppKit layout. Drafts, answer choices, confidence and undo stay intact.
 - Note and question previews, plus downsampled page previews, use less memory without lowering image resolution.
 
+### Fixed
+
+- Browser streaming no longer blocks board input while converting WebKit snapshots to pixels. Frame sizes, scales, formats, and input fences are unchanged.
+
 ### Compatibility
 
 - Update every Mac that views an easld-hosted board before updating that easld. A viewer older than the host deletes HTML state keys by omission, so cleared keys can return on reread.

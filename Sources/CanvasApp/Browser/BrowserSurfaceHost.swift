@@ -347,9 +347,11 @@ final class BrowserSurface {
         configuration.afterScreenUpdates = false
         configuration.snapshotWidth = NSNumber(value: Double(size.width * scale / window.backingScaleFactor))
         let started = ProcessInfo.processInfo.systemUptime
-        guard tile.webView === webView, let image = try? await webView.takeSnapshot(configuration: configuration),
-              let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return idle() }
+        guard tile.webView === webView, let image = try? await webView.takeSnapshot(configuration: configuration) else { return idle() }
         let back = webView.canGoBack, forward = webView.canGoForward, loading = webView.isLoading
+        guard let pixels = await offPool({
+            autoreleasepool { image.cgImage(forProposedRect: nil, context: nil, hints: nil) }
+        }) else { return idle() }
         var images: [Variant: Data] = [:]
         var active = false
         var nextDelay = Self.idleInterval

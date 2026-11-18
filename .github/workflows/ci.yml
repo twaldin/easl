@@ -124,6 +124,8 @@ jobs:
         run: python3 Tests/StallSampler/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/stall-sampler" --ci-timing-report-only
       - name: Native board save responsiveness and atomic crash regression
         run: python3 Tests/BoardSave/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/board-save" --ci-timing-report-only
+      - name: Native browser capture frames and input fences
+        run: python3 Tests/BrowserCapture/run.py --bin-path "$(swift build --build-system native -c release --show-bin-path)" --output "${{ runner.temp }}/browser-capture" --ci-timing-report-only
       - name: Generated clients are current
         run: bun scripts/gen-clients.ts --check
       - name: Python client tests
