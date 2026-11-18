@@ -179,15 +179,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         if remote == nil { BoardFiles.of(board.root).refresh() }
 
         let container = NSView()
-        canvas.translatesAutoresizingMaskIntoConstraints = false
+        canvas.frame = container.bounds
+        canvas.autoresizingMask = [.width, .height]
         tray.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(canvas)
         container.addSubview(tray)
         NSLayoutConstraint.activate([
-            canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            canvas.topAnchor.constraint(equalTo: container.topAnchor),
-            canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             tray.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             tray.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
             // A prompt box's width up to the window's; its height is its own (one line, a few
