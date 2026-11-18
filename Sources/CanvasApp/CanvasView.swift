@@ -154,9 +154,7 @@ final class CanvasView: NSScrollView {
 
     private var livenessScheduled = false
     private var geometryDirty = false
-    private enum ZoomPhase { case idle, gesture, settling }
-    private var zoomPhase = ZoomPhase.idle
-    private var magnifying: Bool { zoomPhase == .gesture }
+    private var magnifying = false
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
     private var monitoredMove = false
@@ -373,10 +371,6 @@ final class CanvasView: NSScrollView {
 
     static func canvasFrame(_ rect: NSRect) -> Frame {
         Frame(x: rect.minX - CanvasDocumentView.origin.x, y: rect.minY - CanvasDocumentView.origin.y, w: rect.width, h: rect.height)
-    }
-
-    private func documentRect(of rect: NSRect, in tile: TileFrameView) -> NSRect {
-        tile.convert(rect, from: tile.content).offsetBy(dx: tile.frame.minX, dy: tile.frame.minY)
     }
 
     /// Where an object is on screen right now, in document coordinates, including an in-flight drag.
@@ -1937,10 +1931,7 @@ final class CanvasView: NSScrollView {
     /// Moves the view to `jump`; nothing when it is there already.
     private func apply(_ jump: Layout.Jump) {
         guard jump != currentJump else { return }
-        if magnification != jump.zoom {
-            prepareZoom()
-            magnification = jump.zoom
-        }
+        if magnification != jump.zoom { magnification = jump.zoom }
         scroll(to: jump.origin)
     }
 
@@ -1985,17 +1976,14 @@ final class CanvasView: NSScrollView {
         let old = magnification
         let zoom = min(maxMagnification, max(minMagnification, old * factor))
         guard zoom != old else { return }
-        prepareZoom()
         let origin = contentView.bounds.origin
         magnification = zoom
         scroll(to: NSPoint(x: anchor.x - (anchor.x - origin.x) * old / zoom, y: anchor.y - (anchor.y - origin.y) * old / zoom))
     }
 
     func zoom(to scale: CGFloat) {
-        let zoom = min(maxMagnification, max(minMagnification, scale))
-        if zoom != magnification { prepareZoom() }
         let visible = documentVisibleRect
-        setMagnification(zoom, centeredAt: NSPoint(x: visible.midX, y: visible.midY))
+        setMagnification(min(maxMagnification, max(minMagnification, scale)), centeredAt: NSPoint(x: visible.midX, y: visible.midY))
         scheduleLiveness()
     }
 
@@ -2017,7 +2005,7 @@ final class CanvasView: NSScrollView {
     /// (unflipped, in its flipped frame) reported a visible rect a title bar's height above its
     /// bounds, and a note's conflict banner placed by it covered the title bar.
     func clearVisibleRect(of view: NSView) -> NSRect {
-        guard let document = documentView, view === document || view.isDescendant(of: document) else { return .zero }
+        guard let document = documentView else { return .zero }
         return view.bounds.intersection(view.convert(Self.docRect(clearViewport), from: document))
     }
 
@@ -2224,7 +2212,7 @@ final class CanvasView: NSScrollView {
         if tile.isLive {
             tile.content.scrollToMention(target)
             if let outline = tile.content.outline(for: target), !outline.isEmpty {
-                let part = documentRect(of: outline, in: tile)
+                let part = document.convert(outline, from: tile.content)
                 apply(Layout.reveal(part, keeping: tile.frame, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification))
                 flashMention(part)
                 return recordNavigation(from: from)
@@ -2541,7 +2529,6 @@ final class CanvasView: NSScrollView {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("scene.boundsChanged", since: perfStart) }
         keepOpenedViewCentred()
-        if zoomPhase != .idle { updateZoomTiles() }
         // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
         layoutPills()
@@ -2575,55 +2562,19 @@ final class CanvasView: NSScrollView {
     private func scheduleActivitySettle() {
         activitySettle?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.board.activity.settle()
-                if self.zoomPhase == .settling {
-                    self.zoomPhase = .idle
-                    self.updateZoomTiles()
-                }
-            }
+            MainActor.assumeIsolated { self?.board.activity.settle() }
         }
         activitySettle = work
         DispatchQueue.main.asyncAfter(deadline: .now() + ActivityLog.settleInterval + 0.05, execute: work)
     }
 
     @objc private func magnifyStarted() {
-        zoomPhase = .gesture
-        updateZoomTiles()
+        magnifying = true
     }
 
     @objc private func magnifyEnded() {
-        zoomPhase = .idle
-        updateZoomTiles()
+        magnifying = false
         scheduleLiveness()
-    }
-
-    private func prepareZoom() {
-        guard zoomPhase == .idle else { return }
-        zoomPhase = .settling
-        updateZoomTiles()
-    }
-
-    private func updateZoomTiles() {
-        let active = zoomPhase != .idle
-        let holder = focusedTile
-        let visible = documentVisibleRect
-        let enter = visible.insetBy(dx: -Self.liveMargin, dy: -Self.liveMargin)
-        let stay = visible.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
-        var added = false
-        func update(_ view: NSView, keep: Bool) {
-            let attached = view.superview != nil
-            if active, !keep, !view.frame.intersects(attached ? stay : enter) {
-                if attached { view.removeFromSuperview() }
-            } else if !attached {
-                document.addSubview(view)
-                added = true
-            }
-        }
-        for tile in tiles.values { update(tile, keep: tile.objectID == holder) }
-        for group in groups.values { update(group, keep: false) }
-        if added { restack() }
     }
 
     /// Coalesces every trigger in one run-loop turn into a single pass.
@@ -2647,7 +2598,6 @@ final class CanvasView: NSScrollView {
     }
 
     private func scenePass() {
-        if zoomPhase != .idle { updateZoomTiles() }
         if geometryDirty {
             geometryDirty = false
             objectsMoved()
@@ -2702,7 +2652,7 @@ final class CanvasView: NSScrollView {
             overlay.outline = nil
             return
         }
-        overlay.outline = overlay.convert(documentRect(of: rect, in: tile), from: document)
+        overlay.outline = overlay.convert(rect, from: tile.content)
     }
 
     func showOutline(docRect: NSRect?) {
@@ -2726,8 +2676,7 @@ final class CanvasView: NSScrollView {
     /// query runs on; its late answer is dropped).
     private func pageElements(_ id: ObjectID, canvasRect: CGRect) async -> PageElements? {
         guard let tile = tiles[id] else { return nil }
-        let local = Self.docRect(Frame(canvasRect)).offsetBy(dx: -tile.frame.minX, dy: -tile.frame.minY)
-        let rect = tile.content.convert(local, from: tile)
+        let rect = tile.content.convert(Self.docRect(Frame(canvasRect)), from: document)
         let answer = FirstAnswer<PageElements>()
         return await withCheckedContinuation { continuation in
             answer.continuation = continuation
