@@ -17,7 +17,7 @@ public final class Metrics: @unchecked Sendable {
     public static let shared = Metrics()
 
     #if EASL_BENCH_TURNS
-    private struct BenchTurns {
+    struct BenchTurns {
         var buckets = [Int](repeating: 0, count: 10001)
         var count = 0, over16 = 0, over50 = 0
         var maximum = 0.0
@@ -41,11 +41,14 @@ public final class Metrics: @unchecked Sendable {
         var json: JSONValue {
             var cumulative = 0
             var median = 0.0
-            for index in buckets.indices {
-                cumulative += buckets[index]
-                if count > 0 && cumulative >= (count + 1) / 2 {
-                    median = index == 10000 ? maximum : Double(index + 1) * 0.01
-                    break
+            if count > 0 {
+                let rank = (count + 1) / 2
+                for index in buckets.indices {
+                    cumulative += buckets[index]
+                    if cumulative >= rank {
+                        median = index == 10000 ? maximum : Double(index + 1) * 0.01
+                        break
+                    }
                 }
             }
             return .object([
