@@ -395,7 +395,16 @@ final class QuestionTile: NSView, TileContent, NSTextViewDelegate {
 
     // MARK: TileContent
 
-    func setLive(_ live: Bool) {}
+    func setLive(_ live: Bool) {
+        if live {
+            guard scroll.superview == nil else { return }
+            scroll.frame = bounds
+            addSubview(scroll)
+            relayout()
+        } else {
+            scroll.removeFromSuperview()
+        }
+    }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
         let painter = QuestionPainter(spec: spec, object: object, board: board, width: request.size.width, scale: 1, picked: picked,
