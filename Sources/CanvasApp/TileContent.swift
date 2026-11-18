@@ -52,9 +52,8 @@ extension TileRenderRequest {
         flipped.cgContext.scaleBy(x: CGFloat(width) / points.width, y: -CGFloat(height) / points.height)
         appearance.performAsCurrentDrawingAppearance { draw(CGRect(origin: .zero, size: points)) }
         NSGraphicsContext.restoreGraphicsState()
-        let image = NSImage(size: points)
-        image.addRepresentation(rep)
-        return image
+        guard let image = rep.cgImage else { return nil }
+        return NSImage(cgImage: image, size: points)
     }
 
     /// `view`'s own drawing (AppKit views that draw themselves) at the request's scale, in the
@@ -67,9 +66,8 @@ extension TileRenderRequest {
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         rep.size = points
         view.cacheDisplay(in: view.bounds, to: rep)
-        let image = NSImage(size: points)
-        image.addRepresentation(rep)
-        return image
+        guard let image = rep.cgImage else { return nil }
+        return NSImage(cgImage: image, size: points)
     }
 }
 
