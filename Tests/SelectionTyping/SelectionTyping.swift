@@ -94,6 +94,7 @@ private enum SelectionTyping {
         cases.append(Scenario(name: "html-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "browser-undo-redo", baseline: "existing behavior control"))
         cases.append(Scenario(name: "question-held-return", baseline: "feature regression"))
+        cases.append(Scenario(name: "question-draft-roundtrip", baseline: "feature regression"))
         for name in ["shift-note-text", "shift-html-text", "shift-code-text", "shift-question-note-text", "offscreen-go-note", "heading-go-note",
                      "note-command-backspace", "history-back-note", "html-panel-return"] {
             cases.append(Scenario(name: name, baseline:
@@ -2557,6 +2558,50 @@ private enum SelectionTyping {
         }
     }
 
+    private static func exerciseQuestionDraftRoundtrip(_ f: Fixture) async throws {
+        let question = try await f.create(.question, width: 600, height: 400)
+        _ = try f.board.update(question.id, props: .object(["askConfidence": true]))
+        try await enter(question, in: f)
+        try await post([key(18, "1", in: f.window), key(124, "\u{f703}", in: f.window), key(48, "\t", in: f.window)])
+        guard let editor = f.window.firstResponder as? NSTextView,
+              let tile = f.canvas.tiles[question.id]?.content as? QuestionTile,
+              let page = descendants(tile).compactMap({ $0 as? QuestionPage }).first,
+              let slider = page.accessibilityChildren()?.compactMap({ $0 as? NSAccessibilityElement })
+                .first(where: { $0.accessibilityRole() == .slider }),
+              let confidence = slider.accessibilityValue() as? NSNumber else {
+            throw Failure("draft fixture needs the question note and confidence control")
+        }
+        try await typed("Draft", in: f.window)
+        try require(editor.string == "Draft", "native typing must create the unsent question draft")
+        let away = f.board.create(type: .note, props: .object(["markdown": "Away.\n"]),
+            frame: Frame(x: 5000, y: 5000, w: 600, h: 400))
+        f.canvas.go(to: away.id)
+        try await wait("leaving the question must park its native answer controls") {
+            f.canvas.focusedTile == away.id && f.canvas.tiles[question.id]?.isLive == false && page.window == nil
+        }
+        _ = try f.board.update(question.id, frame: Frame(x: question.frame.x, y: question.frame.y, w: 760, h: 430))
+        f.canvas.go(to: question.id)
+        try await wait("returning must attach the question controls to their window") {
+            f.canvas.tiles[question.id]?.isLive == true && page.window === f.window
+        }
+        try await enter(question, in: f)
+        try await post([key(48, "\t", in: f.window)])
+        guard let restored = f.window.firstResponder as? NSTextView else {
+            throw Failure("returning to the question must enter its note field")
+        }
+        try require(restored.string == "Draft", "an inactive resize must preserve the unsent draft")
+        try requireVisibleCaret(restored, in: f)
+        try await post([key(6, "z", flags: .command, in: f.window)])
+        try require(restored.string.isEmpty, "native Undo must still remove the draft after reentry")
+        try await typed("Replacement", in: f.window)
+        try await post([key(36, "\r", in: f.window)])
+        try await wait("answering after reentry must keep the picked option, replacement note and confidence") {
+            let answer = f.board.objects[question.id]?.props["answer"]
+            return answer?["option"]?.string == "one" && answer?["note"]?.string == "Replacement"
+                && abs((answer?["confidence"]?.number ?? -1) - confidence.doubleValue / 100) < 0.001
+        }
+    }
+
     private static func run(_ name: String, _ f: Fixture) async throws {
         for action in ["click", "title", "reentry", "cmd-escape"] {
             if name.hasPrefix(action + "-"), let type = ObjectType(rawValue: String(name.dropFirst(action.count + 1))) {
@@ -2651,6 +2696,8 @@ private enum SelectionTyping {
             try await exerciseBoardUndo(f)
         } else if name == "question-held-return" {
             try await exerciseQuestionHeldReturn(f)
+        } else if name == "question-draft-roundtrip" {
+            try await exerciseQuestionDraftRoundtrip(f)
         } else if name == "shift-note-text" || name == "shift-html-text" || name == "shift-code-text" || name == "shift-question-note-text" {
             let type: ObjectType = name == "shift-note-text" ? .note : name == "shift-html-text" ? .html : name == "shift-code-text" ? .code : .question
             try await exerciseShiftText(type, f)
