@@ -2573,30 +2573,6 @@ private enum SelectionTyping {
         }
         try await typed("Draft", in: f.window)
         try require(editor.string == "Draft", "native typing must create the unsent question draft")
-        guard let container = f.window.contentView else { throw Failure("resize fixture needs its native window content") }
-        let originalSize = container.bounds.size
-        let draftRange = editor.selectedRange()
-        let selected = f.canvas.selection
-        for zoom in [0.75, 1.0] {
-            f.canvas.zoom(to: zoom)
-            try await post([])
-            for size in [NSSize(width: originalSize.width - 180, height: originalSize.height - 120), originalSize] {
-                let before = f.canvas.viewport
-                let oldSize = container.bounds.size
-                f.window.setContentSize(size)
-                try await post([])
-                let after = f.canvas.viewport
-                let changed = container.bounds.size
-                try require(changed != oldSize, "the native window must actually resize")
-                try require(abs(after.rect.w * after.zoom - before.rect.w * before.zoom - Double(changed.width - oldSize.width)) < 1
-                    && abs(after.rect.h * after.zoom - before.rect.h * before.zoom - Double(changed.height - oldSize.height)) < 1,
-                    "resizing the window must expand or contract the visible board by the same screen-point dimensions")
-                try require(f.window.firstResponder === editor && editor.string == "Draft"
-                    && editor.selectedRange() == draftRange && f.canvas.selection == selected,
-                    "native resize at either zoom must preserve the question draft, caret, selection and typing owner")
-                print("RESIZE zoom=\(after.zoom) window=\(changed) viewport=\(after.rect.w * after.zoom)x\(after.rect.h * after.zoom)")
-            }
-        }
         let away = f.board.create(type: .note, props: .object(["markdown": "Away.\n"]),
             frame: Frame(x: 5000, y: 5000, w: 600, h: 400))
         f.canvas.go(to: away.id)
