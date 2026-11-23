@@ -4,7 +4,6 @@ import base64
 import json
 from pathlib import Path
 import socket
-import time
 
 
 PAGE = b"""<!doctype html><canvas width=1 height=1></canvas>
@@ -79,12 +78,10 @@ def main():
 
     try:
         before = check('before the switch', 1)
-        print('READY: Switch to another macOS Space without hiding or minimizing easl.', flush=True)
-        deadline = time.monotonic() + 20
-        while request(api, 'view.get', board=board_id)['visible']:
-            if time.monotonic() >= deadline:
-                raise SystemExit('FAIL: The scratch board never left the screen.')
-            time.sleep(0.1)
+        print('READY: Switch Spaces without hiding or minimizing easl, then press Return.', flush=True)
+        input()
+        if request(api, 'view.get', board=board_id)['visible']:
+            raise SystemExit('FAIL: The scratch board never left the screen.')
         check('after the switch', max(1, before // 2))
         print('PASS: A cold driven page paints while its board is on another Space.')
     finally:
