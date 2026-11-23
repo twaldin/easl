@@ -69,21 +69,23 @@ def main():
             raise RuntimeError(f'Browser was not cold: {page}')
         return request(home / 'cmux.sock', 'browser.eval', surface_id=obj, script=SAMPLE)['value']
 
-    def check(label):
+    def check(label, minimum_frames):
         result = sample()
         print(f'{label}: {json.dumps(result)}', flush=True)
-        if result['visibility'] != 'visible' or result['frames'] == 0 or result['pixel'] != [0, 255, 0, 255]:
-            raise SystemExit(f'FAIL: The driven page did not paint {label}.')
+        if (result['visibility'] != 'visible' or result['frames'] < minimum_frames
+                or result['pixel'] != [0, 255, 0, 255]):
+            raise SystemExit(f'FAIL: The driven page did not paint {label} ({minimum_frames} callbacks required).')
+        return result['frames']
 
     try:
-        check('before the switch')
+        before = check('before the switch', 1)
         print('READY: Switch to another macOS Space without hiding or minimizing easl.', flush=True)
         deadline = time.monotonic() + 20
         while request(api, 'view.get', board=board_id)['visible']:
             if time.monotonic() >= deadline:
                 raise SystemExit('FAIL: The scratch board never left the screen.')
             time.sleep(0.1)
-        check('after the switch')
+        check('after the switch', max(1, before // 2))
         print('PASS: A cold driven page paints while its board is on another Space.')
     finally:
         for tile in tiles:

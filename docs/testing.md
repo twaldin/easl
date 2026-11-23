@@ -550,9 +550,10 @@ python3 Tests/BrowserSpace/run.py "$EASL_DEV_HOME"
 ```
 
 When the test prints `READY`, switch to Desktop 1 without hiding or minimizing easl.
-The test opens a new browser tile outside the board viewport and checks that
-`requestAnimationFrame` paints a green pixel after the switch. The canvas must
-paint on both Desktops. This test uses a real Space switch and does not run in CI.
+The test opens a new browser tile outside the board viewport. It checks that
+`requestAnimationFrame` paints a green pixel on each Desktop and that the page keeps
+at least half its initial frame count over the same sample window. This test uses a
+real Space switch and does not run in CI.
 
 ### HTML tile keyboard
 
