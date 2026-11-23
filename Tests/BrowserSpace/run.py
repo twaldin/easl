@@ -3,7 +3,9 @@ import argparse
 import base64
 import json
 from pathlib import Path
+import select
 import socket
+import sys
 
 
 PAGE = b"""<!doctype html><canvas width=1 height=1></canvas>
@@ -78,8 +80,9 @@ def main():
 
     try:
         before = check('before the switch', 1)
-        print('READY: Switch Spaces without hiding or minimizing easl, then press Return.', flush=True)
-        input()
+        print('READY: Switch Spaces without hiding or minimizing easl, then press Return within 45 seconds.', flush=True)
+        if not select.select([sys.stdin], [], [], 45)[0] or not sys.stdin.readline():
+            raise SystemExit('FAIL: Confirm the switch before the first page stops being driven.')
         if request(api, 'view.get', board=board_id)['visible']:
             raise SystemExit('FAIL: The scratch board never left the screen.')
         check('after the switch', max(1, before // 2))

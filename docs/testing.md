@@ -542,15 +542,15 @@ on the isolated GUI machine before running the regression.
 
 ### Browser pages across Spaces
 
-In the Mac GUI guest, start a development instance with an empty scratch board on
-Desktop 2. Run the test against that instance's disposable `EASL_DEV_HOME`:
+Start a development instance with an empty scratch board on Desktop 2 in the Mac GUI guest.
+Run the test over SSH against the instance's disposable `EASL_DEV_HOME`:
 
 ```sh
 python3 Tests/BrowserSpace/run.py "$EASL_DEV_HOME"
 ```
 
 When the test prints `READY`, switch to Desktop 1 without hiding or minimizing easl,
-then press Return in the terminal that runs the test.
+then press Return within 45 seconds in the terminal that runs the test.
 The test opens a new browser tile outside the board viewport. It checks that
 `requestAnimationFrame` paints a green pixel on each Desktop and that the page keeps
 at least half its initial frame count over the same sample window. This test uses a
