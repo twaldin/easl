@@ -85,7 +85,7 @@ def main():
             raise SystemExit('FAIL: Confirm the switch before the first page stops being driven.')
         if request(api, 'view.get', board=board_id)['visible']:
             raise SystemExit('FAIL: The scratch board never left the screen.')
-        check('after the switch', max(1, before // 2))
+        check('after the switch', (before + 1) // 2)
         print('PASS: A cold driven page paints while its board is on another Space.')
     finally:
         for tile in tiles:
