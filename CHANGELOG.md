@@ -12,6 +12,7 @@ easl 0.3.10 makes boards with many question tiles zoom faster and reduces previe
 - `group` on create and upsert adds explicit membership atomically and places new tiles beside the group without moving existing members. Reused changes tiles apply the same membership and validation.
 - The HTML skill documents the existing light and dark theme variables.
 - Browser-stream diagnostics retain content-free host and viewer admission and failure records in macOS unified logs. This adds diagnostics, not a fix for remote reconnects.
+- Watched and agent-driven browser tiles keep painting when the drawing app's window is on another Space.
 - Boards with many question tiles zoom faster by keeping inactive answer controls out of AppKit layout. Drafts, answer choices, confidence and undo stay intact.
 - Note and question previews, plus downsampled page previews, use less memory without lowering image resolution.
 
