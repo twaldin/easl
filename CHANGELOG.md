@@ -2,6 +2,10 @@
 
 Each version's section is its GitHub release's notes.
 
+## 0.3.11 (unreleased)
+
+- Watched and agent-driven browser tiles keep painting when the drawing app's window is on another Space.
+
 ## 0.3.10
 
 easl 0.3.10 makes boards with many question tiles zoom faster and reduces preview memory without lowering image resolution. HTML tiles preserve saved drafts and submit selected saved fields in one undo step. Browser-stream diagnostics retain content-free failure records; they do not fix remote reconnects.

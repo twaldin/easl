@@ -4,10 +4,9 @@ import WebKit
 /// Where web views wait while nobody sees them but WebKit must still treat them as visible
 /// (a detached or hidden-ancestor view, or one in a window that isn't on screen — minimized,
 /// in a background tab, the app hidden — is a hidden page: no layout, no requestAnimationFrame):
-/// a 1 pt transparent, click-through window of its own that stays on screen whatever the board
-/// windows do, plus window occlusion detection off (another Space or a covered window hides the
-/// page too). The window is ordered in only while something waits in it, so it never keeps
-/// the app alive after the last board window closes.
+/// a transparent, click-through panel that joins every Space without activating easl.
+/// Window occlusion detection is off. The panel is ordered in only while it holds a web view,
+/// so it never keeps the app alive after the last board window closes.
 @MainActor
 enum WebStage {
     private static var window: NSWindow?
@@ -26,13 +25,15 @@ enum WebStage {
 
     private static func makeWindow() -> NSWindow {
         let screen = NSScreen.screens.first?.frame ?? .zero
-        let stage = NSWindow(contentRect: NSRect(x: screen.minX, y: screen.minY, width: 1, height: 1), styleMask: .borderless, backing: .buffered, defer: false)
+        let frame = NSRect(x: screen.minX, y: screen.minY, width: 1, height: 1)
+        let stage = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        stage.hidesOnDeactivate = false
         stage.isReleasedWhenClosed = false
         stage.alphaValue = 0
         stage.ignoresMouseEvents = true
         stage.hasShadow = false
         stage.isExcludedFromWindowsMenu = true
-        stage.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenNone]
+        stage.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         stage.contentView = StageView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
         window = stage
         return stage
