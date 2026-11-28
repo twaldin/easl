@@ -7,8 +7,9 @@ import Foundation
 /// (`/src/app.py(12)main()`, as `where` lists them and a stop shows `> …`); a pytest node id
 /// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens; or a
 /// source file's name alone (`Applied edit to url.go`), which has no line.
-/// ⌘-click opens it as a code tile beside the terminal, or an HTML page named without a line
-/// rendered in a browser tile (`Board.openReference`).
+/// ⌘-click opens it as a code tile beside the terminal, an HTML page or a PDF named without a
+/// line rendered in a browser tile, or a video named without a line in a video tile
+/// (`Board.openReference`).
 public struct TerminalReference: Equatable, Sendable {
     /// UTF-16 range of the whole reference in the searched text.
     public var range: NSRange
@@ -38,16 +39,20 @@ public enum TerminalReferences {
         pathPattern + #"(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
     /// A path with no line after it, kept when its extension is a source file's (`sourceExtensions`).
     private static let barePattern = try! NSRegularExpression(pattern: pathPattern + #"(?![\w/#(@.-]|:\d)"#)
-    /// Extensions of files worth opening by name alone: source code, web pages, and the config
-    /// and docs beside them. Anything else named bare (`example.com`, `v1.2`) stays text.
-    static let sourceExtensions: Set<String> = pageExtensions.union([
+    /// Extensions of files worth opening by name alone: source code, web pages, PDFs, videos, and
+    /// the config and docs beside them. Anything else named bare (`example.com`, `v1.2`) stays text.
+    static let sourceExtensions: Set<String> = pageExtensions.union(videoExtensions).union([
         "swift", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "pyi", "go", "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh",
         "m", "mm", "java", "kt", "kts", "scala", "rb", "php", "cs", "fs", "lua", "zig", "ex", "exs", "erl", "hs", "ml", "clj", "dart",
         "sh", "bash", "zsh", "fish", "vue", "svelte", "css", "scss", "sql", "proto", "graphql", "json", "toml", "yaml", "yml",
         "md", "gradle", "cmake", "nix", "tf",
     ])
-    /// Extensions of web pages: a ⌘-click shows the page rendered (`Board.referencePage`).
-    public static let pageExtensions: Set<String> = ["html", "htm"]
+    /// Extensions of pages a ⌘-click shows rendered (`Board.referencePage`): web pages, and PDFs
+    /// in WebKit's viewer.
+    public static let pageExtensions: Set<String> = ["html", "htm", "pdf"]
+    /// Extensions of videos a ⌘-click plays in a video tile (`Board.referenceVideo`): the
+    /// QuickTime-family containers `LocalVideo` measures and AVFoundation plays.
+    public static let videoExtensions: Set<String> = ["mp4", "m4v", "mov"]
     /// A Python traceback frame: `File "<path>", line <n>`; the quoted path may hold spaces.
     private static let tracebackPattern = try! NSRegularExpression(pattern: #"File "([^"\n]+)", line (\d+)"#)
     /// A pdb frame: a path, the line in parentheses, then the function called (`main()`,
@@ -429,25 +434,26 @@ extension Board {
     /// - else a new tile opens beside the terminal (`place(near:)`), as wide as its file's lines
     ///   need (`newCodeSize`) and only its height cut down, to `followMinimumSize`'s, to land in
     ///   view, and becomes the terminal's preview.
-    /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps.
+    /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps. A new tile is the
+    /// user's, or `caller`'s when an agent opened the file (`view.open_file`).
     @discardableResult
-    public func openCode(path: String, lines: LineRange?, beside tile: ObjectID, newTile: Bool = false) -> CodeOpened {
+    public func openCode(path: String, lines: LineRange?, beside tile: ObjectID?, newTile: Bool = false, caller: ObjectID? = nil) -> CodeOpened {
         let stored = relativePath(path)
         // A file named without a line opens at its top.
         let range = lines?.json ?? .null
         if !newTile {
-            if let existing = tileShowing(CodeAim(path: stored, range: lines), near: objects[tile]?.frame) {
+            if let existing = tileShowing(CodeAim(path: stored, range: lines), near: tile.flatMap { objects[$0]?.frame }) {
                 return CodeOpened(id: existing, created: false, reaim: nil, existing: true)
             }
-            if let preview = codePreviews[tile], let object = objects[preview.tile], object.rev == preview.rev,
+            if let tile, let preview = codePreviews[tile], let object = objects[preview.tile], object.rev == preview.rev,
                let reaim = reaimForNavigation(object.id, to: CodeAim(path: stored, range: lines)) {
                 return CodeOpened(id: object.id, created: false, reaim: reaim)
             }
         }
         let props: JSONValue = .object(["path": .string(stored), "range": range].filter { $0.value != .null })
         let size = newCodeSize(props)
-        let created = create(type: .code, props: props, frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: (size.w, Self.followMinimumSize.h)))
-        if !newTile { codePreviews[tile] = (created.id, created.rev) }
+        let created = create(type: .code, props: props, frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: (size.w, Self.followMinimumSize.h)), caller: caller)
+        if !newTile, let tile { codePreviews[tile] = (created.id, created.rev) }
         return CodeOpened(id: created.id, created: true, reaim: nil)
     }
 
@@ -458,7 +464,7 @@ extension Board {
         codePreviews = codePreviews.filter { $0.value.tile != id }
     }
 
-    /// A plain local ⌘-click renders an HTML page inside the resolved board root or a temp
+    /// A plain local ⌘-click renders an HTML page or a PDF inside the resolved board root or a temp
     /// directory. A home-rooted board allows only temp directories. Dependency pages open as
     /// code because rendered pages run scripts with the browser profile, network and folder access.
     public func referencePage(path: String, lines: LineRange?, newTile: Bool, hosted: Bool,
@@ -474,28 +480,68 @@ extension Board {
         return resolved
     }
 
-    /// A reference the user ⌘-clicked in terminal `tile`: a page (`referencePage`) in a browser
-    /// tile, else its code (`openCode`). A browser tile already showing the file is the answer
-    /// anywhere on the board (`existing`: the canvas goes to it), also when the page has since
-    /// moved to an anchor or a query of its own (the reference names neither); else the page opens
-    /// beside the terminal (`openLink`), credited to it.
+    /// A plain local ⌘-click plays a video in a video tile when the board serves it: inside the
+    /// board root or one of its repository's worktrees (the `boardAsset` policy the tile reads
+    /// through). Its path as the tile stores it, board-relative under the root.
+    public func referenceVideo(path: String, lines: LineRange?, hosted: Bool) -> String? {
+        guard !hosted, lines == nil, TerminalReferences.videoExtensions.contains((path as NSString).pathExtension.lowercased()),
+              (try? HostLocalFile(HostFileRequest(source: .directory(root.path), policy: .boardAsset(path), bytes: false))) != nil
+        else { return nil }
+        return relativePath(path)
+    }
+
+    /// The video at `path` (stored as `referenceVideo` gives it) in a video tile beside `source`,
+    /// credited to `caller`: the nearest tile already playing that path (`existing`), unless
+    /// `newTile`, else a new one at the default size.
     @discardableResult
-    public func openReference(path: String, lines: LineRange?, beside tile: ObjectID, newTile: Bool = false, hosted: Bool = false,
-                              tempDirectories: [String] = FollowFilter.tempDirectories) -> ReferenceOpened {
+    public func openVideo(_ path: String, near source: ObjectID?, caller: ObjectID?, newTile: Bool = false) -> (object: CanvasObject, existing: Bool) {
+        let here = source.flatMap { objects[$0]?.frame }
+        let shown = newTile ? [] : objects.values.filter { $0.type == .video && $0.props["path"]?.string == path }
+        if let reused = shown.min(by: { (here.map($0.frame.centerDistance) ?? 0, $0.id) < (here.map($1.frame.centerDistance) ?? 0, $1.id) }) {
+            return (reused, true)
+        }
+        let size = Self.defaultSize(.video)
+        return (create(type: .video, props: .object(["path": .string(path)]), frame: place(width: size.w, height: size.h, near: source), caller: caller), false)
+    }
+
+    /// A file the user ⌘-clicked in terminal `tile`, or an agent opened (`view.open_file`): a
+    /// video (`referenceVideo`) in a video tile, a page (`referencePage`) in a browser tile, else
+    /// its code (`openCode`). A tile already showing the file is the answer anywhere on the board
+    /// (`existing`: the canvas goes to it), also when a page has since moved to an anchor or a
+    /// query of its own (the reference names neither); else the tile opens beside `tile`
+    /// (`openVideo`, `openLink`), credited to it; a new code tile is the user's, or `caller`'s
+    /// (the agent that opened it). Without a `tile` it opens in view.
+    @discardableResult
+    public func openReference(path: String, lines: LineRange?, beside tile: ObjectID?, newTile: Bool = false, hosted: Bool = false,
+                              caller: ObjectID? = nil, tempDirectories: [String] = FollowFilter.tempDirectories) -> ReferenceOpened {
+        if let video = referenceVideo(path: path, lines: lines, hosted: hosted) {
+            let opened = openVideo(video, near: tile, caller: tile, newTile: newTile)
+            return .video(opened.object.id, existing: opened.existing)
+        }
         guard let page = referencePage(path: path, lines: lines, newTile: newTile, hosted: hosted, tempDirectories: tempDirectories) else {
-            return .code(openCode(path: path, lines: lines, beside: tile, newTile: newTile))
+            return .code(openCode(path: path, lines: lines, beside: tile, newTile: newTile, caller: caller))
         }
         let opened = openLink(page, near: tile, caller: tile, matchingFilePath: true)
         return .page(opened.object.id, url: page, existing: opened.existing)
     }
 }
 
-/// What a reference ⌘-clicked in a terminal opened (`Board.openReference`).
+/// What a file reference opened (`Board.openReference`).
 public enum ReferenceOpened: Equatable, Sendable {
     /// Its source, in a code tile.
     case code(CodeOpened)
     /// The page `url` rendered, in browser tile `id`; `existing` when the tile already showed it.
     case page(ObjectID, url: URL, existing: Bool)
+    /// The video, in video tile `id`; `existing` when the tile already played it.
+    case video(ObjectID, existing: Bool)
+
+    /// The tile showing it, and whether that tile already did.
+    public var shown: (id: ObjectID, existing: Bool) {
+        switch self {
+        case .code(let opened): (opened.id, opened.existing)
+        case let .page(id, _, existing), let .video(id, existing): (id, existing)
+        }
+    }
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded

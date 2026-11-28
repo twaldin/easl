@@ -1652,6 +1652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func newHtmlTile(_ sender: Any?) {
         keyController?.canvas.openForUser(.html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
     }
+    @objc func newVideoTile(_ sender: Any?) { keyController?.newVideoTile(sender) }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func increaseChromeText(_ sender: Any?) { ChromeText.step(bigger: true) }
     @objc func decreaseChromeText(_ sender: Any?) { ChromeText.step(bigger: false) }
@@ -1857,6 +1858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New Board Tab…", #selector(newWindowForTab(_:))),
             item("Open Remote…", #selector(openRemote(_:))),
             item("New HTML Tile", #selector(newHtmlTile(_:))),
+            item("New Video Tile…", #selector(newVideoTile(_:))),
             item("Review Changes", #selector(reviewChanges(_:))),
             item("Review Branch", #selector(reviewBranch(_:))),
             .separator(),

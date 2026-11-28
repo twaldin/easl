@@ -116,6 +116,7 @@ public struct ShortcutAction: Equatable, Sendable {
         .init("openBoard", "Open Board…", "File", "o", [.command, .shift]),
         .init("openRemote", "Open Remote…", "File", "o", [.control, .option, .command]),
         .init("newHtmlTile", "New HTML Tile", "File", "h", [.command, .shift]),
+        .init("newVideoTile", "New Video Tile…", "File"),
         .init("reviewChanges", "Review Changes", "File", "r", [.command, .shift]),
         .init("reviewBranch", "Review Branch", "File", "r", [.control, .option, .command]),
         .init("saveAsPNG", "Export Selection as PNG…", "File", "e", [.command, .shift]),

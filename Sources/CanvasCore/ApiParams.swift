@@ -5,7 +5,7 @@
 enum ApiParams {
     /// The schema's `version` and the hash of the file this was generated from (`client.attach`).
     static let schemaVersion = 2
-    static let schemaHash = "c714651de35bbe3e"
+    static let schemaHash = "b8ec48cd5dbced9e"
 
     static let methods: [String: (accepted: [String], required: [String])] = [
         "image.preview": (["id", "maxPixels"], ["id", "maxPixels"]),
@@ -61,6 +61,7 @@ enum ApiParams {
         "view.seen": (["id", "rev", "marker"], ["id"]),
         "view.attention": (["id", "message", "clear", "caller"], ["id"]),
         "view.get": (["board"], []),
+        "view.open_file": (["path", "lines", "rendered", "board", "caller"], ["path"]),
         "view.open_url": (["url", "board", "caller"], ["url"]),
         "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "inline", "format", "timeoutMs"], ["target"]),
         "view.snapshot": (["board", "out", "format"], []),

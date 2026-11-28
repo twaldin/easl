@@ -1,6 +1,7 @@
 import AppKit
 import CanvasCore
 import ImageIO
+import UniformTypeIdentifiers
 import WebKit
 
 /// One window per board: the canvas scene plus the composer (the tray bar).
@@ -773,6 +774,23 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
         }
     }
 
+    /// A video the user picks, in a new video tile in view. Only a file the board serves plays
+    /// (`Board.referenceVideo`: inside its root or a worktree of its repository).
+    @objc func newVideoTile(_ sender: Any?) {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.directoryURL = board.root
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = TerminalReferences.videoExtensions.compactMap { UTType(filenameExtension: $0) }
+        panel.beginSheetModal(for: window) { [weak self, panel] response in
+            guard let self, response == .OK, let url = DevInput.chosen(in: panel).first else { return }
+            guard let path = self.board.referenceVideo(path: url.path, lines: nil, hosted: false) else {
+                return self.canvas.showNotice("\(url.lastPathComponent) is outside this board's folder. A video tile plays files inside it.")
+            }
+            self.canvas.openForUser(.video, props: .object(["path": .string(path)]))
+        }
+    }
+
     @objc func zoomToActual(_ sender: Any?) {
         canvas.zoomToActualSize()
     }
@@ -1374,7 +1392,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// What a remote board's window doesn't offer (v1): commands that read this Mac's files or
     /// git for the board (the host's aren't here), and the first-run walk-through.
     private static let localOnly: Set<Selector> = [
-        #selector(openCodeTile(_:)), #selector(reviewChanges(_:)), #selector(reviewBranch(_:)), #selector(toggleGetStarted(_:)),
+        #selector(openCodeTile(_:)), #selector(newVideoTile(_:)), #selector(reviewChanges(_:)), #selector(reviewBranch(_:)), #selector(toggleGetStarted(_:)),
         #selector(snapshotPage(_:)),
     ]
 

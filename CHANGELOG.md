@@ -5,6 +5,9 @@ Each version's section is its GitHub release's notes.
 ## 0.3.11 (unreleased)
 
 - Watched and agent-driven browser tiles keep painting when the drawing app's window is on another Space.
+- ⌘-click a PDF named without a line to open it rendered in a browser tile, the way HTML pages already open. ⌘-click an mp4, m4v or mov inside the board to play it in a video tile beside the terminal. These files also become links when named without a path or line.
+- File › New Video Tile… picks a video in the board's folder. Files dropped from Finder onto a local board open where they land: videos in video tiles, pages and PDFs in browser tiles, images in image tiles, and anything else as code.
+- Agents open files the way a ⌘-click does with `easl open <path[:N[-M]]>` (new `view.open_file` method). In a terminal tile, `open report.pdf` and `open demo.mp4` do the same; files the board would show as code still go to the system's `open`. easld answers `view.open_file` with `unsupported`.
 
 ## 0.3.10
 

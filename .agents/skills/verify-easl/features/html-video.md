@@ -12,7 +12,7 @@ Users view live sandboxed HTML and play native video locally or from a remote ho
 
 ## How to get to it (user POV)
 
-Choose File > New HTML Tile or press Shift-Command-H. Agents can create HTML and video through the CLI. Interact with HTML inside its tile and native video through its player controls. Video has no manual creation menu in the default shortcut table.
+Choose File > New HTML Tile or press Shift-Command-H. Agents can create HTML and video through the CLI. Interact with HTML inside its tile and native video through its player controls. Video comes from File > New Video Tile…, a ⌘-click on its name in a terminal, a Finder drop on the board, or `easl open <clip>`; it has no default shortcut.
 
 ## Driving it with dev.sh
 

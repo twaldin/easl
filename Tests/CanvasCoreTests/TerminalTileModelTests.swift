@@ -15,6 +15,10 @@ struct TerminalReferencesTests {
         #expect(refs("bin/easl:12") == ["bin/easl 12-12"], "a path with a slash needs no extension")
     }
 
+    @Test func videosAndPDFsNamedAloneAreReferences() {
+        #expect(refs("saved out/demo.mp4, clip.MOV and report.pdf.") == ["out/demo.mp4", "clip.MOV", "report.pdf"])
+    }
+
     @Test func fileURLHostsAreNotPartOfTheAbsoluteReferencePath() throws {
         for text in ["file://build-host/abs/src/lib.rs:3-7", "file:///abs/src/lib.rs:3-7"] {
             let reference = try #require(TerminalReferences.reference(in: text, at: 0))
@@ -309,6 +313,53 @@ struct TerminalBoardTests {
         #expect(page(home.appendingPathComponent("node_modules/report.html")) == nil)
         #expect(page(scratch.appendingPathComponent("report.html")) == scratch.appendingPathComponent("report.html").resolvingSymlinksInPath())
         #expect(page(scratch.appendingPathComponent("node_modules/package/report.html")) == nil)
+    }
+
+    @Test func aVideoNamedWithoutALinePlaysInAVideoTileTheBoardServes() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object([:]))
+        let elsewhere = root.deletingLastPathComponent().appendingPathComponent("elsewhere-\(UUID().uuidString)")
+        for directory in [elsewhere, root.appendingPathComponent("clips")] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        defer { for directory in [root, elsewhere] { try? FileManager.default.removeItem(at: directory) } }
+        let clip = root.appendingPathComponent("clips/demo.mp4").path
+        let outside = elsewhere.appendingPathComponent("demo.mov").path
+        for path in [clip, outside] { try Data().write(to: URL(fileURLWithPath: path)) }
+
+        func open(_ path: String, lines: LineRange? = nil, newTile: Bool = false, hosted: Bool = false) -> ReferenceOpened {
+            board.openReference(path: path, lines: lines, beside: terminal.id, newTile: newTile, hosted: hosted)
+        }
+        guard case let .video(tile, existing) = open(clip) else { Issue.record("not a video"); return }
+        #expect(!existing && board.objects[tile]?.type == .video && board.objects[tile]?.createdBy == Actor(caller: terminal.id))
+        #expect(board.objects[tile]?.props["path"]?.string == "clips/demo.mp4", "stored board-relative")
+        #expect(open(clip) == .video(tile, existing: true), "a second click finds it")
+        guard case let .video(second, false) = open(clip, newTile: true) else { Issue.record("⌥⌘-click: not a new video"); return }
+        #expect(second != tile)
+        guard case .code = open(clip, lines: LineRange(start: 1, end: 1)) else { Issue.record("a line: not code"); return }
+        guard case .code = open(clip, hosted: true) else { Issue.record("hosted: not code"); return }
+        guard case .code = open(outside) else { Issue.record("outside the board: not code"); return }
+        #expect(board.objects.values.filter { $0.type == .video }.count == 2)
+    }
+
+    @Test func aPDFNamedWithoutALineOpensRenderedLikeAPage() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object([:]))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pdf = root.appendingPathComponent("report.PDF")
+        try Data("%PDF-1.4".utf8).write(to: pdf)
+        guard case let .page(tile, url, false) = board.openReference(path: pdf.path, lines: nil, beside: terminal.id, tempDirectories: [])
+        else { Issue.record("not a page"); return }
+        #expect(url == pdf.resolvingSymlinksInPath() && board.objects[tile]?.props["url"]?.string == url.absoluteString)
+    }
+
+    @Test func openingWithoutATileLandsInViewWithoutAPreview() throws {
+        let board = makeBoard()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("a.ts")
+        try "let a = 1\n".write(to: file, atomically: true, encoding: .utf8)
+        guard case .code(let first) = board.openReference(path: file.path, lines: nil, beside: nil) else { Issue.record("not code"); return }
+        #expect(first.created && board.objects[first.id]?.createdBy == .user)
+        guard case .code(let again) = board.openReference(path: file.path, lines: nil, beside: nil) else { Issue.record("not code"); return }
+        #expect(again.id == first.id && again.existing, "the tile already showing it")
     }
 
     @Test func openCodeIgnoresFollowTiles() throws {
