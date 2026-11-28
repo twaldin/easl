@@ -26,6 +26,7 @@ final class TerminalTile: NSView, TileContent {
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
     var onOpenedCode: ((CodeOpened, _ source: NSRect) -> Void)?
+    /// A ⌘-clicked page or video opened this browser or video tile, or found it there (`existing`).
     var onOpenedPage: ((ObjectID, _ existing: Bool, _ source: NSRect) -> Void)?
     var onOpenedLink: ((ObjectID) -> Void)?
     var onNotice: ((String) -> Void)?
@@ -1274,6 +1275,9 @@ final class TerminalTile: NSView, TileContent {
             onOpenedCode?(opened, source)
         case let .page(id, url, existing):
             NSLog("easl: terminal %@ link %@ → %@ %@", objectID, url.absoluteString, existing ? "existing browser tile" : "new browser tile", id)
+            onOpenedPage?(id, existing, source)
+        case let .video(id, existing):
+            NSLog("easl: terminal %@ video %@ → %@ %@", objectID, hit.file, existing ? "existing video tile" : "new video tile", id)
             onOpenedPage?(id, existing, source)
         }
     }

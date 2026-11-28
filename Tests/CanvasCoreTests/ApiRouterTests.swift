@@ -1027,6 +1027,37 @@ final class ApiRouterTests {
         }
         #expect(board.objects.values.filter { $0.type == .browser }.count == 1)
     }
+
+    @Test func openingAFileRoutesItLikeACommandClickBesideTheCaller() async throws {
+        let caller = terminal()
+        var shown: [(tile: ObjectID, source: ObjectID?)] = []
+        router.showOpenedLink = { _, tile, source in shown.append((tile, source)) }
+        let client = try connect()
+        let root = dir.appendingPathComponent("root")
+        try Data().write(to: root.appendingPathComponent("demo.mp4"))
+        try Data("%PDF-1.4".utf8).write(to: root.appendingPathComponent("report.pdf"))
+        try "a\nb\nc\n".write(to: root.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        func open(_ params: [String: JSONValue]) async throws -> JSONValue {
+            try await call(client, "view.open_file", params.merging(["caller": .string(caller)]) { $1 })
+        }
+        func tile(_ reply: JSONValue) -> CanvasObject? { reply["result"]?["object"]?["id"]?.string.flatMap { board.objects[$0] } }
+
+        let video = try await open(["path": "demo.mp4"])
+        #expect(tile(video)?.type == .video && tile(video)?.props["path"]?.string == "demo.mp4" && video["result"]?["existing"] == .bool(false))
+        #expect(tile(video)?.createdBy == Actor(caller: caller))
+        let again = try await open(["path": .string(root.appendingPathComponent("demo.mp4").path)])
+        #expect(tile(again)?.id == tile(video)?.id && again["result"]?["existing"] == .bool(true))
+        #expect(tile(try await open(["path": "report.pdf", "rendered": .bool(true)]))?.type == .browser)
+        let code = try await open(["path": "notes.md", "lines": .object(["start": 2, "end": 3])])
+        #expect(tile(code)?.type == .code && tile(code)?.props["path"]?.string == "notes.md" && tile(code)?.createdBy == Actor(caller: caller))
+        #expect(shown.count == 4 && shown.allSatisfy { $0.source == caller })
+
+        let before = board.objects.count
+        #expect(try await open(["path": "notes.md", "rendered": .bool(true)])["error"]?["code"] == .string("refused"))
+        #expect(try await open(["path": "missing.mp4"])["error"]?["code"] == .string("not_found"))
+        #expect(try await open(["path": "."])["error"]?["code"] == .string("not_found"), "a directory")
+        #expect(board.objects.count == before, "refusals open nothing")
+    }
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.

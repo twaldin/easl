@@ -7,6 +7,7 @@
 //   easl get <id> [--as raw|graph]       object.get
 //   easl tell <name[@board]> <text> [--when next-turn] [--from <label>] [--message <msg_id>]   agent.prompt: a message to another agent
 //   easl render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
+//   easl open <path[:N[-M]]>             view.open_file: a file as a ⌘-click on it shows it (path resolved against the cwd)
 //   easl browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 //   easl metrics [--watch] [--reset] [--json]       app.metrics as text (--watch: every second)
 //   easl ask "question" --option id=label[:why] ... [--wait]   a question tile for the user: object.create type question
@@ -89,6 +90,7 @@ function usage(help = false): never {
     "       easl get <id> [--as graph]",
     "       easl tell <name[@board]> <text> [--when next-turn] [--from <label>] [--message <msg_id>]",
     "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
+    "       easl open <path[:N[-M]]>   (a video in a video tile, html/pdf in a browser tile, else code at lines N-M)",
     "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
     "       easl metrics [--watch] [--reset] [--json]",
     "       easl app.update check|install",
@@ -450,7 +452,7 @@ if (argv[0] === "browser" && (helpCommand || wantsHelp(argv.slice(1), BROWSER_PA
 
 if (helpCommand && argv[0] === "ask") askHelp(true);
 if (helpCommand && (argv[0] === "metrics" || (argv[0] === "agent" && argv[1] === "spawn"))) usage(true);
-const aliases: Record<string, string> = { get: "object.get", tell: "agent.prompt", render: "view.render" };
+const aliases: Record<string, string> = { get: "object.get", tell: "agent.prompt", render: "view.render", open: "view.open_file" };
 const topic = argv[0].includes(".") || !argv[1] || argv[1].startsWith("-") ? argv[0] : `${argv[0]}.${argv[1]}`;
 const helpName = Object.hasOwn(aliases, argv[0]) ? aliases[argv[0]] : topic;
 const helpParams = Object.hasOwn(methods, helpName) ? methods[helpName].params : undefined;
@@ -1023,6 +1025,7 @@ if (argv[0] === "agent" && argv[1] === "spawn") {
 let method: string;
 let rest: string[];
 let target: unknown;
+let opened: Record<string, unknown> | undefined;
 if (argv[0] === "get") {
   method = "object.get";
   rest = ["--id", argv[1] ?? usage(), ...argv.slice(2)];
@@ -1037,6 +1040,14 @@ if (argv[0] === "get") {
   const numbers = parts.map(Number);
   if (parts.length === 4 && numbers.every(Number.isFinite)) target = { x: numbers[0], y: numbers[1], w: numbers[2], h: numbers[3] };
   else target = parts.length === 1 ? parts[0] : parts;
+} else if (argv[0] === "open") {
+  // A file the way a ⌘-click on it shows it: the path against this directory, `:N` or `:N-M` its lines.
+  method = "view.open_file";
+  rest = argv.slice(2);
+  const reference = argv[1] ?? usage();
+  const lines = /^(.+):(\d+)(?:-(\d+))?$/.exec(reference);
+  opened = { path: resolve(lines ? lines[1] : reference) };
+  if (lines) opened.lines = { start: Number(lines[2]), end: Number(lines[3] ?? lines[2]) };
 } else if (argv[0].includes(".")) {
   method = argv[0];
   rest = argv.slice(1);
@@ -1055,6 +1066,7 @@ try {
   }
   const params = parseArgs(rest, spec.params, method);
   if (target !== undefined) params.target = target;
+  Object.assign(params, opened);
   if (method === "object.get" && params.as === "image") {
     throw new CanvasError("invalid_params", "`get --as image` was removed; use `easl render <id>` (view.render)");
   }

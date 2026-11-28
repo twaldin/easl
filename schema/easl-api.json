@@ -2311,6 +2311,29 @@
         }
       }
     },
+    "view.open_file": {
+      "description": "Open a file the way a ⌘-click on its path in the caller's terminal does: an mp4, m4v or mov inside the board root (or a worktree of its repository) plays in a video tile; an html, htm or pdf without `lines`, inside the board root or a temp directory (only a temp directory on a home-rooted board) and outside node_modules, renders in a browser tile; anything else, or a page or video outside those places, shows its source in a code tile at `lines`. A tile already showing the file anywhere on the board is reused (`existing: true`); a code ⌘-click preview the caller's terminal opened is re-aimed. The tile opens beside the caller, else in view. The user's view pans the least that shows it, never so far that the caller's terminal leaves view; keyboard focus stays where it was. A missing file or a directory is `not_found`. `easl open <path[:N[-M]]>` and the `bin/open` shim in a terminal tile (for html, htm, pdf, mp4, m4v and mov) call this.",
+      "params": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "description": "an absolute path, or one relative to the board root (`easl open` resolves it against the current directory first)" },
+          "lines": { "$ref": "#/definitions/LineRange", "description": "the lines a code tile shows; a page or video named with lines opens as code" },
+          "rendered": { "type": "boolean", "description": "only a video or page tile: a file that would show as code is `refused` and nothing opens (the `bin/open` shim then hands it to the system)" },
+          "board": { "$ref": "#/definitions/Id", "description": "an open local board id. An app-local remote tab target is unsupported because forwarding would move the host user's viewport" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the terminal the file comes from: the tile opens beside it; clients fill from EASL_TILE_ID" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["object", "existing"],
+        "properties": {
+          "object": { "$ref": "#/definitions/CanvasObject", "description": "the video, browser or code tile showing the file" },
+          "existing": { "type": "boolean", "description": "a tile already showed the file: nothing was created or re-aimed" }
+        }
+      }
+    },
     "view.open_url": {
       "description": "Open a web address the way a ⌘-click on it in the caller's terminal does: an http or https URL shows in a browser tile beside the caller, and a tile already showing that address (compared by scheme, host, port, path, query and fragment, so `HTTP://Example.com:80` is `http://example.com/`) is reused (`existing: true`) instead of a duplicate. The user's view pans the least that shows the tile, never so far that the caller's terminal leaves view. Keyboard focus stays where it was, including in a note editor, page, code rows, or terminal; the destination is selected without taking typing. Anything but http(s) is `invalid_params`: hand other schemes to the system (`/usr/bin/open`). The `bin/open` shim and `$BROWSER` in a terminal tile call this.",
       "params": {

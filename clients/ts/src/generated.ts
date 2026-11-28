@@ -2182,6 +2182,25 @@ export type ViewGetResult = {
   appearance: "dark" | "light";
 };
 
+export type ViewOpenFileParams = {
+  /** an absolute path, or one relative to the board root (`easl open` resolves it against the current directory first) */
+  path: string;
+  /** the lines a code tile shows; a page or video named with lines opens as code */
+  lines?: LineRange;
+  /** only a video or page tile: a file that would show as code is `refused` and nothing opens (the `bin/open` shim then hands it to the system) */
+  rendered?: boolean;
+  /** an open local board id. An app-local remote tab target is unsupported because forwarding would move the host user's viewport */
+  board?: Id;
+  /** the terminal the file comes from: the tile opens beside it; clients fill from EASL_TILE_ID */
+  caller?: Id;
+};
+export type ViewOpenFileResult = {
+  /** the video, browser or code tile showing the file */
+  object: CanvasObject;
+  /** a tile already showed the file: nothing was created or re-aimed */
+  existing: boolean;
+};
+
 export type ViewOpenUrlParams = {
   /** an absolute http or https URL */
   url: string;
@@ -2561,6 +2580,8 @@ export interface CanvasApi {
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible board rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
+    /** Open a file the way a ⌘-click on its path in the caller's terminal does: an mp4, m4v or mov inside the board root (or a worktree of its repository) plays in a video tile; an html, htm or pdf without `lines`, inside the board root or a temp directory (only a temp directory on a home-rooted board) and outside node_modules, renders in a browser tile; anything else, or a page or video outside those places, shows its source in a code tile at `lines`. A tile already showing the file anywhere on the board is reused (`existing: true`); a code ⌘-click preview the caller's terminal opened is re-aimed. The tile opens beside the caller, else in view. The user's view pans the least that shows it, never so far that the caller's terminal leaves view; keyboard focus stays where it was. A missing file or a directory is `not_found`. `easl open <path[:N[-M]]>` and the `bin/open` shim in a terminal tile (for html, htm, pdf, mp4, m4v and mov) call this. */
+    open_file(params: ViewOpenFileParams): Promise<ViewOpenFileResult>;
     /** Open a web address the way a ⌘-click on it in the caller's terminal does: an http or https URL shows in a browser tile beside the caller, and a tile already showing that address (compared by scheme, host, port, path, query and fragment, so `HTTP://Example.com:80` is `http://example.com/`) is reused (`existing: true`) instead of a duplicate. The user's view pans the least that shows the tile, never so far that the caller's terminal leaves view. Keyboard focus stays where it was, including in a note editor, page, code rows, or terminal; the destination is selected without taking typing. Anything but http(s) is `invalid_params`: hand other schemes to the system (`/usr/bin/open`). The `bin/open` shim and `$BROWSER` in a terminal tile call this. */
     open_url(params: ViewOpenUrlParams): Promise<ViewOpenUrlResult>;
     /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a board rect; ids render the board region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame. */
@@ -2686,6 +2707,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       seen: (params: ViewSeenParams) => call("view.seen", params ?? {}, []) as Promise<ViewSeenResult>,
       attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, ["caller"]) as Promise<ViewAttentionResult>,
       get: (params?: ViewGetParams) => call("view.get", params ?? {}, ["board"]) as Promise<ViewGetResult>,
+      open_file: (params: ViewOpenFileParams) => call("view.open_file", params ?? {}, ["board","caller"]) as Promise<ViewOpenFileResult>,
       open_url: (params: ViewOpenUrlParams) => call("view.open_url", params ?? {}, ["board","caller"]) as Promise<ViewOpenUrlResult>,
       render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
       snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,
@@ -2718,7 +2740,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["image.preview","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
+export const METHODS = ["image.preview","surface.stream","surface.ack","surface.progress","surface.input","surface.answer","surface.stop","system.ping","agent.prompt_epoch","app.metrics","app.update","board.get","board.undo","board.redo","board.history","board.list","board.stale","board.open","board.open_remote","board.close","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","agent.inbox","agent.restart","follow.report","view.seen","view.attention","view.get","view.open_file","view.open_url","view.render","view.snapshot","session.spawn","session.list","session.kill","relay.open","events.subscribe","viewer.activity","client.attach","client.list","browser.call","browser.report","text.measure"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

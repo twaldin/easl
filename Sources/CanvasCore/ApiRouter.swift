@@ -229,9 +229,9 @@ public final class ApiRouter {
     public var renderView: ((Board, RenderRequest, ImageFormat) async throws -> RenderOutput)?
     /// What the board's window shows; nil when it has none.
     public var viewState: ((Board) -> ViewState?)?
-    /// The window of `board` shows a browser tile a link opened (`view.open_url`): the least pan
-    /// that shows it, never so far that `source` (the caller's terminal, on this board) leaves
-    /// view; the tile, new or already open, is selected and keyboard focus stays.
+    /// The window of `board` shows a tile a link or file opened (`view.open_url`, `view.open_file`):
+    /// the least pan that shows it, never so far that `source` (the caller's terminal, on this
+    /// board) leaves view; the tile, new or already open, is selected and keyboard focus stays.
     public var showOpenedLink: ((Board, _ opened: ObjectID, _ source: ObjectID?) -> Void)?
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`, soft-wrapped
     /// rows joined when the tile knows its width), read and trimmed off the main actor; nil when
@@ -446,6 +446,8 @@ public final class ApiRouter {
                     throw Failure("unsupported", "a remote tab does not save snapshots on this Mac; use view.render with inline: true")
                 case "view.open_url":
                     throw Failure("unsupported", "open links in the remote tab's UI, or connect to its host to open them in the host's window")
+                case "view.open_file":
+                    throw Failure("unsupported", "open files in the remote tab's UI, or connect to its host to open them in the host's window")
                 case "events.subscribe", "viewer.activity":
                     throw Failure("unsupported", "\(method) requires a connection to the board's host")
                 default:
@@ -2071,6 +2073,23 @@ public final class ApiRouter {
             showOpenedLink?(board, opened.object.id, source)
             return .object(["object": JSONValue(board.reported(opened.object)), "existing": .bool(opened.existing)])
 
+        case "view.open_file":
+            let board = try board(p)
+            let raw = try string(p, "path")
+            let lines = try p["lines"].map { try $0.decode(LineRange.self) }
+            let path = raw.hasPrefix("/") ? raw : board.root.appendingPathComponent(raw).path
+            guard TerminalReferences.isFile(path) else { throw Failure("not_found", "no file at \(raw)") }
+            if p["rendered"]?.bool == true, board.referenceVideo(path: path, lines: lines, hosted: board.isRemote) == nil,
+               board.referencePage(path: path, lines: lines, newTile: false, hosted: board.isRemote) == nil {
+                throw Failure("refused", "\(raw) would show as code: only a video inside the board, or a page or PDF inside it or a temp directory, opens rendered")
+            }
+            let caller = caller(p)
+            let source = caller.flatMap { board.objects[$0] == nil ? nil : $0 }
+            let shown = board.openReference(path: path, lines: lines, beside: source, hosted: board.isRemote, caller: source).shown
+            showOpenedLink?(board, shown.id, source)
+            guard let object = board.objects[shown.id] else { throw Failure("internal", "the tile showing \(raw) is gone") }
+            return .object(["object": JSONValue(board.reported(object)), "existing": .bool(shown.existing)])
+
         case "view.get":
             let board = try board(p)
             guard let viewState else { throw Failure("unsupported", "the viewport needs the app UI") }
@@ -2981,7 +3000,7 @@ public final class ApiRouter {
         case "board.get", "board.history", "board.undo", "board.redo", "board.stale", "board.export",
              "object.find", "object.create", "object.upsert", "object.measure", "object.batch",
              "layout.check", "tray.list", "tray.stage", "tray.drain", "tray.commit",
-             "view.get", "view.render", "view.snapshot", "view.open_url", "text.measure",
+             "view.get", "view.render", "view.snapshot", "view.open_url", "view.open_file", "text.measure",
              "events.subscribe", "viewer.activity":
             guard let id = p["board"]?.string, let tab = try remoteTab(id: id) else { return nil }
             guard !closingBoards.contains(id) else { throw Failure("conflict", "board \(id) is closing") }

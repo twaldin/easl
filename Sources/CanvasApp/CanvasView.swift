@@ -72,6 +72,12 @@ final class CanvasDocumentView: NSView {
     override func mouseDragged(with event: NSEvent) { canvas?.emptyMouseDragged(event) }
     override func mouseUp(with event: NSEvent) { canvas?.emptyMouseUp(event) }
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
+    /// Files dragged from Finder onto the board open where they are dropped (`CanvasView.openDropped`).
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { canvas?.canOpenDropped(sender) == true ? .copy : [] }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        canvas?.openDropped(sender, at: convert(sender.draggingLocation, from: nil)) == true
+    }
 
     override func keyDown(with event: NSEvent) {
         guard window?.firstResponder === self else { return super.keyDown(with: event) }
@@ -242,6 +248,7 @@ final class CanvasView: NSScrollView {
         super.init(frame: .zero)
         documentView = document
         document.canvas = self
+        document.registerForDraggedTypes([.fileURL])
         document.addSubview(overlay)
         hasVerticalScroller = true
         hasHorizontalScroller = true
@@ -1461,6 +1468,36 @@ final class CanvasView: NSScrollView {
     /// An empty note at a document point (`createHere`), editing (`showNew`).
     func createNote(at point: NSPoint) {
         showNew(createHere(.note, props: .object(["markdown": .string("")]), at: point))
+    }
+
+    /// The regular files dragged onto a local board, read off the pasteboard.
+    private func droppedFiles(_ info: NSDraggingInfo) -> [URL] {
+        guard remote == nil, !board.isClosed else { return [] }
+        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return urls.filter { TerminalReferences.isFile($0.path) }
+    }
+
+    func canOpenDropped(_ info: NSDraggingInfo) -> Bool { !droppedFiles(info).isEmpty }
+
+    /// Each file dropped at a document point, as a ⌘-click on it would show it: a video the board
+    /// serves in a video tile (`Board.referenceVideo`), a page or PDF in a browser tile
+    /// (`Board.referencePage`), an image in an image tile, anything else as code. Each tile takes
+    /// the free spot nearest the drop (`createHere`); they end up selected.
+    func openDropped(_ info: NSDraggingInfo, at point: NSPoint) -> Bool {
+        let opened = droppedFiles(info).map { file -> ObjectID in
+            let path = file.path
+            if let video = board.referenceVideo(path: path, lines: nil, hosted: false) {
+                return createHere(.video, props: .object(["path": .string(video)]), at: point).id
+            }
+            if let page = board.referencePage(path: path, lines: nil, newTile: false, hosted: false) {
+                return createHere(.browser, props: .object(["url": .string(page.absoluteString)]), at: point).id
+            }
+            let props: JSONValue = .object(["path": .string(board.relativePath(path))])
+            if LocalImage.extensions.contains(file.pathExtension.lowercased()) { return createHere(.image, props: props, at: point).id }
+            return createHere(.code, props: props, at: point, size: board.newCodeSize(props)).id
+        }
+        if !opened.isEmpty { setSelection(Set(opened), cause: .user) }
+        return !opened.isEmpty
     }
 
     /// A new browser tile on the home page (`BrowserURL.home`) at a document point (`createHere`),

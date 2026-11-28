@@ -262,6 +262,9 @@ func (r *Router) dispatch(method string, p map[string]any, from Conn) (any, erro
 		return r.viewSeen(p)
 	case "view.open_url":
 		return r.openURL(p, from)
+	case "view.open_file":
+		// File routing (video and page tiles, code previews) is the Mac app's (Board.openReference).
+		return nil, fail(api.CodeUnsupported, "view.open_file is the Mac app's; on an easld board create the code, video or browser tile with object.create")
 	case "view.get":
 		b, err := r.boardOf(p)
 		if err != nil {
